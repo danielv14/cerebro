@@ -16,11 +16,14 @@ export type Classified =
   | { kind: "title"; sessionId: string | null; title: string; priority: number }
   | { kind: "skip" };
 
-export const parseLine = (line: string): any | null => {
+// Returns `undefined` (never a valid JSON value) on parse failure, so callers can
+// distinguish a malformed line from a line that legitimately parses to a falsy
+// value like 0, false, or null.
+export const parseLine = (line: string): unknown => {
   try {
     return JSON.parse(line);
   } catch {
-    return null;
+    return undefined;
   }
 };
 

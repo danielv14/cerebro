@@ -51,7 +51,7 @@ const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: num
     const lines = buf.subarray(0, lastNewline).toString("utf8").split("\n");
     let cursor = start + lastNewline + 1;
     const tail = buf.subarray(lastNewline + 1).toString("utf8").trim();
-    if (tail && parseLine(tail)) {
+    if (tail && parseLine(tail) !== undefined) {
       lines.push(tail);
       cursor = start + buf.length;
     }
@@ -59,7 +59,7 @@ const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: num
   }
 
   const tail = buf.toString("utf8").trim();
-  if (tail && parseLine(tail)) return { lines: [tail], cursor: start + buf.length };
+  if (tail && parseLine(tail) !== undefined) return { lines: [tail], cursor: start + buf.length };
 
   // Mid-write, no complete line yet. Wait for the next run.
   return { lines: [], cursor: start };
@@ -93,7 +93,7 @@ const indexOneFile = (
   for (const line of lines) {
     if (!line) continue;
     const parsed = parseLine(line);
-    if (!parsed) continue;
+    if (parsed === undefined) continue;
     const classified = classify(parsed);
 
     if (classified.kind === "message") {
@@ -124,6 +124,26 @@ const indexOneFile = (
   return { cursor, meta };
 };
 
+interface SessionAggregate {
+  c: number;
+  mn: string | null;
+  mx: string | null;
+}
+
+// Message count and timestamp span for a session, recomputed from the messages
+// table. Shared by the two session-row maintainers so the aggregate is defined
+// once.
+const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
+  db
+    .query(
+      `SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx
+       FROM messages WHERE session_id = ?`,
+    )
+    .get(sessionId) as SessionAggregate;
+
+// root_session_id defaults to the session itself on insert; relinkThreads later
+// reparents resumes. This means a row is never NULL-rooted, even in the window
+// before relinkThreads runs (or if a run aborts before it).
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -131,21 +151,17 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
 
   const cwd = meta.cwd ?? existing?.cwd ?? null;
   const git = gitInfo(cwd);
-
-  const agg = db
-    .query(
-      `SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx
-       FROM messages WHERE session_id = ?`,
-    )
-    .get(meta.sessionId) as { c: number; mn: string | null; mx: string | null };
+  const agg = sessionAggregate(db, meta.sessionId);
 
   // COALESCE on update keeps prior values when an incremental run sees no fresh
   // cwd/branch/title (e.g. a resume that only added a couple of turns).
+  // root_session_id is left untouched on conflict (relinkThreads owns it).
   db.query(
     `INSERT INTO sessions (
-       session_id, project_dir, project_path, cwd, git_root, git_remote,
-       git_branch, source_file, title, first_ts, last_ts, msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       session_id, root_session_id, project_dir, project_path, cwd, git_root,
+       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
+       body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir  = excluded.project_dir,
        project_path = COALESCE(excluded.project_path, sessions.project_path),
@@ -160,6 +176,7 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
        msg_count    = excluded.msg_count,
        body_available = 1`,
   ).run(
+    meta.sessionId,
     meta.sessionId,
     meta.projectDir,
     cwd,
@@ -179,18 +196,13 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
 // exists and refresh its aggregate, but never clobber the parent's identity fields
 // (source_file, project_dir, title, cwd) which are owned by its top-level file.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
-  const agg = db
-    .query(
-      `SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx
-       FROM messages WHERE session_id = ?`,
-    )
-    .get(parentId) as { c: number; mn: string | null; mx: string | null };
+  const agg = sessionAggregate(db, parentId);
 
   db.query(
     `INSERT INTO sessions (
-       session_id, project_dir, project_path, cwd, git_branch,
+       session_id, root_session_id, project_dir, project_path, cwd, git_branch,
        first_ts, last_ts, msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
      ON CONFLICT(session_id) DO UPDATE SET
        project_path = COALESCE(sessions.project_path, excluded.project_path),
        cwd          = COALESCE(sessions.cwd, excluded.cwd),
@@ -199,6 +211,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
        last_ts      = excluded.last_ts,
        msg_count    = excluded.msg_count`,
   ).run(
+    parentId,
     parentId,
     meta.projectDir,
     meta.cwd,
@@ -214,6 +227,10 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
 // and (re)mark present ones as available. A temp table keeps this correct and
 // cheap regardless of how many files there are.
 const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
+  // An empty scan almost always means a transient readdir failure, not that every
+  // session was deleted. Bail rather than flag the whole archive body-unavailable.
+  if (files.length === 0) return;
+
   db.run("DROP TABLE IF EXISTS _present");
   db.run("CREATE TEMP TABLE _present (p TEXT PRIMARY KEY)");
   const insert = db.query("INSERT OR IGNORE INTO _present (p) VALUES (?)");
@@ -221,10 +238,11 @@ const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
     for (const file of files) insert.run(file.path);
   });
   fill();
+  // A NULL source_file (a parent stub created only from subagent files, whose
+  // top-level transcript is not on disk) is correctly treated as unavailable.
   db.run(
     `UPDATE sessions
-       SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END
-     WHERE source_file IS NOT NULL`,
+       SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
   );
   db.run("DROP TABLE _present");
 };
@@ -338,8 +356,15 @@ export const runIndex = (db: Database, full = false): IndexResult => {
       if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
       else upsertSession(db, meta);
     });
-    tx();
-    filesIndexed++;
+    // Isolate per-file failures (an unreadable or corrupt file) so one bad file
+    // does not abort the whole run and skip relinkThreads / markDeletedBodies.
+    // The transaction rolls back that file's partial work on throw.
+    try {
+      tx();
+      filesIndexed++;
+    } catch (error) {
+      console.error(`cerebro: skipped ${file.path}: ${(error as Error).message}`);
+    }
   }
 
   markDeletedBodies(db, files);
@@ -354,7 +379,7 @@ const countMessages = (lines: string[]): number => {
   for (const line of lines) {
     if (!line) continue;
     const parsed = parseLine(line);
-    if (parsed && classify(parsed).kind === "message") count++;
+    if (parsed !== undefined && classify(parsed).kind === "message") count++;
   }
   return count;
 };
