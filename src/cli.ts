@@ -11,7 +11,7 @@ import {
   stats,
 } from "./query.ts";
 
-const HELP = `cerebro — permanent verbatim archive + search over Claude Code sessions
+const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
 
 Usage:
   cerebro index [--full] [--dry-run]     Index all sessions incrementally
@@ -46,29 +46,46 @@ const oneLine = (text: string, max = 100): string => {
 };
 
 const humanBytes = (bytes: number): string => {
-  const units = ["B", "KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
   let value = bytes;
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit++;
   }
-  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+  const formatted = unit === 0 ? String(value) : value.toFixed(1);
+  return `${formatted} ${units[unit]}`;
+};
+
+const fail = (message: string): void => {
+  console.error(message);
+  process.exitCode = 1;
 };
 
 const main = (): void => {
-  const { values, positionals } = parseArgs({
-    args: Bun.argv.slice(2),
-    allowPositionals: true,
-    options: {
-      db: { type: "string" },
-      full: { type: "boolean", default: false },
-      "dry-run": { type: "boolean", default: false },
-      limit: { type: "string" },
-      project: { type: "string" },
-      help: { type: "boolean", short: "h", default: false },
-    },
-  });
+  // parseArgs throws on unknown options; turn that into a clean message + exit 1
+  // instead of a raw stack trace. The IIFE preserves parseArgs's inferred types.
+  const parsed = (() => {
+    try {
+      return parseArgs({
+        args: Bun.argv.slice(2),
+        allowPositionals: true,
+        options: {
+          db: { type: "string" },
+          full: { type: "boolean", default: false },
+          "dry-run": { type: "boolean", default: false },
+          limit: { type: "string" },
+          project: { type: "string" },
+          help: { type: "boolean", short: "h", default: false },
+        },
+      });
+    } catch (error) {
+      fail((error as Error).message);
+      return null;
+    }
+  })();
+  if (!parsed) return;
+  const { values, positionals } = parsed;
 
   const command = positionals[0];
 
@@ -77,7 +94,15 @@ const main = (): void => {
     return;
   }
 
-  const limit = values.limit ? Number.parseInt(values.limit, 10) : undefined;
+  let limit: number | undefined;
+  if (values.limit !== undefined) {
+    limit = Number(values.limit);
+    if (!Number.isInteger(limit) || limit < 1) {
+      fail(`--limit must be a positive integer (got "${values.limit}")`);
+      return;
+    }
+  }
+
   const dbPath = values.db || defaultDbPath();
   const db = openDb(dbPath);
 
@@ -206,6 +231,10 @@ const main = (): void => {
         console.log(HELP);
         process.exitCode = 1;
     }
+  } catch (error) {
+    // e.g. an ambiguous session prefix or an unexpected SQL error: show the
+    // message, not a stack trace.
+    fail((error as Error).message);
   } finally {
     db.close();
   }
