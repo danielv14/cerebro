@@ -1,0 +1,20 @@
+{
+  "name": "cerebro",
+  "version": "0.1.0",
+  "description": "Permanent verbatim archive + search over all Claude Code sessions",
+  "type": "module",
+  "bin": {
+    "cerebro": "src/cli.ts"
+  },
+  "scripts": {
+    "cerebro": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
