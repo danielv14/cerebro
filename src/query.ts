@@ -55,33 +55,38 @@ export const listThreads = (
   opts: { project?: string; limit?: number } = {},
 ): ThreadRow[] => {
   const params: (string | number)[] = [];
-  let where = "";
+  // Filter after grouping, on the thread's representative project_path. Filtering
+  // raw rows before GROUP BY would drop resume/subagent rows whose project_path is
+  // NULL or differs, undercounting the thread's msgs and sessions_in_thread.
+  let having = "";
   if (opts.project) {
-    where = "WHERE r.project_path LIKE '%' || ? || '%'";
+    having = "WHERE project_path LIKE '%' || ? || '%'";
     params.push(opts.project);
   }
   params.push(opts.limit ?? 30);
 
   return db
     .query(
-      `SELECT
-         r.root_session_id AS id,
-         MAX(r.last_ts)    AS last_ts,
-         MIN(r.first_ts)   AS first_ts,
-         SUM(r.msg_count)  AS msgs,
-         COUNT(*)          AS sessions_in_thread,
-         COALESCE(
-           MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
-           MAX(r.project_path)
-         ) AS project_path,
-         COALESCE(
-           MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
-           MAX(r.title)
-         ) AS title,
-         MIN(r.body_available) AS body_available
-       FROM sessions r
-       ${where}
-       GROUP BY r.root_session_id
+      `SELECT * FROM (
+         SELECT
+           r.root_session_id AS id,
+           MAX(r.last_ts)    AS last_ts,
+           MIN(r.first_ts)   AS first_ts,
+           SUM(r.msg_count)  AS msgs,
+           COUNT(*)          AS sessions_in_thread,
+           COALESCE(
+             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
+             MAX(r.project_path)
+           ) AS project_path,
+           COALESCE(
+             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
+             MAX(r.title)
+           ) AS title,
+           MIN(r.body_available) AS body_available
+         FROM sessions r
+         GROUP BY r.root_session_id
+       )
+       ${having}
        ORDER BY last_ts DESC
        LIMIT ?`,
     )
