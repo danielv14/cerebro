@@ -157,6 +157,53 @@ Messages:         24817
 Deleted sources:  12
 ```
 
+### `cerebro digest <action>`
+Ett kurerat lager ovanpå rådatan: en LLM-skriven sammanfattning per tråd, lagrad i samma databas med eget FTS-index. Sammanfattningarna är täta och ämnesinriktade, så att söka i dem hittar "vad jobbade jag med kring X" mycket bättre än bm25 mot råa transkript. cerebro anropar **aldrig** en LLM själv: det äger prompten och lagringsformatet, och tar emot en sammanfattning som modellen producerat.
+
+**När du ombeds hitta mönster eller relaterat arbete:** börja med `cerebro digest search <query>` (täta sammanfattningar) och fördjupa sedan med `cerebro show <id>`. Faller den tillbaka för tunt, komplettera med `cerebro search` mot rådatan.
+
+**Summeringen pekar på rådatan, oftast räcker den.** Varje summering är nycklad på trådens id, och varje `digest`-rad inleds med det id:t. Det är referensen tillbaka till rådatan: i de allra flesta fall är summeringen good enough för att svara, och du behöver inte öppna transkriptet. Hämta rådatan **bara vid behov**, i den här ordningen:
+- `cerebro show <id>` for en outline (en rad per meddelande) om du behöver se förloppet.
+- `cerebro show <id> --full` for det ordagranna transkriptet när du behöver exakta formuleringar, kod eller kommandon.
+- `cerebro search "<term>"` när du vill träffa ett specifikt meddelande någonstans i tråden (eller i arkivet).
+
+Dränk inte kontexten genom att dra `--full` reflexmässigt; summering → id → outline → full är trappan.
+
+```
+$ cerebro digest stale --limit 3
+a1b2c3d4  2026-02-12 16:48   162 msgs  my-app  [never summarized]
+    Add dark mode toggle
+5e6f7a8b  2026-02-10 09:31    88 msgs  api-server  [new activity since summary]
+    Fix flaky auth test
+9c0d1e2f  2026-02-08 14:02   240 msgs  web-shop  [prompt v1 < v2]
+    Refactor checkout flow
+
+3 thread(s) need a summary. Summarize one:
+  cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
+```
+
+```
+$ cerebro digest search "how did we do the rate limiter"
+5e6f7a8b  2026-02-10 09:31  api-server  Fix flaky auth test
+    Added a token-bucket [rate] [limiter] to the auth middleware in api-server …
+
+1 summary hit(s). Open one: cerebro show <id>  |  full summary: cerebro digest show <id>
+```
+
+```
+$ cerebro digest show 5e6f7a8b
+Summary for thread 5e6f7a8b  (2026-02-10 09:31, claude-opus-4-8, prompt v1)
+
+Added a token-bucket rate limiter to the auth middleware in api-server. ...
+Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
+```
+
+**Att producera en sammanfattning.** Modellsteget bor utanför binären. Två vägar:
+- En hook eller skill pipear ett transkript genom `claude -p`: `cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
+- Eller du som agent gör det inline: läs `cerebro show <id> --full`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den).
+
+`cerebro digest stale` är reconcilern: kör den då och då (eller schemalagt) så fångas allt osummerat eller inaktuellt. En tråd blir inaktuell igen när den får nya meddelanden eller när prompt-versionen (`DIGEST_PROMPT_VERSION`) höjs.
+
 ## Indexering (mental modell)
 
 - **`cerebro index` är allt du behöver i vardagen.** Den är inkrementell: varje fil har en byte-cursor (`index_state`) med hur långt vi läst plus filens mtime. Oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Att köra om är billigt.
@@ -170,4 +217,4 @@ Deleted sources:  12
 - **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
 - **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes. Varje sådant block kapas till första 1 KB (`[+N chars truncated]`-markör) eftersom huvudet rymmer det sökbara (tool-namn, file_path, kommando) medan resten är reproducerbart brus. Prosa och resonemang lagras ordagrant; fel (`[tool_result:error]`) kapas inte.
 - **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
-- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). En `SessionEnd`-hook kör `cerebro index` vid `/clear`. Du kan ändå proaktivt köra `relevant`/`search` när du vill gräva djupare.
+- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). `relevant` matchar **summeringarna först** (kurerat, hög signal) och faller tillbaka på rådata-bm25 for trådar som ännu inte summerats; en träff märkt `summary:` kommer från summeringen, `match:` från rådatan. En `SessionEnd`-hook vid `/clear` indexerar synkront och summerar sedan den just rensade sessionen i bakgrunden via `claude -p` (best-effort; `cerebro digest stale` är reconcilern som fångar det som missas). Du kan ändå proaktivt köra `relevant`/`search`/`digest search` när du vill gräva djupare.
