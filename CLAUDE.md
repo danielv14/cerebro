@@ -28,7 +28,10 @@ code.
   the daily launchd agent run a *compiled* snapshot at `$CLAUDE_CONFIG_DIR/cerebro/cerebro`
   (defaults to `~/.claude/cerebro/cerebro`), not the source. Code edits (e.g. to
   `flattenContent`) do not affect automated indexing until you redeploy: `bun run deploy`
-  (builds, then copies the binary into the Claude config dir).
+  (builds, then copies the binary plus `hooks/summarize-on-clear.sh` into the Claude
+  config dir). The clear hook runs the deployed script, which indexes synchronously
+  then fires a detached `claude -p` summary; edits to the script or the digest prompt
+  also need a redeploy to reach the automated path.
 - **Never test against the real archive.** Point at a throwaway DB so you do not
   pollute `~/.claude/cerebro/archive.sqlite`:
 
