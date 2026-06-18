@@ -96,10 +96,20 @@ rate limit, killed on teardown), `cerebro digest stale` re-surfaces the thread. 
 on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
 instead.
 
-The summary model defaults to `claude-haiku-4-5` (mechanical compress-and-tag work that
-fires on every /clear: cheapest input price, no effort/thinking overhead). Override with
-`CEREBRO_DIGEST_MODEL=claude-sonnet-4-6` in the hook's environment if summaries miss
-nuance on complex sessions.
+The summary model is tiered by transcript size, since the model context window is the
+real constraint. Small threads (the common case) use `claude-haiku-4-5` (mechanical
+compress-and-tag work, cheapest input price, no effort/thinking overhead). Oversized
+threads escalate to `claude-sonnet-4-6[1m]` in a single shot: Sonnet has a 1M-token
+context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token thread
+is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
+it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
+default 200k window and a giant thread still fails with "Prompt is too long". The hook
+decides by the rendered char count (`cerebro digest input` is the size-bounded transcript;
+see the `digest` section), and `cerebro digest input` water-fill-caps anything large
+enough to risk overflowing even a 1M context. Override the tier via `CEREBRO_DIGEST_MODEL`
+(small, default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default `claude-sonnet-4-6[1m]`),
+and `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 540000) in the hook's
+environment.
 
 ### Relevant past threads per prompt
 
@@ -144,16 +154,19 @@ storage format (one versioned contract), and accepts a summary the model produce
 cerebro digest stale [--limit N]            # threads needing a (re)summary (never summarized,
                                             #   new activity since, or older prompt version)
 cerebro digest prompt                       # print the canonical summarization prompt
+cerebro digest input <id>                   # print the size-bounded transcript to summarize
 cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
 
 The model step lives outside the binary, in a hook or skill that pipes a transcript
-through `claude -p` and writes the result back:
+through `claude -p` and writes the result back. Pipe `digest input` (not `show --full`):
+it renders the same transcript but bounded to fit a single model context, so a giant
+thread does not blow the context limit.
 
 ```sh
-cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
+cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 ```
 
 This keeps the contract in one place: the prompt asks for exactly what `digest write`

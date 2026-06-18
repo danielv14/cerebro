@@ -179,7 +179,7 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app  [never summarized]
     Refactor checkout flow
 
 3 thread(s) need a summary. Summarize one:
-  cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
+  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 ```
 
 ```
@@ -199,8 +199,10 @@ Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
 ```
 
 **Att producera en sammanfattning.** Modellsteget bor utanför binären. Två vägar:
-- En hook eller skill pipear ett transkript genom `claude -p`: `cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
-- Eller du som agent gör det inline: läs `cerebro show <id> --full`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den).
+- En hook eller skill pipear transkriptet genom `claude -p`: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
+- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den).
+
+Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: det renderar samma transkript men storleksbegränsat så att det får plats i ett enda modellkontext. Korta trådar kommer ut ordagrant; en jättetråd kapas (water-fill: korta meddelanden behålls helt, de längsta essäerna trimmas först) så att inte ens ett 1M-kontext spräcks. Clear-hooken väljer modell efter storlek: små trådar → `claude-haiku-4-5` (billigast, vanligaste fallet), överstora → `claude-sonnet-4-6[1m]` i ett skott (1M-kontext, platt pris, ingen long-context-premie), så att en tråd på 400-600k tokens summeras hel istället för trunkerad. `[1m]`-suffixet krävs: det är så Claude Code väljer 1M-varianten; utan det får `claude -p` default-fönstret 200k och en jättetråd failar fortfarande med "Prompt is too long".
 
 `cerebro digest stale` är reconcilern: kör den då och då (eller schemalagt) så fångas allt osummerat eller inaktuellt. En tråd blir inaktuell igen när den får nya meddelanden eller när prompt-versionen (`DIGEST_PROMPT_VERSION`) höjs.
 
