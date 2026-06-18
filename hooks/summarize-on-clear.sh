@@ -35,21 +35,55 @@ session_id="$(printf '%s' "$payload" \
 command -v claude >/dev/null 2>&1 || exit 0
 
 # Detached summary: nohup + closed stdio so it outlives the /clear teardown. The
-# inner command resolves the prompt from cerebro (the single source of the
-# contract) and writes the model's output straight back.
-# Haiku is pinned deliberately: summarization is mechanical (compress + tag), it
-# fires on every /clear (cheapest input price), and Haiku has no effort/thinking
-# knobs to inherit from the user's settings and slow the background job down.
-# Upgrade to claude-sonnet-4-6 here if summaries start missing nuance.
+# inner command renders the size-bounded transcript from cerebro (which owns the
+# rendering contract), picks a model by its size, and writes the output straight
+# back.
+#
+# Model is tiered by transcript size, because the context window is the real
+# constraint and pricing rewards it:
+# - Small threads (the common case) -> Haiku 4.5 (200k context, $1/$5 per MTok).
+#   Summarization is mechanical (compress + tag), it fires on every /clear, and
+#   Haiku is cheapest with no effort/thinking knobs to slow the background job.
+# - Oversized threads (200k-1M tokens) -> Sonnet 4.6 in a single shot. Sonnet has
+#   a 1M-token context at a flat $3/$15 per MTok (no long-context premium), so a
+#   half-million-token thread fits whole without truncation or map-reduce. The
+#   escalation costs more per event but only fires on the rare giant thread.
+#   The "[1m]" suffix is required: it is how Claude Code selects the 1M-context
+#   variant. Plain "claude-sonnet-4-6" gets the default 200k window and a giant
+#   thread still fails with "Prompt is too long" -- the suffix is the whole point.
+# The threshold is a char proxy (cerebro has no tokenizer): ~540k chars is a
+# conservative stand-in for ~180k tokens, escalating before Haiku's 200k can
+# overflow. `cerebro digest input` water-fill-caps anything above ~2.7M chars, so
+# even Sonnet's 1M context is never exceeded. Override any of the three via env.
+#
+# The model output is captured to a file and only written back if claude -p
+# succeeds (exit 0) and produced non-empty output. Piping claude straight into
+# `digest write` would store whatever claude printed even on failure: a past run
+# stored a "Prompt is too long" error as the summary that way. On failure we log
+# and leave the thread unsummarized; `cerebro digest stale` retries it next time.
 nohup bash -c '
-  cerebro_bin="$1"; sid="$2"; log="$3"; model="$4"
+  cerebro_bin="$1"; sid="$2"; log="$3"; small="$4"; large="$5"; threshold="$6"
   {
     date "+[digest %F %T] summarizing $sid"
-    "$cerebro_bin" show "$sid" --full \
-      | claude -p --model "$model" "$("$cerebro_bin" digest prompt)" \
-      | "$cerebro_bin" digest write "$sid" --model "$model"
+    tmp="$(mktemp)"
+    out="$(mktemp)"
+    "$cerebro_bin" digest input "$sid" > "$tmp"
+    chars="$(wc -c < "$tmp")"
+    if (( chars > threshold )); then model="$large"; else model="$small"; fi
+    echo "[digest] $sid: $chars chars -> $model"
+    claude -p --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
+      "$cerebro_bin" digest write "$sid" --model "$model" < "$out"
+    else
+      echo "[digest] $sid: summary failed (claude exit $rc, $(wc -c < "$out" | tr -d " ") bytes) — left unsummarized; digest stale will retry"
+    fi
+    rm -f "$tmp" "$out"
   } >> "$log/digest.log" 2>&1
-' _ "$CEREBRO" "$session_id" "$LOG_DIR" "${CEREBRO_DIGEST_MODEL:-claude-haiku-4-5}" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
+' _ "$CEREBRO" "$session_id" "$LOG_DIR" \
+  "${CEREBRO_DIGEST_MODEL:-claude-haiku-4-5}" \
+  "${CEREBRO_DIGEST_MODEL_LARGE:-claude-sonnet-4-6[1m]}" \
+  "${CEREBRO_DIGEST_HAIKU_MAX_CHARS:-540000}" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
 
 disown 2>/dev/null || true
 exit 0
