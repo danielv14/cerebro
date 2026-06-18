@@ -1,13 +1,13 @@
 ---
 name: cerebro
-description: Sök och återhämta innehåll ur alla tidigare Claude Code-sessioner (verbatim-arkiv med fulltextsök). Använd vid "cerebro", "tidigare session", "vad gjorde jag i", "vad sa vi om", "hitta konversationen där", "sök i mina claude-sessioner", "recall session", "förra gången vi", "hur löste vi X tidigare". Till skillnad från vault-recall (kurerad kunskap) frågar detta de råa konversationstranskripten.
+description: Sök och återhämta innehåll ur alla tidigare Claude Code-sessioner (verbatim-arkiv med fulltextsök). Använd vid "cerebro", "tidigare session", "vad gjorde jag i", "vad sa vi om", "hitta konversationen där", "sök i mina claude-sessioner", "recall session", "förra gången vi", "hur löste vi X tidigare".
 ---
 
 # cerebro
 
 `cerebro` är ett lokalt CLI som indexerar **alla** Claude Code-sessioner (inklusive de Claude Code redan raderat) till en SQLite-databas och gör dem sökbara. Det är ett verbatim-arkiv: hela konversationer, vilket repo/mapp de tillhör, och subagent-transkript. Använd det för att hitta vad som faktiskt sades eller gjordes i en tidigare session.
 
-Binären finns på PATH som `cerebro`. Om den saknas: `bun run ~/dev-personal/cerebro/src/cli.ts <kommando>`.
+Binären finns på PATH som `cerebro`. Om den saknas: `bun run /path/to/cerebro/src/cli.ts <kommando>`.
 
 > Exempelutdata nedan använder påhittad testdata.
 
@@ -16,7 +16,7 @@ Binären finns på PATH som `cerebro`. Om den saknas: `bun run ~/dev-personal/ce
 Dränk inte kontextfönstret. Följ den här trappan:
 
 1. **`cerebro index`** först om sökningen gäller nyligt arbete (indexet är inkrementellt och snabbt; sessioner som är öppna just nu kanske inte är fullständigt skrivna än).
-2. **`cerebro search <query>`** eller **`cerebro sessions`** för att hitta rätt tråd. Ger bara id + tidsstämpel + projekt + snippet.
+2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevans-rankat mot en prompt) eller **`cerebro sessions`** / **`cerebro recent`** för att hitta rätt tråd. Ger bara id + tidsstämpel + projekt + snippet.
 3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
 4. **`cerebro show <id> --full`** först när du behöver det ordagranna transkriptet. Hämta inte `--full` i onödan; trådar kan vara tusentals meddelanden.
 
@@ -86,6 +86,35 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app
     Set up CI pipeline
 ```
 
+### `cerebro recent [--cwd P] [--days D] [--limit N]`
+Senaste trådarna för ett repo (default: nuvarande katalog, 14 dagar, 5 trådar), scopat på git-roten. Varje tråd visas med sin öppnings-prompt. Bra för att orientera sig i vad som hänt i ett repo nyligen.
+
+```
+$ cerebro recent --limit 2
+Recent sessions in my-app (last 14 days):
+  a1b2c3d4  2026-02-12   162 msgs  Add dark mode toggle
+      opened: Add a dark mode toggle to the settings page, persisted in localStorage
+  3a4b5c6d  2026-02-05    54 msgs  Set up CI pipeline
+      opened: Set up a GitHub Actions pipeline that runs lint, typecheck and tests
+
+Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
+```
+
+### `cerebro relevant <prompt> [--limit N]`
+Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
+
+```
+$ cerebro relevant "how did we set up CI"
+Related past sessions:
+  3a4b5c6d  2026-02-05  my-app  Set up CI pipeline
+      opened: Set up a GitHub Actions pipeline that runs lint, typecheck and tests
+      match:  … the [CI] workflow runs on push, cache the bun install step …
+
+To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
+```
+
+`recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
+
 ### `cerebro show <session-id> [--full]`
 Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. Subagent-turer taggas `[subagent]`.
 
@@ -141,3 +170,4 @@ Deleted sources:  12
 - **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
 - **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes.
 - **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
+- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). En `SessionEnd`-hook kör `cerebro index` vid `/clear`. Du kan ändå proaktivt köra `relevant`/`search` när du vill gräva djupare.

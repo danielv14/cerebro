@@ -10,9 +10,9 @@ after Claude Code removes the originals.
 ## Install
 
 ```sh
-bun install                                          # one small pure-JS dep (stopword) + types
-ln -sf ../../dev-personal/cerebro/src/cli.ts ~/.local/bin/cerebro   # global `cerebro` on PATH
-cerebro index                                        # build the archive
+bun install                                              # one small pure-JS dep (stopword) + types
+ln -sf /path/to/cerebro/src/cli.ts ~/.local/bin/cerebro  # global `cerebro` on PATH
+cerebro index                                            # build the archive
 ```
 
 The CLI is `src/cli.ts` with a `#!/usr/bin/env bun` shebang, so a symlink from any
@@ -24,7 +24,7 @@ global bin dir is on PATH.) Or run directly: `bun run src/cli.ts <command>`.
 `skills/cerebro/SKILL.md` documents the CLI for Claude Code. Symlink it in:
 
 ```sh
-ln -sf ../../dev-personal/cerebro/skills/cerebro ~/.claude/skills/cerebro
+ln -sf /path/to/cerebro/skills/cerebro ~/.claude/skills/cerebro
 ```
 
 ## Usage
@@ -33,6 +33,8 @@ ln -sf ../../dev-personal/cerebro/skills/cerebro ~/.claude/skills/cerebro
 cerebro index [--full] [--dry-run]          # incremental index (--full re-reads all; --dry-run writes nothing)
 cerebro search <query> [--limit N]          # ranked full-text search, snippet-first
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
+cerebro recent [--cwd P] [--days D]         # recent threads for one repo
+cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
 cerebro show <session-id> [--full]          # outline (default) or full transcript
 cerebro stats                               # archive counts
 ```
@@ -51,119 +53,74 @@ that grows large (tens of MB) and holds verbatim private conversations. `*.sqlit
 is gitignored regardless. Keeping it next to the Claude data it indexes (the
 default) keeps the repo pure source.
 
-## Scheduling (daily auto-index, macOS)
+## Hooks (auto-index + context injection)
 
-The archive only captures what is on disk when `index` runs, and Claude Code deletes
-session files after `cleanupPeriodDays` (default 30, raise it in `~/.claude/settings.json`).
-Run `index` on a schedule so nothing is lost to that cleanup. On macOS, launchd does it.
+cerebro is on-demand, so two Claude Code hooks keep it useful without a daemon: one
+re-indexes when you clear a session, the other surfaces relevant past threads on each
+prompt. (Claude Code deletes session files after `cleanupPeriodDays`, default 30;
+raise it in `~/.claude/settings.json` and index before then.)
 
-Build a standalone binary first. Running the agent from a compiled binary (rather than
-`bun src/cli.ts`) means the macOS background item is identified as `cerebro`, not as
-Bun's code signer:
+Build a standalone binary first so the hooks start fast (no `bun` spawn per event):
 
 ```sh
-bun run build                                   # -> dist/cerebro (standalone)
+bun run build                          # -> dist/cerebro (standalone)
 mkdir -p ~/.claude/cerebro
 cp dist/cerebro ~/.claude/cerebro/cerebro
-codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cerebro
 ```
 
-Create `~/Library/LaunchAgents/com.danielv.cerebro.index.plist`. launchd does not
-expand `~`, so use absolute paths (replace `/Users/you`):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.danielv.cerebro.index</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/you/.claude/cerebro/cerebro</string>
-    <string>index</string>
-  </array>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
-  <key>StandardOutPath</key><string>/Users/you/.claude/cerebro/index.log</string>
-  <key>StandardErrorPath</key><string>/Users/you/.claude/cerebro/index.log</string>
-  <key>RunAtLoad</key><false/>
-</dict>
-</plist>
-```
-
-Load it, and run once to verify (a sleeping Mac runs the missed job on wake):
-
-```sh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.danielv.cerebro.index.plist
-launchctl kickstart -k gui/$(id -u)/com.danielv.cerebro.index
-cat ~/.claude/cerebro/index.log
-```
-
-The agent runs a snapshot, not the live source. After changing the code, rebuild and
-reinstall the binary:
-
-```sh
-bun run build && cp dist/cerebro ~/.claude/cerebro/cerebro
-codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cerebro
-```
-
-Remove it: `launchctl bootout gui/$(id -u)/com.danielv.cerebro.index` and delete the plist.
+The binary is a snapshot of the source; rebuild and copy again after changing the code.
 
 ### Index on /clear
 
-To capture a session the moment you clear it (so the next session's relevance hook
-can see it, rather than waiting for the daily run), add a `SessionEnd` hook with
-`matcher: "clear"` in `~/.claude/settings.json`:
+A `SessionEnd` hook with `matcher: "clear"` runs `cerebro index` the moment you clear
+a session, so a just-finished session is captured immediately instead of waiting for
+the next run. In `~/.claude/settings.json` (the hook runs in a shell, so `~` expands;
+use the absolute binary path if unsure):
 
 ```json
 {
   "hooks": {
     "SessionEnd": [
-      { "matcher": "clear", "hooks": [ { "type": "command", "command": "bash -c 'sleep 0.5; /Users/you/.claude/cerebro/cerebro index'", "timeout": 120 } ] }
+      { "matcher": "clear", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/cerebro index", "timeout": 120 } ] }
     ]
   }
 }
 ```
 
-`cerebro index` is incremental, so this only reads the changed files. The short
-`sleep` gives the just-ended transcript a moment to flush; anything still unwritten
-is caught by the next index regardless, since mid-write lines are deferred safely.
+`cerebro index` is incremental, so it only reads changed files. Anything not yet
+flushed to disk is caught by the next index regardless, since mid-write lines are
+deferred safely.
 
-## Context injection (recall past work)
+### Relevant past threads per prompt
 
-Two commands surface past threads as compact, recognizable breadcrumbs (id, date,
-title, the opening prompt, and for `relevant` a matching snippet), index-first so the
-model pulls detail on demand with `show` / `search`:
+`cerebro recent` lists recent threads for a repo and `cerebro relevant <prompt>`
+returns the threads most relevant to a prompt (FTS, bm25). Both surface compact,
+recognizable breadcrumbs (id, date, title, the opening prompt, and for `relevant` a
+matching snippet), index-first so the model pulls detail on demand with `show` /
+`search`. `--context` emits an agent-facing block (silent when nothing matches);
+`--stdin` reads the prompt from a hook's JSON payload.
 
-- `cerebro recent [--cwd P] [--days D]` — recent threads for the current repo.
-- `cerebro relevant <prompt>` — past threads most relevant to a prompt (FTS, bm25).
-  `--stdin` reads the prompt from a hook's JSON payload instead of an argument.
-
-Both accept `--context` to emit an agent-facing block (silent when nothing matches).
-
-A `UserPromptSubmit` hook makes recall automatic: on each prompt it runs
-`cerebro relevant --stdin --context` and injects matching past threads, so the model
-picks up earlier work when your prompt overlaps it. In `~/.claude/settings.json`
-(use the compiled binary from the Scheduling section so it starts fast per prompt):
+A `UserPromptSubmit` hook injects matching past threads on each prompt, so the model
+picks up earlier work when your prompt overlaps it:
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "/Users/you/.claude/cerebro/cerebro relevant --stdin --context --limit 5", "timeout": 15 } ] }
+      { "hooks": [ { "type": "command", "command": "~/.claude/cerebro/cerebro relevant --stdin --context --limit 5", "timeout": 15 } ] }
     ]
   }
 }
 ```
 
-It never blocks (always exits 0) and stays silent when nothing matches. Remove the
-hook group to disable.
+It never blocks (always exits 0) and stays silent when nothing matches. Remove a hook
+group to disable it.
 
 ## How it works
 
 - **Incremental + idempotent.** A per-file byte cursor (`index_state`) means each
   run reads only newly appended bytes; unchanged files are skipped entirely. Plain
-  `cerebro index` is the daily command. `--full` (re-read everything, dedup makes
+  `cerebro index` is the everyday command. `--full` (re-read everything, dedup makes
   it safe) is only for a suspected-corrupt index or a schema change. `--dry-run`
   reports what would be indexed without writing.
 - **Dedup on message UUID.** The only stable key across resumes, so reopening and
