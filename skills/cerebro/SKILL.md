@@ -168,6 +168,6 @@ Deleted sources:  12
 ## Bra att veta
 
 - **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
-- **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes.
+- **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes. Varje sådant block kapas till första 1 KB (`[+N chars truncated]`-markör) eftersom huvudet rymmer det sökbara (tool-namn, file_path, kommando) medan resten är reproducerbart brus. Prosa och resonemang lagras ordagrant; fel (`[tool_result:error]`) kapas inte.
 - **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
 - **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). En `SessionEnd`-hook kör `cerebro index` vid `/clear`. Du kan ändå proaktivt köra `relevant`/`search` när du vill gräva djupare.

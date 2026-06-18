@@ -27,9 +27,22 @@ export const parseLine = (line: string): unknown => {
   }
 };
 
+// Tool plumbing (file reads, bash output, grep dumps, large Edit/Write payloads)
+// dominates raw transcript bytes and ages worst: it is reproducible and clutters
+// search relevance. We keep the head of each tool block so the searchable bit (tool
+// name, file_path, command, the first lines a reply refers to) survives while the
+// bulk is dropped. JSON serializes the identifier first, so the head is the useful
+// part. Errors are exempt: they are tiny and a truncated stack trace is useless.
+const TOOL_TEXT_CAP = 1000;
+const capToolText = (rendered: string): string =>
+  rendered.length <= TOOL_TEXT_CAP
+    ? rendered
+    : `${rendered.slice(0, TOOL_TEXT_CAP)} [+${rendered.length - TOOL_TEXT_CAP} chars truncated]`;
+
 // Flatten a message's `content` into greppable plain text. Strings pass through;
 // block arrays concatenate text/thinking and tag tool_use / tool_result compactly
-// so they stay searchable without drowning the prose.
+// so they stay searchable without drowning the prose. Tool blocks are capped (see
+// capToolText) so a single grep dump or Write payload cannot bloat the archive.
 export const flattenContent = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -48,13 +61,16 @@ export const flattenContent = (content: unknown): string => {
       case "tool_use": {
         const input =
           b.input && typeof b.input === "object" ? JSON.stringify(b.input) : "";
-        parts.push(`[tool_use:${b.name ?? "?"}] ${input}`.trimEnd());
+        parts.push(capToolText(`[tool_use:${b.name ?? "?"}] ${input}`.trimEnd()));
         break;
       }
       case "tool_result": {
         const inner = flattenContent(b.content);
-        const flag = b.is_error ? ":error" : "";
-        parts.push(`[tool_result${flag}] ${inner}`.trimEnd());
+        if (b.is_error) {
+          parts.push(`[tool_result:error] ${inner}`.trimEnd());
+        } else {
+          parts.push(capToolText(`[tool_result] ${inner}`.trimEnd()));
+        }
         break;
       }
       case "image":

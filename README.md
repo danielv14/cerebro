@@ -133,6 +133,11 @@ group to disable it.
 - **Subagents fold into the parent.** Transcripts under
   `<session>/subagents/agent-*.jsonl` are attributed to their parent session, so
   sidechain turns appear inline in `show`, tagged `[subagent]`.
+- **Tool blocks are capped.** Prose and reasoning are kept verbatim, but each
+  `tool_use` / `tool_result` block is truncated to its first 1 KB (head kept, plus
+  a `[+N chars truncated]` marker). The head holds the searchable part (tool name,
+  file_path, command, the lines a reply refers to); the dropped bulk is reproducible
+  state that ages poorly and pollutes search. Errors are kept in full.
 - **Index-first retrieval.** `search` returns id + timestamp + project + snippet;
   full text is fetched on demand via `show`, keeping the context window small.
 

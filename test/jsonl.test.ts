@@ -51,6 +51,36 @@ describe("flattenContent", () => {
     expect(out).toBe("[tool_result:error] boom");
   });
 
+  test("caps a large tool_result, keeping the head plus a marker", () => {
+    const big = "x".repeat(5000);
+    const out = flattenContent([{ type: "tool_result", content: big }]);
+    // head is "[tool_result] " (14) + first chars up to the 1000 cap, then a marker.
+    expect(out.startsWith("[tool_result] xxxx")).toBe(true);
+    expect(out).toContain("chars truncated]");
+    expect(out.indexOf(" [+")).toBe(1000);
+  });
+
+  test("caps a large tool_use input the same way", () => {
+    const out = flattenContent([
+      { type: "tool_use", name: "Write", input: { content: "y".repeat(5000) } },
+    ]);
+    expect(out.startsWith('[tool_use:Write] {"content":"yyyy')).toBe(true);
+    expect(out).toContain("chars truncated]");
+  });
+
+  test("does not cap an error tool_result", () => {
+    const out = flattenContent([
+      { type: "tool_result", is_error: true, content: "z".repeat(5000) },
+    ]);
+    expect(out).toBe(`[tool_result:error] ${"z".repeat(5000)}`);
+    expect(out).not.toContain("chars truncated]");
+  });
+
+  test("leaves a small tool block untouched", () => {
+    const out = flattenContent([{ type: "tool_result", content: "short output" }]);
+    expect(out).toBe("[tool_result] short output");
+  });
+
   test("renders images as a placeholder", () => {
     expect(flattenContent([{ type: "image", source: {} }])).toBe("[image]");
   });
