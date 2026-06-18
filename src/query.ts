@@ -183,11 +183,17 @@ export interface RelevantThread {
   title: string | null;
   snippet: string;
   opening: string | null;
+  fromSummary: boolean;
 }
 
-// Threads most relevant to a prompt: FTS-search the prompt as OR-of-tokens, keep
-// the best-ranked hit per thread, return the top `limit` threads enriched with
-// title + opening prompt so they are recognizable in injected context.
+// Threads most relevant to a prompt, summary-first. The curated summaries are dense
+// and topical, so a match there is far higher-signal than raw-transcript bm25; we
+// fill the result with summary matches first, then top up with raw-transcript
+// matches for threads that have no summary yet (so the hook keeps working during
+// backfill and for un-summarized recent sessions). bm25 scores are not comparable
+// across the two FTS indexes, so we rank within each and prefer the summary tier
+// wholesale rather than merging scores. Each thread is enriched with title +
+// opening prompt so it is recognizable in injected context.
 export const relevantThreads = (
   db: Database,
   prompt: string,
@@ -196,55 +202,86 @@ export const relevantThreads = (
   const match = toMatchQuery(prompt);
   if (!match) return [];
 
-  interface Hit {
-    root: string | null;
-    ts: string | null;
-    project_path: string | null;
-    snippet: string;
-    score: number;
-  }
-  let hits: Hit[];
+  // Insertion order is the final order, and a root is only ever added once, so the
+  // summary tier always outranks the raw tier for the same thread.
+  const chosen = new Map<string, { snippet: string; fromSummary: boolean }>();
+
+  // Tier 1: curated summaries, ranked by bm25.
   try {
-    hits = db
+    const summaryHits = db
       .query(
-        `SELECT s.root_session_id AS root, m.ts AS ts, s.project_path AS project_path,
-                snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
-                bm25(messages_fts) AS score
-         FROM messages_fts
-         JOIN messages m ON m.id = messages_fts.rowid
-         JOIN sessions s ON s.session_id = m.session_id
-         WHERE messages_fts MATCH ?
-         ORDER BY bm25(messages_fts)
-         LIMIT 80`,
+        `SELECT s.root_session_id AS root,
+                snippet(summaries_fts, 0, '[', ']', ' … ', 10) AS snippet
+         FROM summaries_fts
+         JOIN summaries s ON s.rowid = summaries_fts.rowid
+         WHERE summaries_fts MATCH ?
+         ORDER BY bm25(summaries_fts)
+         LIMIT ?`,
       )
-      .all(match) as Hit[];
+      .all(match, limit) as { root: string; snippet: string }[];
+    for (const hit of summaryHits) {
+      if (chosen.size >= limit) break;
+      if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
+    }
   } catch {
-    return [];
+    // A malformed MATCH (rare, toMatchQuery quotes tokens) falls through to raw.
   }
 
-  // Best (lowest bm25) hit per thread root.
-  const byRoot = new Map<string, Hit>();
-  for (const hit of hits) {
-    if (!hit.root) continue;
-    const existing = byRoot.get(hit.root);
-    if (!existing || hit.score < existing.score) byRoot.set(hit.root, hit);
+  // Tier 2: raw transcripts, for threads not already covered by a summary match.
+  if (chosen.size < limit) {
+    interface Hit {
+      root: string | null;
+      snippet: string;
+      score: number;
+    }
+    let hits: Hit[] = [];
+    try {
+      hits = db
+        .query(
+          `SELECT s.root_session_id AS root,
+                  snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
+                  bm25(messages_fts) AS score
+           FROM messages_fts
+           JOIN messages m ON m.id = messages_fts.rowid
+           JOIN sessions s ON s.session_id = m.session_id
+           WHERE messages_fts MATCH ?
+           ORDER BY bm25(messages_fts)
+           LIMIT 80`,
+        )
+        .all(match) as Hit[];
+    } catch {
+      hits = [];
+    }
+
+    // Best (lowest bm25) raw hit per thread root, then fill remaining slots.
+    const byRoot = new Map<string, Hit>();
+    for (const hit of hits) {
+      if (!hit.root) continue;
+      const existing = byRoot.get(hit.root);
+      if (!existing || hit.score < existing.score) byRoot.set(hit.root, hit);
+    }
+    for (const hit of [...byRoot.values()].sort((a, b) => a.score - b.score)) {
+      if (chosen.size >= limit) break;
+      if (!chosen.has(hit.root!)) {
+        chosen.set(hit.root!, { snippet: hit.snippet, fromSummary: false });
+      }
+    }
   }
 
-  const top = [...byRoot.values()].sort((a, b) => a.score - b.score).slice(0, limit);
-
-  return top.map((hit) => {
+  return [...chosen.entries()].map(([root, info]) => {
     const meta = db
       .query(`SELECT title, last_ts, project_path FROM sessions WHERE session_id = ?`)
-      .get(hit.root!) as
+      .get(root) as
       | { title: string | null; last_ts: string | null; project_path: string | null }
       | null;
     return {
-      id: hit.root!,
-      last_ts: meta?.last_ts ?? hit.ts,
-      project_path: meta?.project_path ?? hit.project_path,
+      id: root,
+      last_ts: meta?.last_ts ?? null,
+      project_path: meta?.project_path ?? null,
       title: meta?.title ?? null,
-      snippet: hit.snippet,
-      opening: openingPrompt(db, hit.root!),
+      snippet: info.snippet,
+      opening: openingPrompt(db, root),
+      fromSummary: info.fromSummary,
     };
   });
 };

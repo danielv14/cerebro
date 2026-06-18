@@ -12,6 +12,7 @@ import {
   stats,
   toMatchQuery,
 } from "../src/query.ts";
+import { writeSummary } from "../src/digest.ts";
 import {
   makeClaudeDir,
   writeSession,
@@ -129,6 +130,41 @@ describe("query (populated archive)", () => {
     expect(hits[0]!.id).toBe("S");
     expect(hits[0]!.opening).toContain("drizzle to knex");
     expect(hits[0]!.snippet.toLowerCase()).toContain("knex");
+  });
+
+  test("relevantThreads prefers a thread's summary snippet over the raw transcript", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "migrate the database layer from drizzle to knex"),
+      assistantMsg("S", "a1", "done, the knex migration is complete", { parentUuid: "u1" }),
+    ]);
+    runIndex(db);
+    // "Refactored" appears only in the summary, never in the raw transcript.
+    writeSummary(db, "S", "Refactored to knex");
+
+    const hits = relevantThreads(db, "knex", 3);
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.id).toBe("S");
+    expect(hits[0]!.fromSummary).toBe(true);
+    // Snippet comes from the curated summary, not the raw transcript.
+    expect(hits[0]!.snippet).toContain("Refactored");
+    expect(hits[0]!.snippet).toContain("[knex]");
+  });
+
+  test("relevantThreads falls back to the raw transcript for un-summarized threads", () => {
+    // SUMM has a summary, RAW does not; a query matching both must still surface RAW.
+    writeSession(env.projects, "-repo", "SUMM", [
+      userMsg("SUMM", "u1", "knex migration in the api service", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "RAW", [
+      userMsg("RAW", "u2", "another knex migration in the web service", { timestamp: ts(10) }),
+    ]);
+    runIndex(db);
+    writeSummary(db, "SUMM", "Did a knex migration. Keywords: knex");
+
+    const hits = relevantThreads(db, "knex migration", 3);
+    const byId = new Map(hits.map((h) => [h.id, h]));
+    expect(byId.get("SUMM")!.fromSummary).toBe(true);
+    expect(byId.get("RAW")!.fromSummary).toBe(false);
   });
 
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
