@@ -109,6 +109,26 @@ codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cer
 
 Remove it: `launchctl bootout gui/$(id -u)/com.danielv.cerebro.index` and delete the plist.
 
+### Index on /clear
+
+To capture a session the moment you clear it (so the next session's relevance hook
+can see it, rather than waiting for the daily run), add a `SessionEnd` hook with
+`matcher: "clear"` in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      { "matcher": "clear", "hooks": [ { "type": "command", "command": "bash -c 'sleep 0.5; /Users/you/.claude/cerebro/cerebro index'", "timeout": 120 } ] }
+    ]
+  }
+}
+```
+
+`cerebro index` is incremental, so this only reads the changed files. The short
+`sleep` gives the just-ended transcript a moment to flush; anything still unwritten
+is caught by the next index regardless, since mid-write lines are deferred safely.
+
 ## Context injection (recall past work)
 
 Two commands surface past threads as compact, recognizable breadcrumbs (id, date,
@@ -130,7 +150,7 @@ picks up earlier work when your prompt overlaps it. In `~/.claude/settings.json`
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "/Users/you/.claude/cerebro/cerebro relevant --stdin --context", "timeout": 15 } ] }
+      { "hooks": [ { "type": "command", "command": "/Users/you/.claude/cerebro/cerebro relevant --stdin --context --limit 5", "timeout": 15 } ] }
     ]
   }
 }
