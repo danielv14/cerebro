@@ -10,7 +10,8 @@
     "cerebro": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro"
+    "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro",
+    "deploy": "bun run build && mkdir -p \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && cp dist/cerebro \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro\""
   },
   "devDependencies": {
     "@types/bun": "latest",

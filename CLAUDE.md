@@ -25,9 +25,10 @@ code.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`). The PATH symlink tracks the repo live.
 - **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook and
-  the daily launchd agent run a *compiled* snapshot at `~/.claude/cerebro/cerebro`, not
-  the source. Code edits (e.g. to `flattenContent`) do not affect automated indexing
-  until you rebuild and copy it: `bun run build && cp dist/cerebro ~/.claude/cerebro/cerebro`.
+  the daily launchd agent run a *compiled* snapshot at `$CLAUDE_CONFIG_DIR/cerebro/cerebro`
+  (defaults to `~/.claude/cerebro/cerebro`), not the source. Code edits (e.g. to
+  `flattenContent`) do not affect automated indexing until you redeploy: `bun run deploy`
+  (builds, then copies the binary into the Claude config dir).
 - **Never test against the real archive.** Point at a throwaway DB so you do not
   pollute `~/.claude/cerebro/archive.sqlite`:
 

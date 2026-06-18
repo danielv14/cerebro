@@ -60,21 +60,16 @@ re-indexes when you clear a session, the other surfaces relevant past threads on
 prompt. (Claude Code deletes session files after `cleanupPeriodDays`, default 30;
 raise it in `~/.claude/settings.json` and index before then.)
 
-Build a standalone binary first so the hooks start fast (no `bun` spawn per event):
+Deploy a standalone binary so the hooks start fast (no `bun` spawn per event) and the
+daily agent works under launchd's minimal PATH, where `bun` is not resolvable:
 
 ```sh
-bun run build                          # -> dist/cerebro (standalone)
-mkdir -p ~/.claude/cerebro
-cp dist/cerebro ~/.claude/cerebro/cerebro
+bun run deploy   # builds dist/cerebro, copies it into $CLAUDE_CONFIG_DIR/cerebro (default ~/.claude/cerebro)
 ```
 
 The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
 tracks the repo live, but the hooks and the daily agent run this compiled copy, so a code
-change does not reach automated indexing until you rebuild and copy it again:
-
-```sh
-bun run build && cp dist/cerebro ~/.claude/cerebro/cerebro
-```
+change does not reach automated indexing until you re-run `bun run deploy`.
 
 ### Index on /clear
 
