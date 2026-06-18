@@ -5,6 +5,7 @@ import { runIndex } from "../src/indexer.ts";
 import {
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
+  buildDigestInput,
   staleThreads,
   writeSummary,
   getSummary,
@@ -26,6 +27,63 @@ describe("DIGEST_PROMPT", () => {
     expect(DIGEST_PROMPT).toContain("Keywords:");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("routine");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("output only the summary");
+  });
+});
+
+describe("buildDigestInput (size-bounded transcript)", () => {
+  const msg = (role: string, text: string, sidechain = false) => ({
+    role,
+    text,
+    ts: "2026-01-01T00:00:00.000Z",
+    is_sidechain: sidechain ? 1 : 0,
+  });
+
+  test("renders every message verbatim when under budget", () => {
+    const out = buildDigestInput([msg("user", "hello there"), msg("assistant", "general kenobi")]);
+    expect(out).toContain("hello there");
+    expect(out).toContain("general kenobi");
+    expect(out).toContain("──── user");
+    expect(out).toContain("──── assistant");
+    expect(out).not.toContain("truncated for digest");
+  });
+
+  test("tags subagent turns in the header", () => {
+    const out = buildDigestInput([msg("user", "sub work", true)]);
+    expect(out).toContain("──── user · subagent");
+  });
+
+  test("over budget: keeps every message, trims the longest, leaves short ones whole", () => {
+    const big = "x".repeat(10_000);
+    const messages = [
+      msg("user", "tiny steer one"),
+      msg("assistant", big),
+      msg("user", "tiny steer two"),
+      msg("assistant", big),
+    ];
+    const out = buildDigestInput(messages, 2_000);
+
+    // All four messages are still represented (water-fill keeps the conversation shape).
+    expect((out.match(/──── /g) ?? []).length).toBe(4);
+    // Short steering messages survive intact.
+    expect(out).toContain("tiny steer one");
+    expect(out).toContain("tiny steer two");
+    // The long essays are trimmed, not dropped.
+    expect(out).toContain("truncated for digest");
+    // Bounded near the budget (marker overhead aside), far below the ~20k verbatim size.
+    expect(out.length).toBeLessThan(2_500);
+    expect(out.length).toBeGreaterThan(500);
+  });
+
+  test("over budget: a long body is capped while a short body is not", () => {
+    const out = buildDigestInput([msg("user", "short"), msg("assistant", "y".repeat(5_000))], 1_000);
+    // The short body renders whole (its block ends, then the next header begins).
+    expect(out).toContain("short\n\n──── assistant");
+    // Only the long body carries the truncation marker.
+    expect(out).toContain("truncated for digest");
+  });
+
+  test("handles an empty thread", () => {
+    expect(buildDigestInput([])).toBe("");
   });
 });
 

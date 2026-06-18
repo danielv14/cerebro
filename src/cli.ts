@@ -17,6 +17,7 @@ import {
 import {
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
+  buildDigestInput,
   staleThreads,
   writeSummary,
   getSummary,
@@ -39,13 +40,14 @@ Usage:
 Digest actions:
   cerebro digest stale [--limit N]            List threads needing a (re)summary
   cerebro digest prompt                       Print the summarization prompt
+  cerebro digest input <id>                   Print the size-bounded transcript to summarize
   cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
 
   cerebro is pure storage and never calls an LLM. A hook or skill produces the
   summary and writes it back, e.g.:
-    cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
+    cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
@@ -389,6 +391,23 @@ const main = (): void => {
             console.log(DIGEST_PROMPT);
             break;
 
+          case "input": {
+            const idArg = positionals[2];
+            if (!idArg) {
+              fail("digest input: missing <session-id>");
+              break;
+            }
+            const sessionId = resolveSession(db, idArg);
+            if (!sessionId) {
+              fail(`No session matching "${idArg}".`);
+              break;
+            }
+            // The size-bounded transcript fed to `claude -p`. Written raw to stdout
+            // (no trailing newline of our own) so it pipes straight into the model.
+            process.stdout.write(buildDigestInput(threadMessages(db, sessionId)));
+            break;
+          }
+
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
             if (rows.length === 0) {
@@ -409,7 +428,7 @@ const main = (): void => {
             }
             console.log(
               `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
-                `  cerebro show <id> --full | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
+                `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
             );
             break;
           }
@@ -493,7 +512,7 @@ const main = (): void => {
           default:
             fail(
               `digest: unknown action "${action ?? ""}". ` +
-                "Use: stale | prompt | write <id> | search <query> | show <id>",
+                "Use: stale | prompt | input <id> | write <id> | search <query> | show <id>",
             );
         }
         break;

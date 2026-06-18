@@ -28,6 +28,78 @@ Last line: a single line beginning "Keywords:" with a compact comma-separated li
 
 Write in the session's dominant language (Swedish or English). Be terse. Output only the summary itself: no preamble, no heading, no sign-off, no markdown formatting.`;
 
+// Upper bound, in characters, for the transcript handed to a single `claude -p`
+// summarization call. cerebro has no tokenizer (it takes no deps), so this is a
+// character proxy: at a conservative ~3 chars/token for dense transcripts it
+// keeps the rendered input under ~850k tokens, which fits a 1M-context model with
+// room left for the prompt and the summary. Threads below this render verbatim
+// (byte-identical to `show --full`); only the rare oversized thread is condensed.
+// The summarize hook picks the model by measured size (small -> Haiku's 200k,
+// large -> a 1M-context model), so this cap is the final backstop ensuring even a
+// 1M model never overflows, not the primary size control.
+export const DIGEST_INPUT_MAX_CHARS = 2_700_000;
+
+interface RenderableMessage {
+  role: string;
+  ts: string | null;
+  text: string;
+  is_sidechain: number;
+}
+
+const renderHeader = (message: RenderableMessage): string => {
+  const tag = message.is_sidechain ? " · subagent" : "";
+  // ts is the raw stored UTC value; this rendering is model input, not a
+  // human-facing display, so it is left unconverted.
+  return `──── ${message.role}${tag} · ${message.ts ?? ""} ────\n`;
+};
+
+// Render a whole thread as the summarization input, bounded to `maxChars` so it
+// fits a single model context. Below budget every message renders verbatim
+// (identical to `show --full`). Above budget every message is kept, preserving
+// the shape of the whole conversation, but each body is capped to a fair
+// per-message share via a water-fill: short messages (user steers, tool calls)
+// stay whole while the longest assistant essays are trimmed first. The largest
+// per-body cap whose rendered total fits the budget is found by binary search.
+export const buildDigestInput = (
+  messages: RenderableMessage[],
+  maxChars = DIGEST_INPUT_MAX_CHARS,
+): string => {
+  const headers = messages.map(renderHeader);
+  const bodies = messages.map((message) => message.text);
+  // Each block is header + body + a trailing blank-line separator ("\n" after the
+  // body, then "\n" joined between blocks): two newlines of fixed overhead.
+  const fixed = headers.reduce((sum, header) => sum + header.length + 2, 0);
+  const total = fixed + bodies.reduce((sum, body) => sum + body.length, 0);
+
+  const render = (cap: number | null): string =>
+    messages
+      .map((_message, i) => {
+        const body = bodies[i]!;
+        const capped =
+          cap !== null && body.length > cap
+            ? `${body.slice(0, cap)}\n[+${body.length - cap} chars truncated for digest]`
+            : body;
+        return `${headers[i]}${capped}\n`;
+      })
+      .join("\n");
+
+  if (total <= maxChars) return render(null);
+
+  // Largest body cap C with sum(min(len, C)) <= bodyBudget. The truncation marker
+  // adds a little per trimmed body, but it is bounded and well inside the headroom
+  // baked into maxChars, so the water-fill ignores it.
+  const bodyBudget = Math.max(0, maxChars - fixed);
+  let lo = 0;
+  let hi = bodies.reduce((max, body) => Math.max(max, body.length), 0);
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    const used = bodies.reduce((sum, body) => sum + Math.min(body.length, mid), 0);
+    if (used <= bodyBudget) lo = mid;
+    else hi = mid - 1;
+  }
+  return render(lo);
+};
+
 // Resolve any session id (a root, a resume, or a subagent's parent) to its thread
 // root, so a summary is always attributed to the thread, never a single resume.
 const threadRoot = (db: Database, sessionId: string): string => {
