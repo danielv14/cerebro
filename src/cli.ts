@@ -66,8 +66,32 @@ Env:
 
 const shortId = (id: string): string => id.slice(0, 8);
 
-const shortTime = (ts: string | null | undefined): string =>
-  ts ? ts.slice(0, 16).replace("T", " ") : "????-??-?? ??:??";
+// Stored timestamps are verbatim UTC (ISO-8601 with a trailing Z) from the JSONL.
+// Display them in Swedish wall-clock time. sv-SE formats as "2026-06-18 22:12",
+// matching the previous "YYYY-MM-DD HH:mm" shape with the offset applied, and
+// handles DST (CET/CEST) per date.
+const DISPLAY_TZ = "Europe/Stockholm";
+
+const shortTime = (ts: string | null | undefined): string => {
+  if (!ts) return "????-??-?? ??:??";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "????-??-?? ??:??";
+  return date.toLocaleString("sv-SE", {
+    timeZone: DISPLAY_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const shortDate = (ts: string | null | undefined): string => {
+  if (!ts) return "??????????";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "??????????";
+  return date.toLocaleDateString("sv-SE", { timeZone: DISPLAY_TZ });
+};
 
 const projectName = (path: string | null): string =>
   path ? (path.split("/").filter(Boolean).pop() ?? path) : "(unknown)";
@@ -236,7 +260,6 @@ const main = (): void => {
           break;
         }
 
-        const dateOnly = (ts: string | null): string => (ts ? ts.slice(0, 10) : "??????????");
         const repoLabel = projectName(repoRoot ?? cwd);
 
         if (values.context) {
@@ -246,7 +269,7 @@ const main = (): void => {
           );
           for (const thread of threads) {
             console.log(
-              `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${oneLine(thread.title ?? "(untitled)", 90)}`,
+              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${oneLine(thread.title ?? "(untitled)", 90)}`,
             );
             const opening = openingPrompt(db, thread.id);
             if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
@@ -260,7 +283,7 @@ const main = (): void => {
           console.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
             console.log(
-              `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
+              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
             );
             const opening = openingPrompt(db, thread.id);
             if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
@@ -296,7 +319,6 @@ const main = (): void => {
           break;
         }
 
-        const dateOnly = (ts: string | null): string => (ts ? ts.slice(0, 10) : "??????????");
 
         if (values.context) {
           console.log(
@@ -308,7 +330,7 @@ const main = (): void => {
         }
         for (const thread of threads) {
           console.log(
-            `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
+            `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
           );
           if (thread.opening) console.log(`      opened: ${oneLine(thread.opening, 120)}`);
           if (thread.snippet) {
