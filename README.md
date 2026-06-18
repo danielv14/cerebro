@@ -68,7 +68,13 @@ mkdir -p ~/.claude/cerebro
 cp dist/cerebro ~/.claude/cerebro/cerebro
 ```
 
-The binary is a snapshot of the source; rebuild and copy again after changing the code.
+The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
+tracks the repo live, but the hooks and the daily agent run this compiled copy, so a code
+change does not reach automated indexing until you rebuild and copy it again:
+
+```sh
+bun run build && cp dist/cerebro ~/.claude/cerebro/cerebro
+```
 
 ### Index on /clear
 
