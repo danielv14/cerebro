@@ -168,7 +168,7 @@ export const openingPrompt = (db: Database, rootId: string): string | null => {
 // return nothing for a prose prompt. Common Swedish/English words are dropped via
 // the `stopword` package (not a hand-kept list) so a conversational prompt does
 // not match unrelated threads on filler like "vi/kan/den/the/and".
-const toMatchQuery = (text: string): string | null => {
+export const toMatchQuery = (text: string): string | null => {
   const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
   const meaningful = removeStopwords(tokens, [...swe, ...eng]);
   const unique = [...new Set(meaningful)].slice(0, 40);

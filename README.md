@@ -159,6 +159,18 @@ hook group to disable.
 - **Index-first retrieval.** `search` returns id + timestamp + project + snippet;
   full text is fetched on demand via `show`, keeping the context window small.
 
+## Tests
+
+```sh
+bun test
+```
+
+The suite under `test/` runs against an in-memory SQLite DB plus temp fixture
+session files (`CEREBRO_CLAUDE_DIR`), never the real archive. It covers the
+critical paths: byte/cursor splitting and partial-line handling, dedup +
+incremental indexing, truncation reset, subagent folding, thread relinking,
+dry-run parity, and every query function.
+
 ## Layout
 
 ```
@@ -169,7 +181,9 @@ src/
   jsonl.ts     parseLine() + classify() + flattenContent()
   git.ts       gitInfo(cwd) with cache
   indexer.ts   runIndex(), dryRunIndex(), indexOneFile(), relinkThreads()
-  query.ts     search(), listThreads(), threadMessages(), resolveSession()
+  query.ts     search(), listThreads(), recentThreads(), relevantThreads(), ...
+test/
+  *.test.ts    bun test suite + fixtures.ts (temp claude dir + sessions)
 ```
 
 Built on Bun (`bun:sqlite`, synchronous, no native or network deps). One small

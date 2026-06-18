@@ -17,6 +17,11 @@ code.
 ## Developing and testing
 
 - Typecheck: `bun run typecheck` (must stay green before you finish).
+- Tests: `bun test`. The suite under `test/` runs against an in-memory SQLite DB
+  (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
+  helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
+  splitting, dedup + incremental indexing, subagent folding, thread relinking,
+  dry-run parity, and every query function. Add tests when you touch these.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`).
 - **Never test against the real archive.** Point at a throwaway DB so you do not

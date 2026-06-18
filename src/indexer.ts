@@ -43,7 +43,7 @@ const readRange = (path: string, start: number, size: number): Buffer => {
 // parses cleanly without one), so a half-written last line is left for next time.
 // Shared by the real indexer and the dry-run analyzer so both agree exactly on
 // what counts as indexable.
-const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
+export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
   if (buf.length === 0) return { lines: [], cursor: start };
 
   const lastNewline = buf.lastIndexOf(0x0a);
