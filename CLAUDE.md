@@ -7,8 +7,9 @@ code.
 
 ## Stack
 
-- Bun >= 1.1, `import { Database } from "bun:sqlite"` (synchronous API). No runtime
-  dependencies; dev deps are types only. Do not add native or network deps.
+- Bun >= 1.1, `import { Database } from "bun:sqlite"` (synchronous API). One small
+  pure-JS runtime dependency (`stopword`, for relevance stopword filtering);
+  otherwise dev deps are types only. Do not add native or network deps.
 - TypeScript strict, `moduleResolution: bundler`, `.ts` extensions in imports.
 - Code style follows the global conventions (const arrow functions, async/await,
   no em dashes in output). Commits in English.

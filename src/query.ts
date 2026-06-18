@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { removeStopwords, swe, eng } from "stopword";
 
 export interface SearchHit {
   id: number;
@@ -164,11 +165,13 @@ export const openingPrompt = (db: Database, rootId: string): string | null => {
 
 // Turn a natural-language prompt into an FTS5 OR-of-tokens query, ranked by bm25.
 // Implicit-AND (the default) would require every word to co-occur and usually
-// return nothing for a prose prompt. No stopword stripping: bm25 already ranks
-// common words low, and shaving a few tokens is not worth a hand-kept wordlist.
+// return nothing for a prose prompt. Common Swedish/English words are dropped via
+// the `stopword` package (not a hand-kept list) so a conversational prompt does
+// not match unrelated threads on filler like "vi/kan/den/the/and".
 const toMatchQuery = (text: string): string | null => {
   const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
-  const unique = [...new Set(tokens)].slice(0, 40);
+  const meaningful = removeStopwords(tokens, [...swe, ...eng]);
+  const unique = [...new Set(meaningful)].slice(0, 40);
   if (unique.length === 0) return null;
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };

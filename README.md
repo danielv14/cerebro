@@ -10,7 +10,7 @@ after Claude Code removes the originals.
 ## Install
 
 ```sh
-bun install                                          # dev deps (types only; runtime needs none)
+bun install                                          # one small pure-JS dep (stopword) + types
 ln -sf ../../dev-personal/cerebro/src/cli.ts ~/.local/bin/cerebro   # global `cerebro` on PATH
 cerebro index                                        # build the archive
 ```
@@ -172,5 +172,6 @@ src/
   query.ts     search(), listThreads(), threadMessages(), resolveSession()
 ```
 
-Built on Bun (`bun:sqlite`, synchronous, no native deps). FTS5 external-content
-table over `messages` provides ranked search.
+Built on Bun (`bun:sqlite`, synchronous, no native or network deps). One small
+pure-JS dependency (`stopword`) filters filler words out of relevance queries.
+FTS5 external-content table over `messages` provides ranked search.
