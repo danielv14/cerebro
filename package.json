@@ -8,7 +8,8 @@
   },
   "scripts": {
     "cerebro": "bun run src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro"
   },
   "devDependencies": {
     "@types/bun": "latest",

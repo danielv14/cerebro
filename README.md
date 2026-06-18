@@ -51,6 +51,64 @@ that grows large (tens of MB) and holds verbatim private conversations. `*.sqlit
 is gitignored regardless. Keeping it next to the Claude data it indexes (the
 default) keeps the repo pure source.
 
+## Scheduling (daily auto-index, macOS)
+
+The archive only captures what is on disk when `index` runs, and Claude Code deletes
+session files after `cleanupPeriodDays` (default 30, raise it in `~/.claude/settings.json`).
+Run `index` on a schedule so nothing is lost to that cleanup. On macOS, launchd does it.
+
+Build a standalone binary first. Running the agent from a compiled binary (rather than
+`bun src/cli.ts`) means the macOS background item is identified as `cerebro`, not as
+Bun's code signer:
+
+```sh
+bun run build                                   # -> dist/cerebro (standalone)
+mkdir -p ~/.claude/cerebro
+cp dist/cerebro ~/.claude/cerebro/cerebro
+codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cerebro
+```
+
+Create `~/Library/LaunchAgents/com.danielv.cerebro.index.plist`. launchd does not
+expand `~`, so use absolute paths (replace `/Users/you`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.danielv.cerebro.index</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/you/.claude/cerebro/cerebro</string>
+    <string>index</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/Users/you/.claude/cerebro/index.log</string>
+  <key>StandardErrorPath</key><string>/Users/you/.claude/cerebro/index.log</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+```
+
+Load it, and run once to verify (a sleeping Mac runs the missed job on wake):
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.danielv.cerebro.index.plist
+launchctl kickstart -k gui/$(id -u)/com.danielv.cerebro.index
+cat ~/.claude/cerebro/index.log
+```
+
+The agent runs a snapshot, not the live source. After changing the code, rebuild and
+reinstall the binary:
+
+```sh
+bun run build && cp dist/cerebro ~/.claude/cerebro/cerebro
+codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cerebro
+```
+
+Remove it: `launchctl bootout gui/$(id -u)/com.danielv.cerebro.index` and delete the plist.
+
 ## How it works
 
 - **Incremental + idempotent.** A per-file byte cursor (`index_state`) means each
