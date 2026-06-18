@@ -109,6 +109,36 @@ codesign --force --sign - --identifier com.danielv.cerebro ~/.claude/cerebro/cer
 
 Remove it: `launchctl bootout gui/$(id -u)/com.danielv.cerebro.index` and delete the plist.
 
+## Context injection (recall past work)
+
+Two commands surface past threads as compact, recognizable breadcrumbs (id, date,
+title, the opening prompt, and for `relevant` a matching snippet), index-first so the
+model pulls detail on demand with `show` / `search`:
+
+- `cerebro recent [--cwd P] [--days D]` — recent threads for the current repo.
+- `cerebro relevant <prompt>` — past threads most relevant to a prompt (FTS, bm25).
+  `--stdin` reads the prompt from a hook's JSON payload instead of an argument.
+
+Both accept `--context` to emit an agent-facing block (silent when nothing matches).
+
+A `UserPromptSubmit` hook makes recall automatic: on each prompt it runs
+`cerebro relevant --stdin --context` and injects matching past threads, so the model
+picks up earlier work when your prompt overlaps it. In `~/.claude/settings.json`
+(use the compiled binary from the Scheduling section so it starts fast per prompt):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/Users/you/.claude/cerebro/cerebro relevant --stdin --context", "timeout": 15 } ] }
+    ]
+  }
+}
+```
+
+It never blocks (always exits 0) and stays silent when nothing matches. Remove the
+hook group to disable.
+
 ## How it works
 
 - **Incremental + idempotent.** A per-file byte cursor (`index_state`) means each
