@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro",
-    "deploy": "bun run build && mkdir -p \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && cp dist/cerebro \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro\""
+    "deploy": "bun run build && DEST=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && mkdir -p \"$DEST\" && cp dist/cerebro \"$DEST/cerebro\" && cp hooks/summarize-on-clear.sh \"$DEST/summarize-on-clear.sh\" && chmod +x \"$DEST/summarize-on-clear.sh\""
   },
   "devDependencies": {
     "@types/bun": "latest",

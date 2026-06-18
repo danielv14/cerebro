@@ -14,6 +14,15 @@ import {
   threadMessages,
   stats,
 } from "./query.ts";
+import {
+  DIGEST_PROMPT,
+  DIGEST_PROMPT_VERSION,
+  buildDigestInput,
+  staleThreads,
+  writeSummary,
+  getSummary,
+  searchSummaries,
+} from "./digest.ts";
 import { gitInfo } from "./git.ts";
 
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
@@ -26,6 +35,19 @@ Usage:
   cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
   cerebro show <session-id> [--full]     Show a thread (outline, or full transcript)
   cerebro stats                          Archive counts
+  cerebro digest <action>                Curated session summaries (see below)
+
+Digest actions:
+  cerebro digest stale [--limit N]            List threads needing a (re)summary
+  cerebro digest prompt                       Print the summarization prompt
+  cerebro digest input <id>                   Print the size-bounded transcript to summarize
+  cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
+  cerebro digest search <query> [--limit N]   Full-text search the summaries
+  cerebro digest show <id>                    Print a thread's stored summary
+
+  cerebro is pure storage and never calls an LLM. A hook or skill produces the
+  summary and writes it back, e.g.:
+    cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
@@ -37,6 +59,7 @@ Options:
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
   --stdin         relevant: read the prompt from a hook's JSON payload on stdin
+  --model <name>  digest write: record which model produced the summary
   -h, --help      Show this help
 
 Env:
@@ -45,8 +68,32 @@ Env:
 
 const shortId = (id: string): string => id.slice(0, 8);
 
-const shortTime = (ts: string | null | undefined): string =>
-  ts ? ts.slice(0, 16).replace("T", " ") : "????-??-?? ??:??";
+// Stored timestamps are verbatim UTC (ISO-8601 with a trailing Z) from the JSONL.
+// Display them in Swedish wall-clock time. sv-SE formats as "2026-06-18 22:12",
+// matching the previous "YYYY-MM-DD HH:mm" shape with the offset applied, and
+// handles DST (CET/CEST) per date.
+const DISPLAY_TZ = "Europe/Stockholm";
+
+const shortTime = (ts: string | null | undefined): string => {
+  if (!ts) return "????-??-?? ??:??";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "????-??-?? ??:??";
+  return date.toLocaleString("sv-SE", {
+    timeZone: DISPLAY_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const shortDate = (ts: string | null | undefined): string => {
+  if (!ts) return "??????????";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "??????????";
+  return date.toLocaleDateString("sv-SE", { timeZone: DISPLAY_TZ });
+};
 
 const projectName = (path: string | null): string =>
   path ? (path.split("/").filter(Boolean).pop() ?? path) : "(unknown)";
@@ -91,6 +138,7 @@ const main = (): void => {
           days: { type: "string" },
           context: { type: "boolean", default: false },
           stdin: { type: "boolean", default: false },
+          model: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -214,7 +262,6 @@ const main = (): void => {
           break;
         }
 
-        const dateOnly = (ts: string | null): string => (ts ? ts.slice(0, 10) : "??????????");
         const repoLabel = projectName(repoRoot ?? cwd);
 
         if (values.context) {
@@ -224,7 +271,7 @@ const main = (): void => {
           );
           for (const thread of threads) {
             console.log(
-              `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${oneLine(thread.title ?? "(untitled)", 90)}`,
+              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${oneLine(thread.title ?? "(untitled)", 90)}`,
             );
             const opening = openingPrompt(db, thread.id);
             if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
@@ -238,7 +285,7 @@ const main = (): void => {
           console.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
             console.log(
-              `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
+              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
             );
             const opening = openingPrompt(db, thread.id);
             if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
@@ -274,7 +321,6 @@ const main = (): void => {
           break;
         }
 
-        const dateOnly = (ts: string | null): string => (ts ? ts.slice(0, 10) : "??????????");
 
         if (values.context) {
           console.log(
@@ -286,10 +332,15 @@ const main = (): void => {
         }
         for (const thread of threads) {
           console.log(
-            `  ${shortId(thread.id)}  ${dateOnly(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
+            `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
           );
           if (thread.opening) console.log(`      opened: ${oneLine(thread.opening, 120)}`);
-          if (thread.snippet) console.log(`      match:  ${oneLine(thread.snippet, 120)}`);
+          if (thread.snippet) {
+            // Label which tier the snippet came from: a curated summary outranks
+            // a raw-transcript match and is worth flagging as higher-signal.
+            const label = thread.fromSummary ? "summary: " : "match:  ";
+            console.log(`      ${label}${oneLine(thread.snippet, 120)}`);
+          }
         }
         console.log(
           "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
@@ -329,6 +380,140 @@ const main = (): void => {
             );
           });
           console.log("\nFull transcript: cerebro show <id> --full");
+        }
+        break;
+      }
+
+      case "digest": {
+        const action = positionals[1];
+        switch (action) {
+          case "prompt":
+            console.log(DIGEST_PROMPT);
+            break;
+
+          case "input": {
+            const idArg = positionals[2];
+            if (!idArg) {
+              fail("digest input: missing <session-id>");
+              break;
+            }
+            const sessionId = resolveSession(db, idArg);
+            if (!sessionId) {
+              fail(`No session matching "${idArg}".`);
+              break;
+            }
+            // The size-bounded transcript fed to `claude -p`. Written raw to stdout
+            // (no trailing newline of our own) so it pipes straight into the model.
+            process.stdout.write(buildDigestInput(threadMessages(db, sessionId)));
+            break;
+          }
+
+          case "stale": {
+            const rows = staleThreads(db, limit ?? 50);
+            if (rows.length === 0) {
+              console.log("All threads are summarized and up to date.");
+              break;
+            }
+            for (const row of rows) {
+              const reason =
+                row.summary_version == null
+                  ? "never summarized"
+                  : row.summary_version < DIGEST_PROMPT_VERSION
+                    ? `prompt v${row.summary_version} < v${DIGEST_PROMPT_VERSION}`
+                    : "new activity since summary";
+              console.log(
+                `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
+              );
+              console.log(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
+            }
+            console.log(
+              `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
+                `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
+            );
+            break;
+          }
+
+          case "write": {
+            const idArg = positionals[2];
+            if (!idArg) {
+              fail("digest write: missing <session-id>");
+              break;
+            }
+            const sessionId = resolveSession(db, idArg);
+            if (!sessionId) {
+              fail(`No session matching "${idArg}".`);
+              break;
+            }
+            let text = "";
+            try {
+              text = readFileSync(0, "utf8").trim();
+            } catch {
+              text = "";
+            }
+            if (!text) {
+              fail("digest write: no summary text on stdin");
+              break;
+            }
+            const root = writeSummary(db, sessionId, text, values.model ?? null);
+            console.log(`Saved summary for thread ${shortId(root)} (${text.length} chars).`);
+            break;
+          }
+
+          case "search": {
+            const query = positionals.slice(2).join(" ");
+            if (!query) {
+              fail("digest search: missing <query>");
+              break;
+            }
+            const hits = searchSummaries(db, query, limit ?? 10);
+            if (hits.length === 0) {
+              console.log("No matching summaries.");
+              break;
+            }
+            for (const hit of hits) {
+              console.log(
+                `${shortId(hit.id)}  ${shortTime(hit.last_ts)}  ${projectName(hit.project_path)}  ${oneLine(hit.title ?? "(untitled)", 70)}`,
+              );
+              console.log(`    ${oneLine(hit.snippet, 160)}`);
+            }
+            console.log(
+              `\n${hits.length} summary hit(s). Open one: cerebro show <id>  |  full summary: cerebro digest show <id>`,
+            );
+            break;
+          }
+
+          case "show": {
+            const idArg = positionals[2];
+            if (!idArg) {
+              fail("digest show: missing <session-id>");
+              break;
+            }
+            const sessionId = resolveSession(db, idArg);
+            if (!sessionId) {
+              fail(`No session matching "${idArg}".`);
+              break;
+            }
+            const summary = getSummary(db, sessionId);
+            if (!summary) {
+              console.log(
+                `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`,
+              );
+              break;
+            }
+            const model = summary.model ? `, ${summary.model}` : "";
+            console.log(
+              `Summary for thread ${shortId(summary.root_session_id)}  ` +
+                `(${shortTime(summary.summarized_at)}${model}, prompt v${summary.prompt_version})\n`,
+            );
+            console.log(summary.summary);
+            break;
+          }
+
+          default:
+            fail(
+              `digest: unknown action "${action ?? ""}". ` +
+                "Use: stale | prompt | input <id> | write <id> | search <query> | show <id>",
+            );
         }
         break;
       }

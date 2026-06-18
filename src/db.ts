@@ -58,6 +58,39 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text)
     VALUES ('delete', old.id, old.text);
 END;
+
+-- One LLM-written summary per logical thread (keyed by root_session_id), the
+-- curated layer on top of the verbatim archive. Derived and regenerable: safe to
+-- drop and rebuild. source_last_ts is the thread's last_ts at summarization time,
+-- so a thread that gained messages since (or was summarized by an older
+-- prompt_version) can be detected as stale and re-summarized.
+CREATE TABLE IF NOT EXISTS summaries (
+  root_session_id TEXT PRIMARY KEY,
+  summary         TEXT NOT NULL,
+  prompt_version  INTEGER NOT NULL,
+  model           TEXT,
+  summarized_at   TEXT NOT NULL,
+  source_last_ts  TEXT
+);
+
+-- External-content FTS over the summary text. summaries is upserted (re-summarize
+-- replaces via ON CONFLICT DO UPDATE, which keeps the rowid stable), so an UPDATE
+-- trigger alongside insert/delete keeps the index in sync without rowid churn.
+CREATE VIRTUAL TABLE IF NOT EXISTS summaries_fts
+  USING fts5(summary, content='summaries', content_rowid='rowid');
+
+CREATE TRIGGER IF NOT EXISTS summaries_ai AFTER INSERT ON summaries BEGIN
+  INSERT INTO summaries_fts(rowid, summary) VALUES (new.rowid, new.summary);
+END;
+CREATE TRIGGER IF NOT EXISTS summaries_ad AFTER DELETE ON summaries BEGIN
+  INSERT INTO summaries_fts(summaries_fts, rowid, summary)
+    VALUES ('delete', old.rowid, old.summary);
+END;
+CREATE TRIGGER IF NOT EXISTS summaries_au AFTER UPDATE ON summaries BEGIN
+  INSERT INTO summaries_fts(summaries_fts, rowid, summary)
+    VALUES ('delete', old.rowid, old.summary);
+  INSERT INTO summaries_fts(rowid, summary) VALUES (new.rowid, new.summary);
+END;
 `;
 
 // Idempotent migrations for databases created by an earlier schema version.
