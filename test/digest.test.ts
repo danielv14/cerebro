@@ -11,6 +11,7 @@ import {
   getSummary,
   searchSummaries,
 } from "../src/digest.ts";
+import { relevantThreads, searchSummaryRoots } from "../src/query.ts";
 import {
   makeClaudeDir,
   writeSession,
@@ -200,5 +201,23 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db);
     expect(getSummary(db, "S")).toBeNull();
+  });
+
+  test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
+    runIndex(db);
+    writeSummary(db, "S", "Built the rate limiter middleware. Keywords: rate-limiter");
+
+    // The seam returns the matching root with a bracketed snippet at the requested width.
+    const roots = searchSummaryRoots(db, '"limiter"', 5, 12);
+    expect(roots.map((r) => r.root)).toEqual(["S"]);
+    expect(roots[0]!.snippet).toContain("[limiter]");
+
+    // Both callers route through it: the summary surfaces in `relevant` (summary tier)
+    // and in `digest search` for the same prompt.
+    const relevant = relevantThreads(db, "how did the rate limiter work");
+    expect(relevant.map((r) => r.id)).toEqual(["S"]);
+    expect(relevant[0]!.fromSummary).toBe(true);
+    expect(searchSummaries(db, "how did the rate limiter work").map((h) => h.id)).toEqual(["S"]);
   });
 });

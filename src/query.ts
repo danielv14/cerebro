@@ -136,6 +136,49 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
+export interface SummaryRootHit {
+  root: string;
+  snippet: string;
+}
+
+// The curated-summary FTS search, ranked by bm25, for an already-tokenized MATCH
+// query. The single owner of the summaries_fts query shape so `relevant`'s summary
+// tier and `digest search` cannot drift on the query, the join, or the snippet
+// markup. `snippetTokens` is a parameter because the two callers surface different
+// amounts of context (relevant is compact, digest search is roomier). Throws on a
+// malformed MATCH so each caller keeps its own fallback (relevant falls through to
+// raw transcripts; digest search returns empty).
+export const searchSummaryRoots = (
+  db: Database,
+  match: string,
+  limit: number,
+  snippetTokens: number,
+): SummaryRootHit[] =>
+  db
+    .query(
+      `SELECT s.root_session_id AS root,
+              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet
+       FROM summaries_fts
+       JOIN summaries s ON s.rowid = summaries_fts.rowid
+       WHERE summaries_fts MATCH ?
+       ORDER BY bm25(summaries_fts)
+       LIMIT ?`,
+    )
+    .all(snippetTokens, match, limit) as SummaryRootHit[];
+
+export interface ThreadMeta {
+  title: string | null;
+  last_ts: string | null;
+  project_path: string | null;
+}
+
+// Display metadata for a thread root, keyed by the root session id. Shared by the
+// summary-relevance and summary-search call sites so the hydrate query lives once.
+export const threadMeta = (db: Database, root: string): ThreadMeta | null =>
+  db
+    .query("SELECT title, last_ts, project_path FROM sessions WHERE session_id = ?")
+    .get(root) as ThreadMeta | null;
+
 export interface RelevantThread {
   id: string;
   last_ts: string | null;
@@ -168,17 +211,7 @@ export const relevantThreads = (
 
   // Tier 1: curated summaries, ranked by bm25.
   try {
-    const summaryHits = db
-      .query(
-        `SELECT s.root_session_id AS root,
-                snippet(summaries_fts, 0, '[', ']', ' … ', 10) AS snippet
-         FROM summaries_fts
-         JOIN summaries s ON s.rowid = summaries_fts.rowid
-         WHERE summaries_fts MATCH ?
-         ORDER BY bm25(summaries_fts)
-         LIMIT ?`,
-      )
-      .all(match, limit) as { root: string; snippet: string }[];
+    const summaryHits = searchSummaryRoots(db, match, limit, 10);
     for (const hit of summaryHits) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
@@ -229,11 +262,7 @@ export const relevantThreads = (
   }
 
   return [...chosen.entries()].map(([root, info]) => {
-    const meta = db
-      .query(`SELECT title, last_ts, project_path FROM sessions WHERE session_id = ?`)
-      .get(root) as
-      | { title: string | null; last_ts: string | null; project_path: string | null }
-      | null;
+    const meta = threadMeta(db, root);
     return {
       id: root,
       last_ts: meta?.last_ts ?? null,
