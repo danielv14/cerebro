@@ -145,9 +145,7 @@ export interface SummaryRootHit {
 // query. The single owner of the summaries_fts query shape so `relevant`'s summary
 // tier and `digest search` cannot drift on the query, the join, or the snippet
 // markup. `snippetTokens` is a parameter because the two callers surface different
-// amounts of context (relevant is compact, digest search is roomier); it is an
-// integer from our own call sites, never user input, so interpolating it is safe
-// (snippet()'s token-count argument cannot be a bound parameter). Throws on a
+// amounts of context (relevant is compact, digest search is roomier). Throws on a
 // malformed MATCH so each caller keeps its own fallback (relevant falls through to
 // raw transcripts; digest search returns empty).
 export const searchSummaryRoots = (
@@ -159,14 +157,14 @@ export const searchSummaryRoots = (
   db
     .query(
       `SELECT s.root_session_id AS root,
-              snippet(summaries_fts, 0, '[', ']', ' … ', ${Math.trunc(snippetTokens)}) AS snippet
+              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
        WHERE summaries_fts MATCH ?
        ORDER BY bm25(summaries_fts)
        LIMIT ?`,
     )
-    .all(match, limit) as SummaryRootHit[];
+    .all(snippetTokens, match, limit) as SummaryRootHit[];
 
 export interface ThreadMeta {
   title: string | null;
