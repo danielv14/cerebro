@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { toMatchQuery } from "./query.ts";
+import { toMatchQuery, searchSummaryRoots, threadMeta } from "./query.ts";
 
 // The summarization contract lives here, in the CLI, not in the hook that invokes
 // the model. cerebro owns the prompt and the storage format together (they are two
@@ -199,27 +199,13 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
 
   let rows: { root: string; snippet: string }[];
   try {
-    rows = db
-      .query(
-        `SELECT s.root_session_id AS root,
-                snippet(summaries_fts, 0, '[', ']', ' … ', 12) AS snippet
-         FROM summaries_fts
-         JOIN summaries s ON s.rowid = summaries_fts.rowid
-         WHERE summaries_fts MATCH ?
-         ORDER BY bm25(summaries_fts)
-         LIMIT ?`,
-      )
-      .all(match, limit) as { root: string; snippet: string }[];
+    rows = searchSummaryRoots(db, match, limit, 12);
   } catch {
     return [];
   }
 
   return rows.map((row) => {
-    const meta = db
-      .query("SELECT title, last_ts, project_path FROM sessions WHERE session_id = ?")
-      .get(row.root) as
-      | { title: string | null; last_ts: string | null; project_path: string | null }
-      | null;
+    const meta = threadMeta(db, row.root);
     return {
       id: row.root,
       last_ts: meta?.last_ts ?? null,
