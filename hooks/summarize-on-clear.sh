@@ -36,25 +36,19 @@ command -v claude >/dev/null 2>&1 || exit 0
 
 # Detached summary: nohup + closed stdio so it outlives the /clear teardown. The
 # inner command renders the size-bounded transcript from cerebro (which owns the
-# rendering contract), picks a model by its size, and writes the output straight
-# back.
+# rendering contract), asks cerebro which model to use, and writes the output back.
 #
-# Model is tiered by transcript size, because the context window is the real
-# constraint and pricing rewards it:
-# - Small threads (the common case) -> Haiku 4.5 (200k context, $1/$5 per MTok).
-#   Summarization is mechanical (compress + tag), it fires on every /clear, and
-#   Haiku is cheapest with no effort/thinking knobs to slow the background job.
-# - Oversized threads (200k-1M tokens) -> Sonnet 4.6 in a single shot. Sonnet has
-#   a 1M-token context at a flat $3/$15 per MTok (no long-context premium), so a
-#   half-million-token thread fits whole without truncation or map-reduce. The
-#   escalation costs more per event but only fires on the rare giant thread.
-#   The "[1m]" suffix is required: it is how Claude Code selects the 1M-context
-#   variant. Plain "claude-sonnet-4-6" gets the default 200k window and a giant
-#   thread still fails with "Prompt is too long" -- the suffix is the whole point.
-# The threshold is a char proxy (cerebro has no tokenizer): ~540k chars is a
-# conservative stand-in for ~180k tokens, escalating before Haiku's 200k can
-# overflow. `cerebro digest input` water-fill-caps anything above ~2.7M chars, so
-# even Sonnet's 1M context is never exceeded. Override any of the three via env.
+# `cerebro digest model <id>` owns the size -> model tiering (cerebro is the single
+# source of truth; the hook no longer hardcodes the threshold). The rationale: the
+# context window is the real constraint and pricing rewards it. Small threads (the
+# common case) -> Haiku 4.5 (200k context, cheapest, mechanical compress+tag job
+# that fires on every /clear). Oversized threads -> Sonnet 4.6 [1m] in a single
+# shot (1M context at a flat price, so a half-million-token thread fits whole
+# without map-reduce); the "[1m]" suffix is how Claude Code selects the 1M variant,
+# without it a giant thread still fails with "Prompt is too long". The same env
+# vars still override the choice (CEREBRO_DIGEST_MODEL, CEREBRO_DIGEST_MODEL_LARGE,
+# CEREBRO_DIGEST_HAIKU_MAX_CHARS); they are now read by `digest model`, and the
+# child cerebro process inherits them from this hook's environment.
 #
 # The model output is captured to a file and only written back if claude -p
 # succeeds (exit 0) and produced non-empty output. Piping claude straight into
@@ -62,15 +56,14 @@ command -v claude >/dev/null 2>&1 || exit 0
 # stored a "Prompt is too long" error as the summary that way. On failure we log
 # and leave the thread unsummarized; `cerebro digest stale` retries it next time.
 nohup bash -c '
-  cerebro_bin="$1"; sid="$2"; log="$3"; small="$4"; large="$5"; threshold="$6"
+  cerebro_bin="$1"; sid="$2"; log="$3"
   {
     date "+[digest %F %T] summarizing $sid"
     tmp="$(mktemp)"
     out="$(mktemp)"
     "$cerebro_bin" digest input "$sid" > "$tmp"
-    chars="$(wc -c < "$tmp")"
-    if (( chars > threshold )); then model="$large"; else model="$small"; fi
-    echo "[digest] $sid: $chars chars -> $model"
+    model="$("$cerebro_bin" digest model "$sid")"
+    echo "[digest] $sid: $(wc -c < "$tmp" | tr -d " ") chars -> $model"
     claude -p --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
     rc=$?
     if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
@@ -80,10 +73,7 @@ nohup bash -c '
     fi
     rm -f "$tmp" "$out"
   } >> "$log/digest.log" 2>&1
-' _ "$CEREBRO" "$session_id" "$LOG_DIR" \
-  "${CEREBRO_DIGEST_MODEL:-claude-haiku-4-5}" \
-  "${CEREBRO_DIGEST_MODEL_LARGE:-claude-sonnet-4-6[1m]}" \
-  "${CEREBRO_DIGEST_HAIKU_MAX_CHARS:-540000}" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
+' _ "$CEREBRO" "$session_id" "$LOG_DIR" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
 
 disown 2>/dev/null || true
 exit 0

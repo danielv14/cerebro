@@ -151,6 +151,22 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("digest model prints the tier-picked model for a small thread", () => {
+    delete process.env.CEREBRO_DIGEST_MODEL; // use the default small model
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "short thread", { timestamp: ts(0) })]);
+    const cap = makeIO();
+    runCli(["digest", "model", "SESS"], cap.io, seeded());
+    expect(cap.logs.join("\n")).toBe("claude-haiku-4-5");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("digest model without an id fails via the shared helper", () => {
+    const cap = makeIO();
+    runCli(["digest", "model"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("digest model: missing <session-id>");
+    expect(cap.exitCode).toBe(1);
+  });
+
   test("digest show prints a stored summary", () => {
     writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work", { timestamp: ts(0) })]);
     const cap = makeIO();

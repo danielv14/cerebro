@@ -19,6 +19,7 @@ import {
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   buildDigestInput,
+  pickDigestModel,
   staleThreads,
   writeSummary,
   getSummary,
@@ -53,6 +54,7 @@ Digest actions:
   cerebro digest stale [--limit N]            List threads needing a (re)summary
   cerebro digest prompt                       Print the summarization prompt
   cerebro digest input <id>                   Print the size-bounded transcript to summarize
+  cerebro digest model <id>                   Print the model the size tiering would pick
   cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
@@ -394,6 +396,17 @@ export const runCli = (
             break;
           }
 
+          case "model": {
+            const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);
+            if (!sessionId) break;
+            // The model the summarize hook would pick for this thread, by the byte
+            // size of its rendered transcript (matching the hook's `wc -c`). cerebro
+            // owns the tiering so the hook no longer hardcodes the threshold.
+            const input = buildDigestInput(threadMessages(db, sessionId));
+            io.log(pickDigestModel(Buffer.byteLength(input, "utf8")));
+            break;
+          }
+
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
             if (rows.length === 0) {
@@ -482,7 +495,7 @@ export const runCli = (
           default:
             fail(
               `digest: unknown action "${action ?? ""}". ` +
-                "Use: stale | prompt | input <id> | write <id> | search <query> | show <id>",
+                "Use: stale | prompt | input <id> | model <id> | write <id> | search <query> | show <id>",
             );
         }
         break;
