@@ -50,23 +50,28 @@ export interface DigestModelConfig {
 // unset falls back to the default, matching bash `${VAR:-default}`.
 export const digestModelConfig = (): DigestModelConfig => {
   const threshold = process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS;
+  const parsed = threshold ? Number(threshold) : 540_000;
   return {
     small: process.env.CEREBRO_DIGEST_MODEL || "claude-haiku-4-5",
     large: process.env.CEREBRO_DIGEST_MODEL_LARGE || "claude-sonnet-4-6[1m]",
-    thresholdChars: threshold ? Number(threshold) : 540_000,
+    // A non-numeric override falls back rather than becoming NaN (which would
+    // wedge every thread on the small model).
+    thresholdChars: Number.isFinite(parsed) ? parsed : 540_000,
   };
 };
 
-// Pick the summarization model for a transcript of `charCount` characters. Small
-// threads (the common case) get the cheap small model; only an oversized thread
-// escalates to the large 1M-context model. The threshold is a char proxy because
-// cerebro has no tokenizer. This is the single source of truth for the tiering the
-// summarize hook used to inline in bash; `> threshold` matches the hook's strict
-// comparison exactly (a thread at the threshold stays on the small model).
+// Pick the summarization model for a transcript of `byteCount` bytes (the size of
+// the rendered `digest input`, measured the same way the hook did with `wc -c` --
+// bytes, not characters, so multibyte threads tier correctly). Small threads (the
+// common case) get the cheap small model; only an oversized thread escalates to the
+// large 1M-context model. The threshold is a byte proxy because cerebro has no
+// tokenizer. Single source of truth for the tiering the summarize hook used to
+// inline in bash; `> threshold` matches its strict comparison (a thread at the
+// threshold stays on the small model).
 export const pickDigestModel = (
-  charCount: number,
+  byteCount: number,
   config: DigestModelConfig = digestModelConfig(),
-): string => (charCount > config.thresholdChars ? config.large : config.small);
+): string => (byteCount > config.thresholdChars ? config.large : config.small);
 
 interface RenderableMessage {
   role: string;

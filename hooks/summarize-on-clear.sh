@@ -63,6 +63,7 @@ nohup bash -c '
     out="$(mktemp)"
     "$cerebro_bin" digest input "$sid" > "$tmp"
     model="$("$cerebro_bin" digest model "$sid")"
+    [ -n "$model" ] || { echo "[digest] $sid: could not resolve a model — skipped"; rm -f "$tmp" "$out"; exit 0; }
     echo "[digest] $sid: $(wc -c < "$tmp" | tr -d " ") chars -> $model"
     claude -p --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
     rc=$?

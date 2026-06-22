@@ -102,10 +102,10 @@ const realIO: CliIO = {
 
 // Resolve a positional session-id argument (an id or a unique prefix) to a full
 // session id, reporting the right error and setting exit 1 when it is missing or
-// matches nothing. Returns null in those cases so the caller can stop. The four
-// id-taking commands (show, digest input/write/show) share this instead of each
-// re-checking the argument. An ambiguous prefix still throws from resolveSession
-// and is caught by runCli's outer handler, as before.
+// matches nothing. Returns null in those cases so the caller can stop. The five
+// id-taking commands (show, digest input/model/write/show) share this instead of
+// each re-checking the argument. An ambiguous prefix still throws from
+// resolveSession and is caught by runCli's outer handler, as before.
 const resolveOrFail = (
   db: Database,
   idArg: string | undefined,

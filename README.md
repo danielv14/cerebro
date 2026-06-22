@@ -156,7 +156,7 @@ cerebro digest stale [--limit N]            # threads needing a (re)summary (nev
                                             #   new activity since, or older prompt version)
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id>                    # print the model the size tiering would pick
+cerebro digest model <id>                   # print the model the size tiering would pick
 cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
