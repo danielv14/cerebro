@@ -16,11 +16,13 @@ import { writeSummary } from "../src/digest.ts";
 import {
   makeClaudeDir,
   writeSession,
+  writeSubagent,
   userMsg,
   assistantMsg,
   ts,
   type TempClaude,
 } from "./fixtures.ts";
+import fs from "node:fs";
 
 describe("toMatchQuery", () => {
   test("builds an OR-of-tokens query and drops stopwords", () => {
@@ -100,6 +102,79 @@ describe("query (populated archive)", () => {
     expect(threads[0]!.id).toBe("ORIG");
     expect(threads[0]!.msgs).toBe(3);
     expect(threads[0]!.sessions_in_thread).toBe(2);
+  });
+
+  test("the threads view rolls up root + resume + subagent with root-preferring fields", () => {
+    // Root: has a title and project_path. Resume: NULL title, different project_path,
+    // and we delete its file so its body_available drops to 0. Subagent: folds into
+    // the root's session id (does not add a sessions row).
+    writeSession(env.projects, "-repo-root", "ROOT", [
+      userMsg("ROOT", "u1", "start", {
+        cwd: "/repo-root",
+        timestamp: ts(0),
+      }),
+      assistantMsg("ROOT", "a1", "ok", {
+        cwd: "/repo-root",
+        parentUuid: "u1",
+        timestamp: ts(1),
+      }),
+      // A summary line gives the root a title (priority 1).
+      { type: "summary", summary: "Root title", leafUuid: "a1" },
+    ]);
+    const resumePath = writeSession(env.projects, "-repo-resume", "RESUME", [
+      userMsg("RESUME", "u2", "more", {
+        cwd: "/repo-resume",
+        parentUuid: "a1",
+        timestamp: ts(2),
+      }),
+    ]);
+    writeSubagent(env.projects, "-repo-root", "ROOT", "agent-1", [
+      userMsg("ROOT", "su1", "subagent prompt", {
+        cwd: "/repo-root",
+        isSidechain: true,
+        timestamp: ts(3),
+      }),
+      assistantMsg("ROOT", "sa1", "subagent reply", {
+        cwd: "/repo-root",
+        isSidechain: true,
+        parentUuid: "su1",
+        timestamp: ts(4),
+      }),
+    ]);
+    runIndex(db);
+    // Drop the resume's source file so a re-index marks its body unavailable.
+    fs.rmSync(resumePath);
+    runIndex(db);
+
+    const thread = db
+      .query(
+        `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
+         FROM threads WHERE id = ?`,
+      )
+      .get("ROOT") as {
+      id: string;
+      last_ts: string;
+      first_ts: string;
+      msgs: number;
+      sessions_in_thread: number;
+      project_path: string;
+      title: string | null;
+      body_available: number;
+    };
+
+    expect(thread.id).toBe("ROOT");
+    // Root-preferring: title and project_path come from the root, not the resume.
+    expect(thread.title).toBe("Root title");
+    expect(thread.project_path).toBe("/repo-root");
+    // msgs is the sum across root (2) + resume (1) + folded subagent (2).
+    expect(thread.msgs).toBe(5);
+    // ROOT and RESUME are sessions rows; the subagent folds into ROOT.
+    expect(thread.sessions_in_thread).toBe(2);
+    // MIN: RESUME's body is unavailable (file deleted), so the thread is too.
+    expect(thread.body_available).toBe(0);
+    // Span covers the whole thread.
+    expect(thread.first_ts).toBe(ts(0));
+    expect(thread.last_ts).toBe(ts(4));
   });
 
   test("recentThreads scopes by project_path and respects the recency cutoff", () => {

@@ -49,45 +49,27 @@ export interface ThreadRow {
   body_available: number;
 }
 
-// List logical threads (roots), most-recently-active first. Each row aggregates
-// every session folded into the thread.
+// List logical threads (roots), most-recently-active first, from the `threads`
+// view (see db.ts for the rollup). The project filter applies AFTER the rollup, on
+// the thread's representative project_path, so a thread is matched on its root's
+// project even when a resume's project_path is NULL or differs.
 export const listThreads = (
   db: Database,
   opts: { project?: string; limit?: number } = {},
 ): ThreadRow[] => {
   const params: (string | number)[] = [];
-  // Filter after grouping, on the thread's representative project_path. Filtering
-  // raw rows before GROUP BY would drop resume/subagent rows whose project_path is
-  // NULL or differs, undercounting the thread's msgs and sessions_in_thread.
-  let having = "";
+  let where = "";
   if (opts.project) {
-    having = "WHERE project_path LIKE '%' || ? || '%'";
+    where = "WHERE project_path LIKE '%' || ? || '%'";
     params.push(opts.project);
   }
   params.push(opts.limit ?? 30);
 
   return db
     .query(
-      `SELECT * FROM (
-         SELECT
-           r.root_session_id AS id,
-           MAX(r.last_ts)    AS last_ts,
-           MIN(r.first_ts)   AS first_ts,
-           SUM(r.msg_count)  AS msgs,
-           COUNT(*)          AS sessions_in_thread,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
-             MAX(r.project_path)
-           ) AS project_path,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
-             MAX(r.title)
-           ) AS title,
-           MIN(r.body_available) AS body_available
-         FROM sessions r
-         GROUP BY r.root_session_id
-       )
-       ${having}
+      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
+       FROM threads
+       ${where}
        ORDER BY last_ts DESC
        LIMIT ?`,
     )
@@ -117,29 +99,7 @@ export const recentThreads = (
   return db
     .query(
       `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
-       FROM (
-         SELECT
-           r.root_session_id AS id,
-           MAX(r.last_ts)    AS last_ts,
-           MIN(r.first_ts)   AS first_ts,
-           SUM(r.msg_count)  AS msgs,
-           COUNT(*)          AS sessions_in_thread,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
-             MAX(r.project_path)
-           ) AS project_path,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.git_root END),
-             MAX(r.git_root)
-           ) AS git_root,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
-             MAX(r.title)
-           ) AS title,
-           MIN(r.body_available) AS body_available
-         FROM sessions r
-         GROUP BY r.root_session_id
-       )
+       FROM threads
        WHERE last_ts >= ? AND ${repoFilter}
        ORDER BY last_ts DESC
        LIMIT ?`,
