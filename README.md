@@ -212,8 +212,9 @@ The suite under `test/` runs against an in-memory SQLite DB plus temp fixture
 session files (`CEREBRO_CLAUDE_DIR`), never the real archive. It covers the
 critical paths: byte/cursor splitting and partial-line handling, dedup +
 incremental indexing, truncation reset, subagent folding, thread relinking,
-dry-run parity, every query function, and the digest layer (staleness detection,
-upsert + FTS sync, root attribution, summary search).
+session-file discovery (ordering, tiebreak, the subagent walk), dry-run parity,
+every query function, and the digest layer (staleness detection, upsert + FTS
+sync, root attribution, summary search).
 
 ## Layout
 
