@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
+import type { Database } from "bun:sqlite";
 import { openDb } from "./db.ts";
 import { defaultDbPath } from "./paths.ts";
 import { runIndex, dryRunIndex } from "./indexer.ts";
@@ -77,18 +78,69 @@ Env:
   CEREBRO_DB           Override the database path
   CEREBRO_CLAUDE_DIR   Override the ~/.claude directory`;
 
-const fail = (message: string): void => {
-  console.error(message);
-  process.exitCode = 1;
+// Output sink for the CLI. Routing every line through this (instead of calling
+// console / process directly inside the dispatch) is what makes runCli testable:
+// a test passes a capturing sink and asserts on the lines and exit code without
+// spawning the binary or mutating the global process.exitCode.
+export interface CliIO {
+  log: (line: string) => void; // a normal output line (stdout + newline)
+  error: (line: string) => void; // an error line (stderr + newline)
+  write: (text: string) => void; // raw stdout, no trailing newline (digest input)
+  setExitCode: (code: number) => void;
+}
+
+const realIO: CliIO = {
+  log: (line) => process.stdout.write(line + "\n"),
+  error: (line) => process.stderr.write(line + "\n"),
+  write: (text) => process.stdout.write(text),
+  setExitCode: (code) => {
+    process.exitCode = code;
+  },
 };
 
-const main = (): void => {
+// Resolve a positional session-id argument (an id or a unique prefix) to a full
+// session id, reporting the right error and setting exit 1 when it is missing or
+// matches nothing. Returns null in those cases so the caller can stop. The four
+// id-taking commands (show, digest input/write/show) share this instead of each
+// re-checking the argument. An ambiguous prefix still throws from resolveSession
+// and is caught by runCli's outer handler, as before.
+const resolveOrFail = (
+  db: Database,
+  idArg: string | undefined,
+  label: string,
+  fail: (message: string) => void,
+): string | null => {
+  if (!idArg) {
+    fail(`${label}: missing <session-id>`);
+    return null;
+  }
+  const sessionId = resolveSession(db, idArg);
+  if (!sessionId) {
+    fail(`No session matching "${idArg}".`);
+    return null;
+  }
+  return sessionId;
+};
+
+// Parse args, dispatch the command, and report through `io`. `makeDb` is injected
+// so tests can supply an in-memory database; production passes openDb. runCli owns
+// the database lifetime (open after the help/parse fast-paths, close in finally).
+export const runCli = (
+  args: string[],
+  io: CliIO,
+  makeDb: (path: string) => Database = openDb,
+): void => {
+  const fail = (message: string): void => {
+    io.error(message);
+    io.setExitCode(1);
+  };
+
   // parseArgs throws on unknown options; turn that into a clean message + exit 1
   // instead of a raw stack trace. The IIFE preserves parseArgs's inferred types.
   const parsed = (() => {
     try {
       return parseArgs({
-        args: Bun.argv.slice(2),
+        args,
         allowPositionals: true,
         options: {
           db: { type: "string" },
@@ -115,7 +167,7 @@ const main = (): void => {
   const command = positionals[0];
 
   if (values.help || !command) {
-    console.log(HELP);
+    io.log(HELP);
     return;
   }
 
@@ -129,7 +181,7 @@ const main = (): void => {
   }
 
   const dbPath = values.db || defaultDbPath();
-  const db = openDb(dbPath);
+  const db = makeDb(dbPath);
 
   try {
     switch (command) {
@@ -137,30 +189,30 @@ const main = (): void => {
         if (values["dry-run"]) {
           const plan = dryRunIndex(db, values.full);
           if (plan.full) {
-            console.log(`Dry run (--full): would re-read all ${plan.filesToRead} file(s).`);
-            console.log(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
-            console.log(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
-            console.log(
+            io.log(`Dry run (--full): would re-read all ${plan.filesToRead} file(s).`);
+            io.log(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
+            io.log(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
+            io.log(
               "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
             );
           } else if (plan.filesToRead === 0) {
-            console.log(
+            io.log(
               `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged.`,
             );
           } else {
-            console.log("Dry run. Would index:");
-            console.log(`  New messages:  ${plan.candidateMessages}`);
-            console.log(`  New bytes:     ${humanBytes(plan.newBytes)}`);
-            console.log(
+            io.log("Dry run. Would index:");
+            io.log(`  New messages:  ${plan.candidateMessages}`);
+            io.log(`  New bytes:     ${humanBytes(plan.newBytes)}`);
+            io.log(
               `  Files:         ${plan.newFiles} new, ${plan.grownFiles} grown, ` +
                 `${plan.truncatedFiles} truncated, ${plan.unchangedFiles} unchanged (skipped)`,
             );
           }
-          console.log("\nNothing written. Run `cerebro index` to apply.");
+          io.log("\nNothing written. Run `cerebro index` to apply.");
           break;
         }
         const result = runIndex(db, values.full);
-        console.log(
+        io.log(
           `Indexed ${result.newMessages} new message(s) ` +
             `(${result.filesIndexed}/${result.filesScanned} files touched).`,
         );
@@ -170,34 +222,33 @@ const main = (): void => {
       case "search": {
         const query = positionals.slice(1).join(" ");
         if (!query) {
-          console.error("search: missing <query>");
-          process.exitCode = 1;
+          fail("search: missing <query>");
           break;
         }
         const hits = search(db, query, limit ?? 20);
         if (hits.length === 0) {
-          console.log("No matches.");
+          io.log("No matches.");
           break;
         }
         for (const hit of hits) {
-          console.log(
+          io.log(
             `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}`,
           );
-          console.log(`    ${oneLine(hit.snippet, 160)}`);
+          io.log(`    ${oneLine(hit.snippet, 160)}`);
         }
-        console.log(`\n${hits.length} hit(s). Open one with: cerebro show <id>`);
+        io.log(`\n${hits.length} hit(s). Open one with: cerebro show <id>`);
         break;
       }
 
       case "sessions": {
         const threads = listThreads(db, { project: values.project, limit: limit ?? 30 });
         if (threads.length === 0) {
-          console.log("No sessions indexed yet. Run: cerebro index");
+          io.log("No sessions indexed yet. Run: cerebro index");
           break;
         }
         for (const thread of threads) {
-          console.log(sessionThreadLine(thread));
-          console.log(`    ${oneLine(thread.title ?? "(untitled)", 120)}`);
+          io.log(sessionThreadLine(thread));
+          io.log(`    ${oneLine(thread.title ?? "(untitled)", 120)}`);
         }
         break;
       }
@@ -215,35 +266,35 @@ const main = (): void => {
 
         if (threads.length === 0) {
           // Silent in --context mode so the SessionStart hook injects nothing.
-          if (!values.context) console.log("No recent sessions for this repo.");
+          if (!values.context) io.log("No recent sessions for this repo.");
           break;
         }
 
         const repoLabel = projectName(repoRoot ?? cwd);
 
         if (values.context) {
-          console.log(
+          io.log(
             `Recent Claude Code sessions in this repo (${repoLabel}), from the cerebro archive. ` +
               "Background only; ignore if unrelated to the current task.",
           );
           for (const thread of threads) {
-            console.log(recentThreadLine(thread, { showMsgs: false }));
+            io.log(recentThreadLine(thread, { showMsgs: false }));
             const opening = openingPrompt(db, thread.id);
-            if (opening) console.log(openedLine(opening));
+            if (opening) io.log(openedLine(opening));
           }
-          console.log(
+          io.log(
             "\nIf the request overlaps with any of these, recall that work instead of starting over:\n" +
               "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
               '  cerebro search "<terms>"   full-text search across all past sessions',
           );
         } else {
-          console.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
+          io.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
-            console.log(recentThreadLine(thread, { showMsgs: true }));
+            io.log(recentThreadLine(thread, { showMsgs: true }));
             const opening = openingPrompt(db, thread.id);
-            if (opening) console.log(openedLine(opening));
+            if (opening) io.log(openedLine(opening));
           }
-          console.log('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
+          io.log('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
         }
         break;
       }
@@ -262,40 +313,40 @@ const main = (): void => {
         }
         if (!prompt) {
           if (!values.context) {
-            console.error("relevant: missing <prompt>");
-            process.exitCode = 1;
+            io.error("relevant: missing <prompt>");
+            io.setExitCode(1);
           }
           break;
         }
         const threads = relevantThreads(db, prompt, limit ?? 3);
         if (threads.length === 0) {
           // Silent in --context mode so the UserPromptSubmit hook injects nothing.
-          if (!values.context) console.log("No related past sessions.");
+          if (!values.context) io.log("No related past sessions.");
           break;
         }
 
 
         if (values.context) {
-          console.log(
+          io.log(
             "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
               "against this prompt). Background only; ignore any that do not actually relate.",
           );
         } else {
-          console.log("Related past sessions:");
+          io.log("Related past sessions:");
         }
         for (const thread of threads) {
-          console.log(
+          io.log(
             `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
           );
-          if (thread.opening) console.log(openedLine(thread.opening));
+          if (thread.opening) io.log(openedLine(thread.opening));
           if (thread.snippet) {
             // Label which tier the snippet came from: a curated summary outranks
             // a raw-transcript match and is worth flagging as higher-signal.
             const label = thread.fromSummary ? "summary: " : "match:  ";
-            console.log(`      ${label}${oneLine(thread.snippet, 120)}`);
+            io.log(`      ${label}${oneLine(thread.snippet, 120)}`);
           }
         }
-        console.log(
+        io.log(
           "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
             'or cerebro search "<terms>".',
         );
@@ -303,36 +354,26 @@ const main = (): void => {
       }
 
       case "show": {
-        const idArg = positionals[1];
-        if (!idArg) {
-          console.error("show: missing <session-id>");
-          process.exitCode = 1;
-          break;
-        }
-        const sessionId = resolveSession(db, idArg);
-        if (!sessionId) {
-          console.error(`No session matching "${idArg}".`);
-          process.exitCode = 1;
-          break;
-        }
+        const sessionId = resolveOrFail(db, positionals[1], "show", fail);
+        if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
-        console.log(`Thread ${shortId(sessionId)}  ${messages.length} message(s)\n`);
+        io.log(`Thread ${shortId(sessionId)}  ${messages.length} message(s)\n`);
 
         if (values.full) {
           for (const message of messages) {
             const tag = message.is_sidechain ? " · subagent" : "";
-            console.log(`──── ${message.role}${tag} · ${shortTime(message.ts)} ────`);
-            console.log(message.text);
-            console.log("");
+            io.log(`──── ${message.role}${tag} · ${shortTime(message.ts)} ────`);
+            io.log(message.text);
+            io.log("");
           }
         } else {
           messages.forEach((message, i) => {
             const marker = message.is_sidechain ? "[subagent] " : "";
-            console.log(
+            io.log(
               `${String(i + 1).padStart(3)}. ${message.role.padEnd(9)} ${shortTime(message.ts)}  ${marker}${oneLine(message.text, 110)}`,
             );
           });
-          console.log("\nFull transcript: cerebro show <id> --full");
+          io.log("\nFull transcript: cerebro show <id> --full");
         }
         break;
       }
@@ -341,30 +382,22 @@ const main = (): void => {
         const action = positionals[1];
         switch (action) {
           case "prompt":
-            console.log(DIGEST_PROMPT);
+            io.log(DIGEST_PROMPT);
             break;
 
           case "input": {
-            const idArg = positionals[2];
-            if (!idArg) {
-              fail("digest input: missing <session-id>");
-              break;
-            }
-            const sessionId = resolveSession(db, idArg);
-            if (!sessionId) {
-              fail(`No session matching "${idArg}".`);
-              break;
-            }
+            const sessionId = resolveOrFail(db, positionals[2], "digest input", fail);
+            if (!sessionId) break;
             // The size-bounded transcript fed to `claude -p`. Written raw to stdout
             // (no trailing newline of our own) so it pipes straight into the model.
-            process.stdout.write(buildDigestInput(threadMessages(db, sessionId)));
+            io.write(buildDigestInput(threadMessages(db, sessionId)));
             break;
           }
 
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
             if (rows.length === 0) {
-              console.log("All threads are summarized and up to date.");
+              io.log("All threads are summarized and up to date.");
               break;
             }
             for (const row of rows) {
@@ -374,12 +407,12 @@ const main = (): void => {
                   : row.summary_version < DIGEST_PROMPT_VERSION
                     ? `prompt v${row.summary_version} < v${DIGEST_PROMPT_VERSION}`
                     : "new activity since summary";
-              console.log(
+              io.log(
                 `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
               );
-              console.log(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
+              io.log(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
             }
-            console.log(
+            io.log(
               `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
                 `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
             );
@@ -387,16 +420,8 @@ const main = (): void => {
           }
 
           case "write": {
-            const idArg = positionals[2];
-            if (!idArg) {
-              fail("digest write: missing <session-id>");
-              break;
-            }
-            const sessionId = resolveSession(db, idArg);
-            if (!sessionId) {
-              fail(`No session matching "${idArg}".`);
-              break;
-            }
+            const sessionId = resolveOrFail(db, positionals[2], "digest write", fail);
+            if (!sessionId) break;
             let text = "";
             try {
               text = readFileSync(0, "utf8").trim();
@@ -408,7 +433,7 @@ const main = (): void => {
               break;
             }
             const root = writeSummary(db, sessionId, text, values.model ?? null);
-            console.log(`Saved summary for thread ${shortId(root)} (${text.length} chars).`);
+            io.log(`Saved summary for thread ${shortId(root)} (${text.length} chars).`);
             break;
           }
 
@@ -420,45 +445,37 @@ const main = (): void => {
             }
             const hits = searchSummaries(db, query, limit ?? 10);
             if (hits.length === 0) {
-              console.log("No matching summaries.");
+              io.log("No matching summaries.");
               break;
             }
             for (const hit of hits) {
-              console.log(
+              io.log(
                 `${shortId(hit.id)}  ${shortTime(hit.last_ts)}  ${projectName(hit.project_path)}  ${oneLine(hit.title ?? "(untitled)", 70)}`,
               );
-              console.log(`    ${oneLine(hit.snippet, 160)}`);
+              io.log(`    ${oneLine(hit.snippet, 160)}`);
             }
-            console.log(
+            io.log(
               `\n${hits.length} summary hit(s). Open one: cerebro show <id>  |  full summary: cerebro digest show <id>`,
             );
             break;
           }
 
           case "show": {
-            const idArg = positionals[2];
-            if (!idArg) {
-              fail("digest show: missing <session-id>");
-              break;
-            }
-            const sessionId = resolveSession(db, idArg);
-            if (!sessionId) {
-              fail(`No session matching "${idArg}".`);
-              break;
-            }
+            const sessionId = resolveOrFail(db, positionals[2], "digest show", fail);
+            if (!sessionId) break;
             const summary = getSummary(db, sessionId);
             if (!summary) {
-              console.log(
+              io.log(
                 `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`,
               );
               break;
             }
             const model = summary.model ? `, ${summary.model}` : "";
-            console.log(
+            io.log(
               `Summary for thread ${shortId(summary.root_session_id)}  ` +
                 `(${shortTime(summary.summarized_at)}${model}, prompt v${summary.prompt_version})\n`,
             );
-            console.log(summary.summary);
+            io.log(summary.summary);
             break;
           }
 
@@ -473,17 +490,17 @@ const main = (): void => {
 
       case "stats": {
         const s = stats(db);
-        console.log(`Threads:          ${s.threads}`);
-        console.log(`Sessions:         ${s.sessions}`);
-        console.log(`Messages:         ${s.messages}`);
-        console.log(`Deleted sources:  ${s.deletedSources}`);
+        io.log(`Threads:          ${s.threads}`);
+        io.log(`Sessions:         ${s.sessions}`);
+        io.log(`Messages:         ${s.messages}`);
+        io.log(`Deleted sources:  ${s.deletedSources}`);
         break;
       }
 
       default:
-        console.error(`Unknown command: ${command}\n`);
-        console.log(HELP);
-        process.exitCode = 1;
+        io.error(`Unknown command: ${command}\n`);
+        io.log(HELP);
+        io.setExitCode(1);
     }
   } catch (error) {
     // e.g. an ambiguous session prefix or an unexpected SQL error: show the
@@ -494,4 +511,10 @@ const main = (): void => {
   }
 };
 
-main();
+const main = (): void => {
+  runCli(Bun.argv.slice(2), realIO);
+};
+
+// Only dispatch when run as the entry point; importing this module (e.g. from a
+// test that drives runCli directly) must not execute a command.
+if (import.meta.main) main();
