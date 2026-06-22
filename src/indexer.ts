@@ -486,8 +486,9 @@ export const runIndex = (db: Database, full = false): IndexResult => {
     files,
     full,
     ({ file, lines, cursor }) => {
-      // A mid-write file (cursor unchanged) inserts nothing, but still records the
-      // new mtime so a touched-but-unchanged file settles to "unchanged" next run.
+      // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
+      // we do not skip it: running saveState still records the new mtime, so a
+      // touched-but-unchanged file settles to "unchanged" on the next run.
       const tx = db.transaction(() => {
         const meta = ingestLines(db, file, lines);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
