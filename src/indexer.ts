@@ -65,13 +65,10 @@ export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; curs
   return { lines: [], cursor: start };
 };
 
-// Read new bytes from a single file and insert any new messages. Returns the new
-// byte cursor and the metadata gathered for the session row.
-const indexOneFile = (
-  db: Database,
-  file: SessionFile,
-  start: number,
-): { cursor: number; meta: FileMeta } => {
+// Insert any new messages from a file's freshly-split lines and harvest the
+// metadata for its session row. The bytes were already read and split by
+// eachIndexableFile; this is the write half, run inside the per-file transaction.
+const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta => {
   const meta: FileMeta = {
     sessionId: file.sessionId,
     projectDir: file.projectDir,
@@ -81,9 +78,6 @@ const indexOneFile = (
     title: null,
     titlePriority: 0,
   };
-
-  const buf = readRange(file.path, start, file.size);
-  const { lines, cursor } = splitBuffer(buf, start);
 
   const insert = db.query(
     `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
@@ -121,7 +115,7 @@ const indexOneFile = (
     }
   }
 
-  return { cursor, meta };
+  return meta;
 };
 
 interface SessionAggregate {
@@ -418,6 +412,58 @@ export const planFileRead = (
   return { start, status: state ? "grown" : "new", shouldRead: true };
 };
 
+interface ScannedFile {
+  file: SessionFile;
+  plan: FileReadPlan;
+  lines: string[];
+  cursor: number;
+}
+
+// The single scan shared by runIndex and dryRunIndex: for each discovered file,
+// look up its cursor state, decide via planFileRead whether to read, and for the
+// ones to read, pull the new bytes and split them into complete lines. Hosting the
+// discover-state-plan-read-split sequence here (not in two parallel loops) is what
+// keeps invariant #2 structural: both consumers see exactly the same lines/cursor
+// for a given file. What to do with the result (write vs count) and how to treat a
+// mid-write file whose cursor did not advance is left to `handle`.
+//
+// `onUnchanged` is invoked for files planFileRead skips (so the dry run can count
+// them). `onError` isolates a per-file read/handle failure (a vanished or corrupt
+// file) so one bad file does not abort the whole run; without it the error
+// propagates, which is what the dry run wants.
+const eachIndexableFile = (
+  db: Database,
+  files: SessionFile[],
+  full: boolean,
+  handle: (scanned: ScannedFile) => void,
+  opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
+): void => {
+  const getState = db.query(
+    "SELECT bytes_indexed, mtime_ms FROM index_state WHERE source_file = ?",
+  );
+
+  for (const file of files) {
+    const state = getState.get(file.path) as
+      | { bytes_indexed: number; mtime_ms: number }
+      | null;
+
+    const plan = planFileRead(state, file, full);
+    if (!plan.shouldRead) {
+      opts.onUnchanged?.();
+      continue;
+    }
+
+    try {
+      const buf = readRange(file.path, plan.start, file.size);
+      const { lines, cursor } = splitBuffer(buf, plan.start);
+      handle({ file, plan, lines, cursor });
+    } catch (error) {
+      if (!opts.onError) throw error;
+      opts.onError(file, error as Error);
+    }
+  }
+};
+
 // Incrementally index every session file. `full` clears the per-file cursors so
 // every file is re-read from the start; dedup on message UUID makes that safe.
 export const runIndex = (db: Database, full = false): IndexResult => {
@@ -425,9 +471,6 @@ export const runIndex = (db: Database, full = false): IndexResult => {
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   const files = discoverSessionFiles();
-  const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms FROM index_state WHERE source_file = ?",
-  );
   const saveState = db.query(
     `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at)
      VALUES (?, ?, ?, ?)
@@ -438,31 +481,31 @@ export const runIndex = (db: Database, full = false): IndexResult => {
   );
 
   let filesIndexed = 0;
-  for (const file of files) {
-    const state = getState.get(file.path) as
-      | { bytes_indexed: number; mtime_ms: number }
-      | null;
-
-    const plan = planFileRead(state, file, full);
-    if (!plan.shouldRead) continue; // unchanged
-    const start = plan.start;
-
-    const tx = db.transaction(() => {
-      const { cursor, meta } = indexOneFile(db, file, start);
-      saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
-      if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
-      else upsertSession(db, meta);
-    });
-    // Isolate per-file failures (an unreadable or corrupt file) so one bad file
-    // does not abort the whole run and skip relinkThreads / markDeletedBodies.
-    // The transaction rolls back that file's partial work on throw.
-    try {
+  eachIndexableFile(
+    db,
+    files,
+    full,
+    ({ file, lines, cursor }) => {
+      // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
+      // we do not skip it: running saveState still records the new mtime, so a
+      // touched-but-unchanged file settles to "unchanged" on the next run.
+      const tx = db.transaction(() => {
+        const meta = ingestLines(db, file, lines);
+        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+        if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
+        else upsertSession(db, meta);
+      });
+      // The transaction rolls back that file's partial work if it throws.
       tx();
       filesIndexed++;
-    } catch (error) {
-      console.error(`cerebro: skipped ${file.path}: ${(error as Error).message}`);
-    }
-  }
+    },
+    {
+      // Isolate per-file failures (an unreadable or corrupt file) so one bad file
+      // does not abort the whole run and skip relinkThreads / markDeletedBodies.
+      onError: (file, error) =>
+        console.error(`cerebro: skipped ${file.path}: ${error.message}`),
+    },
+  );
 
   markDeletedBodies(db, files);
   relinkThreads(db);
@@ -501,9 +544,6 @@ export interface DryRunResult {
 // then collapse it to ~0 net-new).
 export const dryRunIndex = (db: Database, full = false): DryRunResult => {
   const files = discoverSessionFiles();
-  const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms FROM index_state WHERE source_file = ?",
-  );
 
   const result: DryRunResult = {
     full,
@@ -517,33 +557,26 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
     candidateMessages: 0,
   };
 
-  for (const file of files) {
-    const state = getState.get(file.path) as
-      | { bytes_indexed: number; mtime_ms: number }
-      | null;
+  eachIndexableFile(
+    db,
+    files,
+    full,
+    ({ plan, lines, cursor }) => {
+      if (cursor === plan.start) return; // mid-write, nothing indexable yet
 
-    const plan = planFileRead(state, file, full);
-    if (!plan.shouldRead) {
-      result.unchangedFiles++;
-      continue;
-    }
-    const start = plan.start;
-
-    const buf = readRange(file.path, start, file.size);
-    const { lines, cursor } = splitBuffer(buf, start);
-    if (cursor === start) continue; // mid-write, nothing indexable yet
-
-    // In full mode every file re-reads from 0; the run does not categorize files
-    // as new/grown/truncated, so skip those counters (preserving prior behaviour).
-    if (!full) {
-      if (plan.status === "new") result.newFiles++;
-      else if (plan.status === "truncated") result.truncatedFiles++;
-      else result.grownFiles++;
-    }
-    result.filesToRead++;
-    result.newBytes += cursor - start;
-    result.candidateMessages += countMessages(lines);
-  }
+      // In full mode every file re-reads from 0; the run does not categorize files
+      // as new/grown/truncated, so skip those counters (preserving prior behaviour).
+      if (!full) {
+        if (plan.status === "new") result.newFiles++;
+        else if (plan.status === "truncated") result.truncatedFiles++;
+        else result.grownFiles++;
+      }
+      result.filesToRead++;
+      result.newBytes += cursor - plan.start;
+      result.candidateMessages += countMessages(lines);
+    },
+    { onUnchanged: () => result.unchangedFiles++ },
+  );
 
   return result;
 };
