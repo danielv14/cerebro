@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { toMatchQuery, searchSummaryRoots, threadMeta } from "./query.ts";
+import { searchSummaryRoots, threadMeta, toMatchQuery } from "./query.ts";
 
 // The summarization contract lives here, in the CLI, not in the hook that invokes
 // the model. cerebro owns the prompt and the storage format together (they are two

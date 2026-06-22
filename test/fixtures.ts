@@ -31,7 +31,7 @@ export const writeSession = (
   const dir = join(projects, projectDir);
   fs.mkdirSync(dir, { recursive: true });
   const path = join(dir, `${sessionId}.jsonl`);
-  fs.writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+  fs.writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
   return path;
 };
 
@@ -46,7 +46,7 @@ export const writeSubagent = (
   const dir = join(projects, projectDir, parentSession, "subagents");
   fs.mkdirSync(dir, { recursive: true });
   const path = join(dir, `${name}.jsonl`);
-  fs.writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+  fs.writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
   return path;
 };
 

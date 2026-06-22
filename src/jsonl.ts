@@ -50,6 +50,7 @@ export const flattenContent = (content: unknown): string => {
   const parts: string[] = [];
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
+    // biome-ignore lint/suspicious/noExplicitAny: raw JSONL blocks are untyped; the type switch below narrows each shape
     const b = block as any;
     switch (b.type) {
       case "text":
@@ -59,8 +60,7 @@ export const flattenContent = (content: unknown): string => {
         if (typeof b.thinking === "string") parts.push(b.thinking);
         break;
       case "tool_use": {
-        const input =
-          b.input && typeof b.input === "object" ? JSON.stringify(b.input) : "";
+        const input = b.input && typeof b.input === "object" ? JSON.stringify(b.input) : "";
         parts.push(capToolText(`[tool_use:${b.name ?? "?"}] ${input}`.trimEnd()));
         break;
       }
@@ -87,6 +87,7 @@ export const flattenContent = (content: unknown): string => {
 // else is dropped, except title-bearing events which surface a session title.
 // Dropping non-message events before dedup is essential: file-history-snapshot and
 // friends reuse other messages' UUIDs and would otherwise cause false collisions.
+// biome-ignore lint/suspicious/noExplicitAny: classifies a raw parsed JSONL value of unknown shape
 export const classify = (o: any): Classified => {
   if (!o || typeof o !== "object") return { kind: "skip" };
 

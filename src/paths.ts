@@ -1,6 +1,6 @@
+import fs from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import fs from "node:fs";
 
 export interface SessionFile {
   path: string;
@@ -15,8 +15,7 @@ export interface SessionFile {
   mtimeMs: number;
 }
 
-export const claudeDir = (): string =>
-  process.env.CEREBRO_CLAUDE_DIR || join(homedir(), ".claude");
+export const claudeDir = (): string => process.env.CEREBRO_CLAUDE_DIR || join(homedir(), ".claude");
 
 export const projectsDir = (): string => join(claudeDir(), "projects");
 
@@ -90,8 +89,7 @@ export const discoverSessionFiles = (): SessionFile[] => {
 
   out.sort(
     (a, b) =>
-      a.mtimeMs - b.mtimeMs ||
-      (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0),
+      a.mtimeMs - b.mtimeMs || (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0),
   );
   return out;
 };

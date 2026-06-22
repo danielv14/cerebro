@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { discoverSessionFiles, type SessionFile } from "./paths.ts";
-import { parseLine, classify } from "./jsonl.ts";
 import { gitInfo } from "./git.ts";
+import { classify, parseLine } from "./jsonl.ts";
+import { discoverSessionFiles, type SessionFile } from "./paths.ts";
 
 interface FileMeta {
   sessionId: string;
@@ -50,7 +50,10 @@ export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; curs
   if (lastNewline >= 0) {
     const lines = buf.subarray(0, lastNewline).toString("utf8").split("\n");
     let cursor = start + lastNewline + 1;
-    const tail = buf.subarray(lastNewline + 1).toString("utf8").trim();
+    const tail = buf
+      .subarray(lastNewline + 1)
+      .toString("utf8")
+      .trim();
     if (tail && parseLine(tail) !== undefined) {
       lines.push(tail);
       cursor = start + buf.length;
@@ -399,7 +402,7 @@ export const planFileRead = (
     return { start: 0, status: state ? "grown" : "new", shouldRead: true };
   }
 
-  let start = state ? state.bytes_indexed : 0;
+  const start = state ? state.bytes_indexed : 0;
   if (start > file.size) {
     // truncated / rotated -> re-read from the start
     return { start: 0, status: "truncated", shouldRead: true };
@@ -443,9 +446,7 @@ const eachIndexableFile = (
   );
 
   for (const file of files) {
-    const state = getState.get(file.path) as
-      | { bytes_indexed: number; mtime_ms: number }
-      | null;
+    const state = getState.get(file.path) as { bytes_indexed: number; mtime_ms: number } | null;
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {
@@ -502,8 +503,7 @@ export const runIndex = (db: Database, full = false): IndexResult => {
     {
       // Isolate per-file failures (an unreadable or corrupt file) so one bad file
       // does not abort the whole run and skip relinkThreads / markDeletedBodies.
-      onError: (file, error) =>
-        console.error(`cerebro: skipped ${file.path}: ${error.message}`),
+      onError: (file, error) => console.error(`cerebro: skipped ${file.path}: ${error.message}`),
     },
   );
 

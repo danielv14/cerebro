@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { removeStopwords, swe, eng } from "stopword";
+import { eng, removeStopwords, swe } from "stopword";
 
 export interface SearchHit {
   id: number;
@@ -197,11 +197,7 @@ export interface RelevantThread {
 // across the two FTS indexes, so we rank within each and prefer the summary tier
 // wholesale rather than merging scores. Each thread is enriched with title +
 // opening prompt so it is recognizable in injected context.
-export const relevantThreads = (
-  db: Database,
-  prompt: string,
-  limit = 3,
-): RelevantThread[] => {
+export const relevantThreads = (db: Database, prompt: string, limit = 3): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
 

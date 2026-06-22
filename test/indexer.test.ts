@@ -1,17 +1,17 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { runIndex, dryRunIndex, splitBuffer, planFileRead } from "../src/indexer.ts";
+import { dryRunIndex, planFileRead, runIndex, splitBuffer } from "../src/indexer.ts";
 import type { SessionFile } from "../src/paths.ts";
 import {
+  appendRaw,
+  assistantMsg,
   makeClaudeDir,
+  type TempClaude,
+  ts,
+  userMsg,
   writeSession,
   writeSubagent,
-  appendRaw,
-  userMsg,
-  assistantMsg,
-  ts,
-  type TempClaude,
 } from "./fixtures.ts";
 
 const countMessages = (db: Database): number =>
@@ -144,7 +144,7 @@ describe("runIndex", () => {
   test("incremental index reads only appended bytes", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "one")]);
     expect(runIndex(db).newMessages).toBe(1);
-    appendRaw(path, JSON.stringify(assistantMsg("S", "a1", "two", { parentUuid: "u1" })) + "\n");
+    appendRaw(path, `${JSON.stringify(assistantMsg("S", "a1", "two", { parentUuid: "u1" }))}\n`);
     expect(runIndex(db).newMessages).toBe(1);
     expect(countMessages(db)).toBe(2);
   });
@@ -243,7 +243,7 @@ describe("runIndex", () => {
     appendRaw(path, a1.slice(0, 25)); // partial JSON, no newline
     runIndex(db);
     expect(countMessages(db)).toBe(1); // only u1
-    appendRaw(path, a1.slice(25) + "\n"); // complete it
+    appendRaw(path, `${a1.slice(25)}\n`); // complete it
     runIndex(db);
     expect(countMessages(db)).toBe(2);
   });
