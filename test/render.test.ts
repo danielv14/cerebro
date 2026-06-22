@@ -9,6 +9,12 @@ import {
   recentThreadLine,
   openedLine,
   sessionThreadLine,
+  recentContextIntro,
+  recentContextFooter,
+  relevantContextIntro,
+  relevantFooter,
+  relevantThreadLine,
+  relevantSnippetLine,
 } from "../src/render.ts";
 
 describe("humanBytes", () => {
@@ -163,5 +169,87 @@ describe("openedLine", () => {
   test("truncates the opening prompt at 120 columns", () => {
     const opening = "y".repeat(130);
     expect(openedLine(opening)).toBe(`      opened: ${"y".repeat(119)}…`);
+  });
+});
+
+// The --context blocks are the bytes the hooks inject into the model, so the exact
+// string (and especially the load-bearing guardrail + recall clauses) is pinned.
+describe("recent context block", () => {
+  test("intro names the repo and carries the ignore-if-unrelated guardrail", () => {
+    expect(recentContextIntro("cerebro")).toBe(
+      "Recent Claude Code sessions in this repo (cerebro), from the cerebro archive. " +
+        "Background only; ignore if unrelated to the current task.",
+    );
+  });
+
+  test("footer carries the recall instructions", () => {
+    const footer = recentContextFooter();
+    expect(footer).toBe(
+      "\nIf the request overlaps with any of these, recall that work instead of starting over:\n" +
+        "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
+        '  cerebro search "<terms>"   full-text search across all past sessions',
+    );
+  });
+});
+
+describe("relevant context block", () => {
+  test("intro carries the ignore-if-unrelated guardrail", () => {
+    expect(relevantContextIntro()).toBe(
+      "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
+        "against this prompt). Background only; ignore any that do not actually relate.",
+    );
+  });
+
+  test("footer carries the recall instructions (shared by both branches)", () => {
+    expect(relevantFooter()).toBe(
+      "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
+        'or cerebro search "<terms>".',
+    );
+  });
+});
+
+describe("relevantThreadLine", () => {
+  test("renders id, date, project, and title", () => {
+    const line = relevantThreadLine({
+      id: "0123456789abcdef",
+      last_ts: "2026-01-15T08:00:00Z",
+      project_path: "/Users/foo/cerebro",
+      title: "Some thread",
+    });
+    expect(line).toBe("  01234567  2026-01-15  cerebro  Some thread");
+  });
+
+  test("falls back to (untitled) and truncates the title at 80 columns", () => {
+    const title = "z".repeat(90);
+    const line = relevantThreadLine({
+      id: "0123456789abcdef",
+      last_ts: "2026-01-15T08:00:00Z",
+      project_path: "/Users/foo/cerebro",
+      title,
+    });
+    expect(line).toBe(`  01234567  2026-01-15  cerebro  ${"z".repeat(79)}…`);
+
+    const untitled = relevantThreadLine({
+      id: "0123456789abcdef",
+      last_ts: "2026-01-15T08:00:00Z",
+      project_path: null,
+      title: null,
+    });
+    expect(untitled).toBe("  01234567  2026-01-15  (unknown)  (untitled)");
+  });
+});
+
+describe("relevantSnippetLine", () => {
+  test("labels a summary-tier snippet", () => {
+    expect(relevantSnippetLine("matched bit", true)).toBe("      summary: matched bit");
+  });
+
+  test("labels a raw-transcript-tier snippet", () => {
+    expect(relevantSnippetLine("matched bit", false)).toBe("      match:  matched bit");
+  });
+
+  test("truncates the snippet at 120 columns", () => {
+    const snippet = "w".repeat(130);
+    expect(relevantSnippetLine(snippet, false)).toBe(`      match:  ${"w".repeat(119)}…`);
   });
 });

@@ -29,13 +29,18 @@ import { gitInfo } from "./git.ts";
 import {
   shortId,
   shortTime,
-  shortDate,
   projectName,
   oneLine,
   humanBytes,
   recentThreadLine,
   openedLine,
   sessionThreadLine,
+  recentContextIntro,
+  recentContextFooter,
+  relevantContextIntro,
+  relevantFooter,
+  relevantThreadLine,
+  relevantSnippetLine,
 } from "./render.ts";
 
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
@@ -275,20 +280,13 @@ export const runCli = (
         const repoLabel = projectName(repoRoot ?? cwd);
 
         if (values.context) {
-          io.log(
-            `Recent Claude Code sessions in this repo (${repoLabel}), from the cerebro archive. ` +
-              "Background only; ignore if unrelated to the current task.",
-          );
+          io.log(recentContextIntro(repoLabel));
           for (const thread of threads) {
             io.log(recentThreadLine(thread, { showMsgs: false }));
             const opening = openingPrompt(db, thread.id);
             if (opening) io.log(openedLine(opening));
           }
-          io.log(
-            "\nIf the request overlaps with any of these, recall that work instead of starting over:\n" +
-              "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
-              '  cerebro search "<terms>"   full-text search across all past sessions',
-          );
+          io.log(recentContextFooter());
         } else {
           io.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
@@ -327,31 +325,13 @@ export const runCli = (
           break;
         }
 
-
-        if (values.context) {
-          io.log(
-            "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
-              "against this prompt). Background only; ignore any that do not actually relate.",
-          );
-        } else {
-          io.log("Related past sessions:");
-        }
+        io.log(values.context ? relevantContextIntro() : "Related past sessions:");
         for (const thread of threads) {
-          io.log(
-            `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
-          );
+          io.log(relevantThreadLine(thread));
           if (thread.opening) io.log(openedLine(thread.opening));
-          if (thread.snippet) {
-            // Label which tier the snippet came from: a curated summary outranks
-            // a raw-transcript match and is worth flagging as higher-signal.
-            const label = thread.fromSummary ? "summary: " : "match:  ";
-            io.log(`      ${label}${oneLine(thread.snippet, 120)}`);
-          }
+          if (thread.snippet) io.log(relevantSnippetLine(thread.snippet, thread.fromSummary));
         }
-        io.log(
-          "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
-            'or cerebro search "<terms>".',
-        );
+        io.log(relevantFooter());
         break;
       }
 

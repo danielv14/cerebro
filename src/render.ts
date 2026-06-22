@@ -93,3 +93,47 @@ export const sessionThreadLine = (thread: {
   const deleted = thread.body_available === 0 ? "  [body deleted]" : "";
   return `${shortId(thread.id)}  ${shortTime(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${projectName(thread.project_path)}${resumes}${deleted}`;
 };
+
+// The agent-facing context blocks emitted under --context are cerebro's contract
+// with the consuming hook/agent: these exact bytes are injected into the model on
+// every prompt (relevant) and session start (recent). They live here, beside the
+// line renderers, so the contract is one tested surface rather than inline literals
+// in the command dispatch. The two commands' blocks deliberately differ (recent is
+// repo-scoped and hides the msg count; relevant labels summary vs match snippets),
+// so each has its own renderer rather than one parametrized block. The "Background
+// only; ignore …" guardrail (which stops injected history derailing the task) and
+// the recall instructions (cerebro show / search) are load-bearing; tests pin them.
+
+export const recentContextIntro = (repoLabel: string): string =>
+  `Recent Claude Code sessions in this repo (${repoLabel}), from the cerebro archive. ` +
+  "Background only; ignore if unrelated to the current task.";
+
+export const recentContextFooter = (): string =>
+  "\nIf the request overlaps with any of these, recall that work instead of starting over:\n" +
+  "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
+  '  cerebro search "<terms>"   full-text search across all past sessions';
+
+export const relevantContextIntro = (): string =>
+  "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
+  "against this prompt). Background only; ignore any that do not actually relate.";
+
+// The recall footer shared by both `relevant` branches (context and plain).
+export const relevantFooter = (): string =>
+  "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
+  'or cerebro search "<terms>".';
+
+// Line 1 of a `relevant` thread row: id, date, project, title. Distinct from the
+// `recent` / `sessions` rows, so it is its own renderer.
+export const relevantThreadLine = (thread: {
+  id: string;
+  last_ts: string | null;
+  project_path: string | null;
+  title: string | null;
+}): string =>
+  `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`;
+
+// The snippet follow-up line for a `relevant` row. The label flags which FTS tier
+// the snippet came from: a curated summary outranks a raw-transcript match and is
+// worth marking as higher-signal.
+export const relevantSnippetLine = (snippet: string, fromSummary: boolean): string =>
+  `      ${fromSummary ? "summary: " : "match:  "}${oneLine(snippet, 120)}`;
