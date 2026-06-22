@@ -21,7 +21,9 @@ code.
   (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
-  dry-run parity, and every query function. Add tests when you touch these.
+  dry-run parity, CLI dispatch (`test/cli.test.ts`: arg validation + each command
+  via an injected db and capturing sink), the digest layer (staleness, model
+  tiering), and every query function. Add tests when you touch these.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`). The PATH symlink tracks the repo live.
 - **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook
