@@ -65,7 +65,11 @@ nohup bash -c '
     model="$("$cerebro_bin" digest model "$sid")"
     [ -n "$model" ] || { echo "[digest] $sid: could not resolve a model — skipped"; rm -f "$tmp" "$out"; exit 0; }
     echo "[digest] $sid: $(wc -c < "$tmp" | tr -d " ") chars -> $model"
-    claude -p --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
+    # --no-session-persistence: this headless summarization is a one-shot, never
+    # resumed, and persisting it would write a transcript into ~/.claude/projects that
+    # the indexer then picks up as a bogus session (its first turn is the digest
+    # prompt). Not persisting it keeps cerebro from indexing its own digest runs.
+    claude -p --no-session-persistence --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
     rc=$?
     if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
       "$cerebro_bin" digest write "$sid" --model "$model" < "$out"
