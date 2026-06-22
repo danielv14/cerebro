@@ -34,10 +34,44 @@ Write in the session's dominant language (Swedish or English). Be terse. Output 
 // keeps the rendered input under ~850k tokens, which fits a 1M-context model with
 // room left for the prompt and the summary. Threads below this render verbatim
 // (byte-identical to `show --full`); only the rare oversized thread is condensed.
-// The summarize hook picks the model by measured size (small -> Haiku's 200k,
-// large -> a 1M-context model), so this cap is the final backstop ensuring even a
-// 1M model never overflows, not the primary size control.
+// pickDigestModel picks the model by measured size (small -> Haiku's 200k, large
+// -> a 1M-context model), so this cap is the final backstop ensuring even a 1M
+// model never overflows, not the primary size control.
 export const DIGEST_INPUT_MAX_CHARS = 2_700_000;
+
+export interface DigestModelConfig {
+  small: string;
+  large: string;
+  thresholdChars: number;
+}
+
+// The size -> model tiering config, read from the same env vars the summarize hook
+// has always used (so any override keeps working) with the same defaults. Empty or
+// unset falls back to the default, matching bash `${VAR:-default}`.
+export const digestModelConfig = (): DigestModelConfig => {
+  const threshold = process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS;
+  const parsed = threshold ? Number(threshold) : 540_000;
+  return {
+    small: process.env.CEREBRO_DIGEST_MODEL || "claude-haiku-4-5",
+    large: process.env.CEREBRO_DIGEST_MODEL_LARGE || "claude-sonnet-4-6[1m]",
+    // A non-numeric override falls back rather than becoming NaN (which would
+    // wedge every thread on the small model).
+    thresholdChars: Number.isFinite(parsed) ? parsed : 540_000,
+  };
+};
+
+// Pick the summarization model for a transcript of `byteCount` bytes (the size of
+// the rendered `digest input`, measured the same way the hook did with `wc -c` --
+// bytes, not characters, so multibyte threads tier correctly). Small threads (the
+// common case) get the cheap small model; only an oversized thread escalates to the
+// large 1M-context model. The threshold is a byte proxy because cerebro has no
+// tokenizer. Single source of truth for the tiering the summarize hook used to
+// inline in bash; `> threshold` matches its strict comparison (a thread at the
+// threshold stays on the small model).
+export const pickDigestModel = (
+  byteCount: number,
+  config: DigestModelConfig = digestModelConfig(),
+): string => (byteCount > config.thresholdChars ? config.large : config.small);
 
 interface RenderableMessage {
   role: string;

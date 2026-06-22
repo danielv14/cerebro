@@ -6,6 +6,8 @@ import {
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   buildDigestInput,
+  pickDigestModel,
+  digestModelConfig,
   staleThreads,
   writeSummary,
   getSummary,
@@ -28,6 +30,54 @@ describe("DIGEST_PROMPT", () => {
     expect(DIGEST_PROMPT).toContain("Keywords:");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("routine");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("output only the summary");
+  });
+});
+
+describe("pickDigestModel (size -> model tiering)", () => {
+  const config = { small: "small-model", large: "large-model", thresholdChars: 1000 };
+
+  test("a thread below the threshold gets the small model", () => {
+    expect(pickDigestModel(999, config)).toBe("small-model");
+  });
+
+  test("a thread exactly at the threshold stays on the small model (strict >)", () => {
+    expect(pickDigestModel(1000, config)).toBe("small-model");
+  });
+
+  test("a thread above the threshold escalates to the large model", () => {
+    expect(pickDigestModel(1001, config)).toBe("large-model");
+  });
+});
+
+describe("digestModelConfig (env overrides)", () => {
+  const keys = ["CEREBRO_DIGEST_MODEL", "CEREBRO_DIGEST_MODEL_LARGE", "CEREBRO_DIGEST_HAIKU_MAX_CHARS"];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  test("defaults match the hook's historical defaults", () => {
+    expect(digestModelConfig()).toEqual({
+      small: "claude-haiku-4-5",
+      large: "claude-sonnet-4-6[1m]",
+      thresholdChars: 540_000,
+    });
+  });
+
+  test("env vars override each field", () => {
+    process.env.CEREBRO_DIGEST_MODEL = "tiny";
+    process.env.CEREBRO_DIGEST_MODEL_LARGE = "huge";
+    process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS = "12345";
+    expect(digestModelConfig()).toEqual({ small: "tiny", large: "huge", thresholdChars: 12_345 });
   });
 });
 

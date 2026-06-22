@@ -103,11 +103,12 @@ threads escalate to `claude-sonnet-4-6[1m]` in a single shot: Sonnet has a 1M-to
 context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token thread
 is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
 it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
-default 200k window and a giant thread still fails with "Prompt is too long". The hook
-decides by the rendered char count (`cerebro digest input` is the size-bounded transcript;
-see the `digest` section), and `cerebro digest input` water-fill-caps anything large
-enough to risk overflowing even a 1M context. Override the tier via `CEREBRO_DIGEST_MODEL`
-(small, default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default `claude-sonnet-4-6[1m]`),
+default 200k window and a giant thread still fails with "Prompt is too long". cerebro
+owns the tiering: the hook asks `cerebro digest model <id>`, which decides by the rendered
+transcript's byte size (`cerebro digest input` is the size-bounded transcript; see the
+`digest` section), and `cerebro digest input` water-fill-caps anything large enough to
+risk overflowing even a 1M context. Override the tier via `CEREBRO_DIGEST_MODEL` (small,
+default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default `claude-sonnet-4-6[1m]`),
 and `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 540000) in the hook's
 environment.
 
@@ -155,6 +156,7 @@ cerebro digest stale [--limit N]            # threads needing a (re)summary (nev
                                             #   new activity since, or older prompt version)
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
+cerebro digest model <id>                   # print the model the size tiering would pick
 cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
