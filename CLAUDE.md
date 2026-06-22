@@ -24,8 +24,8 @@ code.
   dry-run parity, and every query function. Add tests when you touch these.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`). The PATH symlink tracks the repo live.
-- **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook and
-  the daily launchd agent run a *compiled* snapshot at `$CLAUDE_CONFIG_DIR/cerebro/cerebro`
+- **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook
+  runs a *compiled* snapshot at `$CLAUDE_CONFIG_DIR/cerebro/cerebro`
   (defaults to `~/.claude/cerebro/cerebro`), not the source. Code edits (e.g. to
   `flattenContent`) do not affect automated indexing until you redeploy: `bun run deploy`
   (builds, then copies the binary plus `hooks/summarize-on-clear.sh` into the Claude
