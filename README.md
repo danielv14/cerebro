@@ -96,6 +96,12 @@ rate limit, killed on teardown), `cerebro digest stale` re-surfaces the thread. 
 on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
 instead.
 
+The detached summary runs `claude -p --no-session-persistence`, so the summarization
+call itself never writes a transcript into `~/.claude/projects` for the indexer to pick
+up as a bogus session. As a backstop the indexer also skips any transcript whose first
+turn is the digest prompt, so even a digest run that predates this (or one written some
+other way) never enters the archive.
+
 The summary model is tiered by transcript size, since the model context window is the
 real constraint. Small threads (the common case) use `claude-haiku-4-5` (mechanical
 compress-and-tag work, cheapest input price, no effort/thinking overhead). Oversized

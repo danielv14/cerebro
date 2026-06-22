@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
+import { DIGEST_PROMPT_SIGNATURE } from "./digest.ts";
 import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
@@ -465,6 +466,31 @@ const eachIndexableFile = (
   }
 };
 
+// True when these lines are cerebro's own headless summarization run rather than a
+// real session. The SessionEnd hook pipes a transcript through
+// `claude -p "$(cerebro digest prompt)"`, which Claude Code records as an ordinary
+// session under ~/.claude/projects; its first turn is the digest prompt as a user
+// message. Indexing it would feed the prompt's boilerplate back into the archive as
+// searchable noise and mis-title the stub from the summary it produced, so the
+// indexer skips it. New digest runs avoid writing a transcript at all (the hook
+// passes --no-session-persistence); this guard covers transcripts already on disk
+// and any that slip through. Caller gates on plan.start === 0 so it only inspects a
+// file read whole from the start, never a mid-file incremental read whose first line
+// is an arbitrary turn.
+const isDigestRunTranscript = (lines: string[]): boolean => {
+  for (const line of lines) {
+    if (!line) continue;
+    const parsed = parseLine(line);
+    if (parsed === undefined) continue;
+    const classified = classify(parsed);
+    if (classified.kind !== "message") continue;
+    // The first real turn decides it: a digest run opens with the prompt as a user
+    // message; any other opening is a genuine session.
+    return classified.role === "user" && classified.text.startsWith(DIGEST_PROMPT_SIGNATURE);
+  }
+  return false;
+};
+
 // Incrementally index every session file. `full` clears the per-file cursors so
 // every file is re-read from the start; dedup on message UUID makes that safe.
 export const runIndex = (db: Database, full = false): IndexResult => {
@@ -486,11 +512,17 @@ export const runIndex = (db: Database, full = false): IndexResult => {
     db,
     files,
     full,
-    ({ file, lines, cursor }) => {
+    ({ file, plan, lines, cursor }) => {
       // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
       // we do not skip it: running saveState still records the new mtime, so a
       // touched-but-unchanged file settles to "unchanged" on the next run.
       const tx = db.transaction(() => {
+        if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) {
+          // cerebro's own digest summarization transcript, not a session: advance the
+          // cursor so it is never re-scanned, but index none of it.
+          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+          return;
+        }
         const meta = ingestLines(db, file, lines);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
@@ -561,8 +593,12 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
     db,
     files,
     full,
-    ({ plan, lines, cursor }) => {
+    ({ file, plan, lines, cursor }) => {
       if (cursor === plan.start) return; // mid-write, nothing indexable yet
+
+      // A digest summarization transcript is indexed as nothing by a real run, so the
+      // dry run must not count it either (invariant: dry-run numbers match a real run).
+      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) return;
 
       // In full mode every file re-reads from 0; the run does not categorize files
       // as new/grown/truncated, so skip those counters (preserving prior behaviour).

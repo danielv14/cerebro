@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
+import { DIGEST_PROMPT } from "../src/digest.ts";
 import { dryRunIndex, planFileRead, runIndex, splitBuffer } from "../src/indexer.ts";
 import type { SessionFile } from "../src/paths.ts";
 import {
@@ -261,6 +262,42 @@ describe("runIndex", () => {
     expect(rows.find((r) => r.session_id === "B")?.body_available).toBe(1);
   });
 
+  test("a digest summarization run is not indexed as a session", () => {
+    // cerebro's own `claude -p "$(cerebro digest prompt)"` run: Claude Code records it
+    // as a session whose first turn is the digest prompt. It must not enter the archive.
+    writeSession(env.projects, "-repo", "DIG", [
+      userMsg("DIG", "d1", DIGEST_PROMPT),
+      assistantMsg("DIG", "d2", "One-line summary. Keywords: foo", { parentUuid: "d1" }),
+      { type: "ai-title", aiTitle: "Misleading title from the summary", sessionId: "DIG" },
+    ]);
+    writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
+
+    const result = runIndex(db);
+    expect(result.newMessages).toBe(1); // only REAL's message
+    expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    // Cursor was recorded, so a second run does not re-scan and re-skip it.
+    expect(runIndex(db).filesIndexed).toBe(0);
+  });
+
+  test("a session that merely contains the digest prompt later is still indexed", () => {
+    // The prompt only disqualifies a file when it is the FIRST turn (a digest run).
+    // A genuine session that quotes or discusses it mid-conversation is unaffected.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "let us discuss the cerebro digest prompt"),
+      userMsg("S", "u2", DIGEST_PROMPT, { parentUuid: "u1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    expect(countMessages(db)).toBe(2);
+    expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='S'").get()).toEqual({
+      c: 1,
+    });
+  });
+
   test("an empty scan does not wipe body_available (transient-failure guard)", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db);
@@ -313,5 +350,15 @@ describe("dryRunIndex", () => {
     const plan = dryRunIndex(db, true);
     expect(plan.full).toBe(true);
     expect(plan.candidateMessages).toBe(1);
+  });
+
+  test("a digest summarization run is not counted (parity with runIndex skip)", () => {
+    writeSession(env.projects, "-repo", "DIG", [
+      userMsg("DIG", "d1", DIGEST_PROMPT),
+      assistantMsg("DIG", "d2", "summary", { parentUuid: "d1" }),
+    ]);
+    const plan = dryRunIndex(db);
+    expect(plan.candidateMessages).toBe(0);
+    expect(plan.filesToRead).toBe(0);
   });
 });
