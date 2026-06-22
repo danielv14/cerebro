@@ -22,6 +22,7 @@ code.
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
   session-file discovery (`test/paths.test.ts`: ordering, tiebreak, subagent walk),
+  git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance),
   dry-run parity, CLI dispatch (`test/cli.test.ts`: arg validation + each command
   via an injected db and capturing sink), the digest layer (staleness, model
   tiering), and every query function. Add tests when you touch these.
