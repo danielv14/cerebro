@@ -141,6 +141,18 @@ describe("sessionThreadLine", () => {
     });
     expect(line).toBe("01234567  2026-07-15 10:00    42 msgs  cerebro +2 resume(s)  [body deleted]");
   });
+
+  test("treats the resume and [body deleted] suffixes independently", () => {
+    const line = sessionThreadLine({
+      id: "0123456789abcdef",
+      last_ts: "2026-07-15T08:00:00Z",
+      msgs: 42,
+      sessions_in_thread: 2,
+      project_path: "/Users/foo/cerebro",
+      body_available: 1,
+    });
+    expect(line).toBe("01234567  2026-07-15 10:00    42 msgs  cerebro +1 resume(s)");
+  });
 });
 
 describe("openedLine", () => {

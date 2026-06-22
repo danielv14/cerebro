@@ -10,7 +10,7 @@ export const shortId = (id: string): string => id.slice(0, 8);
 // Display them in Swedish wall-clock time. sv-SE formats as "2026-06-18 22:12",
 // matching the previous "YYYY-MM-DD HH:mm" shape with the offset applied, and
 // handles DST (CET/CEST) per date.
-export const DISPLAY_TZ = "Europe/Stockholm";
+const DISPLAY_TZ = "Europe/Stockholm";
 
 export const shortTime = (ts: string | null | undefined): string => {
   if (!ts) return "????-??-?? ??:??";
