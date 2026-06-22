@@ -38,7 +38,7 @@ export const projectName = (path: string | null): string =>
 
 export const oneLine = (text: string, max = 100): string => {
   const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? collapsed.slice(0, max - 1) + "…" : collapsed;
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 };
 
 export const humanBytes = (bytes: number): string => {

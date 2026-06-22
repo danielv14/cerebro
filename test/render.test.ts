@@ -1,20 +1,20 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  shortId,
-  shortTime,
-  shortDate,
-  projectName,
-  oneLine,
   humanBytes,
-  recentThreadLine,
+  oneLine,
   openedLine,
-  sessionThreadLine,
-  recentContextIntro,
+  projectName,
   recentContextFooter,
+  recentContextIntro,
+  recentThreadLine,
   relevantContextIntro,
   relevantFooter,
-  relevantThreadLine,
   relevantSnippetLine,
+  relevantThreadLine,
+  sessionThreadLine,
+  shortDate,
+  shortId,
+  shortTime,
 } from "../src/render.ts";
 
 describe("humanBytes", () => {
@@ -145,7 +145,9 @@ describe("sessionThreadLine", () => {
       project_path: "/Users/foo/cerebro",
       body_available: 0,
     });
-    expect(line).toBe("01234567  2026-07-15 10:00    42 msgs  cerebro +2 resume(s)  [body deleted]");
+    expect(line).toBe(
+      "01234567  2026-07-15 10:00    42 msgs  cerebro +2 resume(s)  [body deleted]",
+    );
   });
 
   test("treats the resume and [body deleted] suffixes independently", () => {

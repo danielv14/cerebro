@@ -1,8 +1,14 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { join } from "node:path";
 import { discoverSessionFiles } from "../src/paths.ts";
-import { makeClaudeDir, writeSession, writeSubagent, userMsg, type TempClaude } from "./fixtures.ts";
+import {
+  makeClaudeDir,
+  type TempClaude,
+  userMsg,
+  writeSession,
+  writeSubagent,
+} from "./fixtures.ts";
 
 // discoverSessionFiles walks CEREBRO_CLAUDE_DIR/projects. These tests pin its two
 // load-bearing behaviours that the indexer tests only exercise transitively:

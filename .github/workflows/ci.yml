@@ -20,8 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      # No standalone linter: the project keeps deps to types-only, so strict
-      # `tsc` is the lint/strictness gate. typecheck + test + a compile build.
+      - run: bunx biome ci
       - run: bun run typecheck
       - run: bun test
       - run: bun run build

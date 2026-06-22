@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { parseLine, flattenContent, classify } from "../src/jsonl.ts";
+import { describe, expect, test } from "bun:test";
+import { classify, flattenContent, parseLine } from "../src/jsonl.ts";
 
 describe("parseLine", () => {
   test("parses valid JSON object", () => {
@@ -106,7 +106,12 @@ describe("classify", () => {
   });
 
   test("captures isSidechain", () => {
-    const r = classify({ type: "assistant", uuid: "a1", isSidechain: true, message: { content: "x" } });
+    const r = classify({
+      type: "assistant",
+      uuid: "a1",
+      isSidechain: true,
+      message: { content: "x" },
+    });
     expect(r).toMatchObject({ kind: "message", isSidechain: true });
     const r2 = classify({ type: "assistant", uuid: "a2", message: { content: "x" } });
     expect(r2).toMatchObject({ kind: "message", isSidechain: false });
@@ -123,8 +128,14 @@ describe("classify", () => {
       title: "C",
       priority: 3,
     });
-    expect(classify({ type: "ai-title", aiTitle: "A" })).toMatchObject({ kind: "title", priority: 2 });
-    expect(classify({ type: "summary", summary: "Su" })).toMatchObject({ kind: "title", priority: 1 });
+    expect(classify({ type: "ai-title", aiTitle: "A" })).toMatchObject({
+      kind: "title",
+      priority: 2,
+    });
+    expect(classify({ type: "summary", summary: "Su" })).toMatchObject({
+      kind: "title",
+      priority: 1,
+    });
   });
 
   test("drops non-message bookkeeping events that may reuse UUIDs", () => {

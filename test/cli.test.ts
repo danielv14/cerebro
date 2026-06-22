@@ -1,9 +1,16 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { type CliIO, runCli } from "../src/cli.ts";
 import { openDb } from "../src/db.ts";
-import { runIndex } from "../src/indexer.ts";
-import { runCli, type CliIO } from "../src/cli.ts";
 import { writeSummary } from "../src/digest.ts";
-import { makeClaudeDir, writeSession, userMsg, assistantMsg, ts, type TempClaude } from "./fixtures.ts";
+import { runIndex } from "../src/indexer.ts";
+import {
+  assistantMsg,
+  makeClaudeDir,
+  type TempClaude,
+  ts,
+  userMsg,
+  writeSession,
+} from "./fixtures.ts";
 
 // A capturing CliIO so a test can assert on output and exit code without spawning
 // the binary or touching the global process.exitCode.
@@ -22,7 +29,17 @@ const makeIO = () => {
       exitCode = code;
     },
   };
-  return { io, logs, errs, get raw() { return raw; }, get exitCode() { return exitCode; } };
+  return {
+    io,
+    logs,
+    errs,
+    get raw() {
+      return raw;
+    },
+    get exitCode() {
+      return exitCode;
+    },
+  };
 };
 
 describe("runCli", () => {
@@ -122,7 +139,9 @@ describe("runCli", () => {
   });
 
   test("search with no hits prints the empty-state line", () => {
-    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+    ]);
     const cap = makeIO();
     runCli(["search", "zzzneverappears"], cap.io, seeded());
     expect(cap.logs.join("\n")).toContain("No matches.");
@@ -143,7 +162,9 @@ describe("runCli", () => {
   });
 
   test("digest input writes the raw transcript to io.write (not log)", () => {
-    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "the body text", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "the body text", { timestamp: ts(0) }),
+    ]);
     const cap = makeIO();
     runCli(["digest", "input", "SESS"], cap.io, seeded());
     expect(cap.raw).toContain("the body text");
@@ -154,11 +175,17 @@ describe("runCli", () => {
   test("digest model prints the tier-picked model for a small thread", () => {
     // Neutralize the digest env overrides so the assertion holds regardless of the
     // dev/CI environment, then restore them.
-    const keys = ["CEREBRO_DIGEST_MODEL", "CEREBRO_DIGEST_MODEL_LARGE", "CEREBRO_DIGEST_HAIKU_MAX_CHARS"];
+    const keys = [
+      "CEREBRO_DIGEST_MODEL",
+      "CEREBRO_DIGEST_MODEL_LARGE",
+      "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
+    ];
     const saved = keys.map((k) => process.env[k]);
     for (const k of keys) delete process.env[k];
     try {
-      writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "short thread", { timestamp: ts(0) })]);
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "short thread", { timestamp: ts(0) }),
+      ]);
       const cap = makeIO();
       runCli(["digest", "model", "SESS"], cap.io, seeded());
       expect(cap.logs.join("\n")).toBe("claude-haiku-4-5");
@@ -179,7 +206,9 @@ describe("runCli", () => {
   });
 
   test("digest show prints a stored summary", () => {
-    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+    ]);
     const cap = makeIO();
     runCli(["digest", "show", "SESS"], cap.io, () => {
       const db = openDb(":memory:");
@@ -192,7 +221,9 @@ describe("runCli", () => {
   });
 
   test("recent --context emits the agent-facing block with guardrail and recall clauses", () => {
-    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "some work", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "some work", { timestamp: ts(0) }),
+    ]);
     const cap = makeIO();
     // /repo is not a real git repo, so recent falls back to project_path matching;
     // a huge --days window includes the fixture's fixed-base timestamp.

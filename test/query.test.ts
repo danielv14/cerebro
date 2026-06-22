@@ -1,28 +1,28 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { openDb } from "../src/db.ts";
+import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
-  search,
   listThreads,
+  openingPrompt,
   recentThreads,
   relevantThreads,
   resolveSession,
-  openingPrompt,
+  search,
   stats,
   toMatchQuery,
 } from "../src/query.ts";
-import { writeSummary } from "../src/digest.ts";
 import {
+  assistantMsg,
   makeClaudeDir,
+  type TempClaude,
+  ts,
+  userMsg,
   writeSession,
   writeSubagent,
-  userMsg,
-  assistantMsg,
-  ts,
-  type TempClaude,
 } from "./fixtures.ts";
-import fs from "node:fs";
 
 describe("toMatchQuery", () => {
   test("builds an OR-of-tokens query and drops stopwords", () => {

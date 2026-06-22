@@ -1,46 +1,46 @@
 #!/usr/bin/env bun
-import { parseArgs } from "node:util";
-import { readFileSync } from "node:fs";
 import type { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 import { openDb } from "./db.ts";
-import { defaultDbPath } from "./paths.ts";
-import { runIndex, dryRunIndex } from "./indexer.ts";
 import {
-  search,
-  listThreads,
-  recentThreads,
-  relevantThreads,
-  openingPrompt,
-  resolveSession,
-  threadMessages,
-  stats,
-} from "./query.ts";
-import {
+  buildDigestInput,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
-  buildDigestInput,
+  getSummary,
   pickDigestModel,
+  searchSummaries,
   staleThreads,
   writeSummary,
-  getSummary,
-  searchSummaries,
 } from "./digest.ts";
 import { gitInfo } from "./git.ts";
+import { dryRunIndex, runIndex } from "./indexer.ts";
+import { defaultDbPath } from "./paths.ts";
 import {
-  shortId,
-  shortTime,
-  projectName,
-  oneLine,
+  listThreads,
+  openingPrompt,
+  recentThreads,
+  relevantThreads,
+  resolveSession,
+  search,
+  stats,
+  threadMessages,
+} from "./query.ts";
+import {
   humanBytes,
-  recentThreadLine,
+  oneLine,
   openedLine,
-  sessionThreadLine,
-  recentContextIntro,
+  projectName,
   recentContextFooter,
+  recentContextIntro,
+  recentThreadLine,
   relevantContextIntro,
   relevantFooter,
-  relevantThreadLine,
   relevantSnippetLine,
+  relevantThreadLine,
+  sessionThreadLine,
+  shortId,
+  shortTime,
 } from "./render.ts";
 
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
@@ -97,8 +97,8 @@ export interface CliIO {
 }
 
 const realIO: CliIO = {
-  log: (line) => process.stdout.write(line + "\n"),
-  error: (line) => process.stderr.write(line + "\n"),
+  log: (line) => process.stdout.write(`${line}\n`),
+  error: (line) => process.stderr.write(`${line}\n`),
   write: (text) => process.stdout.write(text),
   setExitCode: (code) => {
     process.exitCode = code;
@@ -199,9 +199,7 @@ export const runCli = (
             io.log(`Dry run (--full): would re-read all ${plan.filesToRead} file(s).`);
             io.log(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
             io.log(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
-            io.log(
-              "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
-            );
+            io.log("  On an up-to-date archive dedup collapses this to ~0 net-new messages.");
           } else if (plan.filesToRead === 0) {
             io.log(
               `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged.`,

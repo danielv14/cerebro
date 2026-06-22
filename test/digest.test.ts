@@ -1,27 +1,27 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import type { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { runIndex } from "../src/indexer.ts";
 import {
+  buildDigestInput,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
-  buildDigestInput,
-  pickDigestModel,
   digestModelConfig,
+  getSummary,
+  pickDigestModel,
+  searchSummaries,
   staleThreads,
   writeSummary,
-  getSummary,
-  searchSummaries,
 } from "../src/digest.ts";
+import { runIndex } from "../src/indexer.ts";
 import { relevantThreads, searchSummaryRoots } from "../src/query.ts";
 import {
-  makeClaudeDir,
-  writeSession,
   appendRaw,
-  userMsg,
   assistantMsg,
-  ts,
+  makeClaudeDir,
   type TempClaude,
+  ts,
+  userMsg,
+  writeSession,
 } from "./fixtures.ts";
 
 describe("DIGEST_PROMPT", () => {
@@ -50,7 +50,11 @@ describe("pickDigestModel (size -> model tiering)", () => {
 });
 
 describe("digestModelConfig (env overrides)", () => {
-  const keys = ["CEREBRO_DIGEST_MODEL", "CEREBRO_DIGEST_MODEL_LARGE", "CEREBRO_DIGEST_HAIKU_MAX_CHARS"];
+  const keys = [
+    "CEREBRO_DIGEST_MODEL",
+    "CEREBRO_DIGEST_MODEL_LARGE",
+    "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
+  ];
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     for (const k of keys) {
@@ -126,7 +130,10 @@ describe("buildDigestInput (size-bounded transcript)", () => {
   });
 
   test("over budget: a long body is capped while a short body is not", () => {
-    const out = buildDigestInput([msg("user", "short"), msg("assistant", "y".repeat(5_000))], 1_000);
+    const out = buildDigestInput(
+      [msg("user", "short"), msg("assistant", "y".repeat(5_000))],
+      1_000,
+    );
     // The short body renders whole (its block ends, then the next header begins).
     expect(out).toContain("short\n\n──── assistant");
     // Only the long body carries the truncation marker.
@@ -178,8 +185,9 @@ describe("digest (summaries layer)", () => {
 
     appendRaw(
       path,
-      JSON.stringify(assistantMsg("S", "a2", "more work later", { parentUuid: "a1", timestamp: ts(100) })) +
-        "\n",
+      `${JSON.stringify(
+        assistantMsg("S", "a2", "more work later", { parentUuid: "a1", timestamp: ts(100) }),
+      )}\n`,
     );
     runIndex(db);
 

@@ -217,6 +217,20 @@ session-file discovery (ordering, tiebreak, the subagent walk), git resolution
 and the digest layer (staleness detection, upsert + FTS sync, root attribution,
 summary search).
 
+## Lint and format
+
+[Biome](https://biomejs.dev) handles both linting and formatting (config in
+`biome.json`):
+
+```sh
+bun run check       # lint + format check, read-only (the same biome ci runs in CI)
+bun run check:fix   # apply lint fixes + formatting
+bun run format      # format only, write
+bun run lint        # lint only
+```
+
+CI runs `biome ci` on every PR alongside typecheck, tests, and a compile build.
+
 ## Layout
 
 ```

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { dirname } from "node:path";
 import fs from "node:fs";
+import { dirname } from "node:path";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
