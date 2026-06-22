@@ -190,4 +190,56 @@ describe("runCli", () => {
     expect(cap.logs.join("\n")).toContain("A stored summary");
     expect(cap.exitCode).toBe(0);
   });
+
+  test("recent --context emits the agent-facing block with guardrail and recall clauses", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "some work", { timestamp: ts(0) })]);
+    const cap = makeIO();
+    // /repo is not a real git repo, so recent falls back to project_path matching;
+    // a huge --days window includes the fixture's fixed-base timestamp.
+    runCli(["recent", "--cwd", "/repo", "--days", "100000", "--context"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("Recent Claude Code sessions in this repo");
+    expect(out).toContain("Background only; ignore if unrelated to the current task.");
+    expect(out).toContain("cerebro show <id>");
+    expect(out).toContain('cerebro search "<terms>"');
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("recent --context is silent when there are no matching sessions", () => {
+    const cap = makeIO();
+    runCli(["recent", "--cwd", "/repo", "--days", "100000", "--context"], cap.io, () => memDb());
+    expect(cap.logs).toEqual([]);
+    expect(cap.errs).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("recent --days must be a positive number", () => {
+    const cap = makeIO();
+    runCli(["recent", "--cwd", "/repo", "--days", "0"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("--days must be a positive number");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("relevant --context emits the agent-facing block with guardrail and recall clauses", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "indexing sqlite performance tuning", { timestamp: ts(0) }),
+    ]);
+    const cap = makeIO();
+    runCli(["relevant", "sqlite performance", "--context"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("Possibly relevant past Claude Code sessions");
+    expect(out).toContain("ignore any that do not actually relate.");
+    expect(out).toContain("To recall one: cerebro show <id>");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("relevant --context is silent when nothing matches", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "totally unrelated content", { timestamp: ts(0) }),
+    ]);
+    const cap = makeIO();
+    runCli(["relevant", "zzzqqq nevermatches", "--context"], cap.io, seeded());
+    expect(cap.logs).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+  });
 });
