@@ -121,30 +121,14 @@ export interface StaleThread {
 }
 
 // Thread roots that need a (re)summary: never summarized, summarized before the
-// thread's latest activity, or summarized by an older prompt version. Aggregates
-// sessions into threads the same way listThreads does, then left-joins summaries.
+// thread's latest activity, or summarized by an older prompt version. Reads the
+// shared `threads` rollup view (see db.ts), then left-joins summaries.
 export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
   db
     .query(
       `SELECT t.id, t.last_ts, t.first_ts, t.msgs, t.project_path, t.title,
               su.prompt_version AS summary_version, su.summarized_at AS summarized_at
-       FROM (
-         SELECT
-           r.root_session_id AS id,
-           MAX(r.last_ts)    AS last_ts,
-           MIN(r.first_ts)   AS first_ts,
-           SUM(r.msg_count)  AS msgs,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
-             MAX(r.project_path)
-           ) AS project_path,
-           COALESCE(
-             MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
-             MAX(r.title)
-           ) AS title
-         FROM sessions r
-         GROUP BY r.root_session_id
-       ) t
+       FROM threads t
        LEFT JOIN summaries su ON su.root_session_id = t.id
        WHERE su.root_session_id IS NULL
           OR su.source_last_ts IS NULL

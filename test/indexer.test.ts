@@ -1,7 +1,8 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { openDb } from "../src/db.ts";
-import { runIndex, dryRunIndex, splitBuffer } from "../src/indexer.ts";
+import { runIndex, dryRunIndex, splitBuffer, planFileRead } from "../src/indexer.ts";
+import type { SessionFile } from "../src/paths.ts";
 import {
   makeClaudeDir,
   writeSession,
@@ -51,6 +52,56 @@ describe("splitBuffer", () => {
 
   test("cursor is relative to the start offset", () => {
     expect(splitBuffer(Buffer.from('{"b":2}\n'), 100)).toEqual({ lines: ['{"b":2}'], cursor: 108 });
+  });
+});
+
+describe("planFileRead", () => {
+  const file = (size: number, mtimeMs = 1000): SessionFile => ({
+    path: "/tmp/S.jsonl",
+    kind: "session",
+    sessionId: "S",
+    projectDir: "-repo",
+    size,
+    mtimeMs,
+  });
+
+  test("new file (no state) reads from 0", () => {
+    expect(planFileRead(null, file(100), false)).toEqual({
+      start: 0,
+      status: "new",
+      shouldRead: true,
+    });
+  });
+
+  test("grown file (state.bytes < size) reads from the saved cursor", () => {
+    const plan = planFileRead({ bytes_indexed: 40, mtime_ms: 1000 }, file(100), false);
+    expect(plan).toEqual({ start: 40, status: "grown", shouldRead: true });
+  });
+
+  test("truncated file (state.bytes > size) resets start to 0", () => {
+    const plan = planFileRead({ bytes_indexed: 200, mtime_ms: 1000 }, file(100), false);
+    expect(plan).toEqual({ start: 0, status: "truncated", shouldRead: true });
+  });
+
+  test("unchanged file (bytes === size && mtime matches) is not read", () => {
+    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 1000 }, file(100, 1000), false);
+    expect(plan).toEqual({ start: 100, status: "unchanged", shouldRead: false });
+  });
+
+  test("size matches but mtime differs -> should read (treated as grown)", () => {
+    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 999 }, file(100, 1000), false);
+    expect(plan).toEqual({ start: 100, status: "grown", shouldRead: true });
+  });
+
+  test("full mode always reads from 0 and never short-circuits as unchanged", () => {
+    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 1000 }, file(100, 1000), true);
+    expect(plan).toEqual({ start: 0, status: "grown", shouldRead: true });
+    // full with no prior state is reported as "new" (callers ignore status in full)
+    expect(planFileRead(null, file(100), true)).toEqual({
+      start: 0,
+      status: "new",
+      shouldRead: true,
+    });
   });
 });
 

@@ -320,6 +320,42 @@ export interface IndexResult {
   filesIndexed: number;
 }
 
+type FileStatus = "new" | "grown" | "truncated" | "unchanged";
+
+interface FileReadPlan {
+  start: number; // byte offset to read from
+  status: FileStatus;
+  shouldRead: boolean; // false only when unchanged (and not full)
+}
+
+// The single source of truth for the per-file cursor/skip/truncate decision in
+// front of splitBuffer. runIndex and dryRunIndex both consume this so they cannot
+// drift on what counts as indexable (invariant #2: dry-run must report exactly
+// what a real run would process). `full` forces a re-read from byte 0 and never
+// short-circuits as unchanged; in full mode the status is always "grown"/"new"
+// and callers ignore it for categorization.
+export const planFileRead = (
+  state: { bytes_indexed: number; mtime_ms: number } | null,
+  file: SessionFile,
+  full: boolean,
+): FileReadPlan => {
+  if (full) {
+    return { start: 0, status: state ? "grown" : "new", shouldRead: true };
+  }
+
+  let start = state ? state.bytes_indexed : 0;
+  if (start > file.size) {
+    // truncated / rotated -> re-read from the start
+    return { start: 0, status: "truncated", shouldRead: true };
+  }
+
+  if (state && start === file.size && state.mtime_ms === file.mtimeMs) {
+    return { start, status: "unchanged", shouldRead: false };
+  }
+
+  return { start, status: state ? "grown" : "new", shouldRead: true };
+};
+
 // Incrementally index every session file. `full` clears the per-file cursors so
 // every file is re-read from the start; dedup on message UUID makes that safe.
 export const runIndex = (db: Database, full = false): IndexResult => {
@@ -345,10 +381,9 @@ export const runIndex = (db: Database, full = false): IndexResult => {
       | { bytes_indexed: number; mtime_ms: number }
       | null;
 
-    let start = state ? state.bytes_indexed : 0;
-    if (start > file.size) start = 0; // truncated / rotated -> re-read
-
-    if (state && start === file.size && state.mtime_ms === file.mtimeMs) continue;
+    const plan = planFileRead(state, file, full);
+    if (!plan.shouldRead) continue; // unchanged
+    const start = plan.start;
 
     const tx = db.transaction(() => {
       const { cursor, meta } = indexOneFile(db, file, start);
@@ -425,25 +460,22 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
       | { bytes_indexed: number; mtime_ms: number }
       | null;
 
-    let start = full ? 0 : state ? state.bytes_indexed : 0;
-    let truncated = false;
-    if (!full && start > file.size) {
-      start = 0;
-      truncated = true;
-    }
-
-    if (!full && state && start === file.size && state.mtime_ms === file.mtimeMs) {
+    const plan = planFileRead(state, file, full);
+    if (!plan.shouldRead) {
       result.unchangedFiles++;
       continue;
     }
+    const start = plan.start;
 
     const buf = readRange(file.path, start, file.size);
     const { lines, cursor } = splitBuffer(buf, start);
     if (cursor === start) continue; // mid-write, nothing indexable yet
 
+    // In full mode every file re-reads from 0; the run does not categorize files
+    // as new/grown/truncated, so skip those counters (preserving prior behaviour).
     if (!full) {
-      if (!state) result.newFiles++;
-      else if (truncated) result.truncatedFiles++;
+      if (plan.status === "new") result.newFiles++;
+      else if (plan.status === "truncated") result.truncatedFiles++;
       else result.grownFiles++;
     }
     result.filesToRead++;

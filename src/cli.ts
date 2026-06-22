@@ -24,6 +24,17 @@ import {
   searchSummaries,
 } from "./digest.ts";
 import { gitInfo } from "./git.ts";
+import {
+  shortId,
+  shortTime,
+  shortDate,
+  projectName,
+  oneLine,
+  humanBytes,
+  recentThreadLine,
+  openedLine,
+  sessionThreadLine,
+} from "./render.ts";
 
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
 
@@ -65,55 +76,6 @@ Options:
 Env:
   CEREBRO_DB           Override the database path
   CEREBRO_CLAUDE_DIR   Override the ~/.claude directory`;
-
-const shortId = (id: string): string => id.slice(0, 8);
-
-// Stored timestamps are verbatim UTC (ISO-8601 with a trailing Z) from the JSONL.
-// Display them in Swedish wall-clock time. sv-SE formats as "2026-06-18 22:12",
-// matching the previous "YYYY-MM-DD HH:mm" shape with the offset applied, and
-// handles DST (CET/CEST) per date.
-const DISPLAY_TZ = "Europe/Stockholm";
-
-const shortTime = (ts: string | null | undefined): string => {
-  if (!ts) return "????-??-?? ??:??";
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "????-??-?? ??:??";
-  return date.toLocaleString("sv-SE", {
-    timeZone: DISPLAY_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
-
-const shortDate = (ts: string | null | undefined): string => {
-  if (!ts) return "??????????";
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "??????????";
-  return date.toLocaleDateString("sv-SE", { timeZone: DISPLAY_TZ });
-};
-
-const projectName = (path: string | null): string =>
-  path ? (path.split("/").filter(Boolean).pop() ?? path) : "(unknown)";
-
-const oneLine = (text: string, max = 100): string => {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? collapsed.slice(0, max - 1) + "…" : collapsed;
-};
-
-const humanBytes = (bytes: number): string => {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  const formatted = unit === 0 ? String(value) : value.toFixed(1);
-  return `${formatted} ${units[unit]}`;
-};
 
 const fail = (message: string): void => {
   console.error(message);
@@ -234,12 +196,7 @@ const main = (): void => {
           break;
         }
         for (const thread of threads) {
-          const resumes =
-            thread.sessions_in_thread > 1 ? ` +${thread.sessions_in_thread - 1} resume(s)` : "";
-          const deleted = thread.body_available === 0 ? "  [body deleted]" : "";
-          console.log(
-            `${shortId(thread.id)}  ${shortTime(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${projectName(thread.project_path)}${resumes}${deleted}`,
-          );
+          console.log(sessionThreadLine(thread));
           console.log(`    ${oneLine(thread.title ?? "(untitled)", 120)}`);
         }
         break;
@@ -270,11 +227,9 @@ const main = (): void => {
               "Background only; ignore if unrelated to the current task.",
           );
           for (const thread of threads) {
-            console.log(
-              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${oneLine(thread.title ?? "(untitled)", 90)}`,
-            );
+            console.log(recentThreadLine(thread, { showMsgs: false }));
             const opening = openingPrompt(db, thread.id);
-            if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
+            if (opening) console.log(openedLine(opening));
           }
           console.log(
             "\nIf the request overlaps with any of these, recall that work instead of starting over:\n" +
@@ -284,11 +239,9 @@ const main = (): void => {
         } else {
           console.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
-            console.log(
-              `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
-            );
+            console.log(recentThreadLine(thread, { showMsgs: true }));
             const opening = openingPrompt(db, thread.id);
-            if (opening) console.log(`      opened: ${oneLine(opening, 120)}`);
+            if (opening) console.log(openedLine(opening));
           }
           console.log('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
         }
@@ -334,7 +287,7 @@ const main = (): void => {
           console.log(
             `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`,
           );
-          if (thread.opening) console.log(`      opened: ${oneLine(thread.opening, 120)}`);
+          if (thread.opening) console.log(openedLine(thread.opening));
           if (thread.snippet) {
             // Label which tier the snippet came from: a curated summary outranks
             // a raw-transcript match and is worth flagging as higher-signal.

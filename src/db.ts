@@ -91,6 +91,42 @@ CREATE TRIGGER IF NOT EXISTS summaries_au AFTER UPDATE ON summaries BEGIN
     VALUES ('delete', old.rowid, old.summary);
   INSERT INTO summaries_fts(rowid, summary) VALUES (new.rowid, new.summary);
 END;
+
+-- The single sessions -> threads rollup. A logical thread is a root session plus
+-- its resumes and folded subagents, all sharing one root_session_id. Every caller
+-- that lists or scopes threads (listThreads, recentThreads, staleThreads) selects
+-- from this view rather than re-deriving the GROUP BY, so the rollup shape is
+-- defined exactly once.
+--
+-- project_path, git_root, and title use a root-preferring COALESCE: take the
+-- root session's value, and only fall back to MAX over the resumes when the root's
+-- is NULL. The aggregate must run over the unfiltered rows, so callers that scope by
+-- project filter the view's output AFTER the rollup. Filtering raw sessions before
+-- the GROUP BY would drop resume/subagent rows whose project_path is NULL or differs,
+-- undercounting msgs and sessions_in_thread. body_available is MIN so a thread is
+-- only body-available if every folded session still has its source on disk.
+CREATE VIEW IF NOT EXISTS threads AS
+  SELECT
+    r.root_session_id AS id,
+    MAX(r.last_ts)    AS last_ts,
+    MIN(r.first_ts)   AS first_ts,
+    SUM(r.msg_count)  AS msgs,
+    COUNT(*)          AS sessions_in_thread,
+    COALESCE(
+      MAX(CASE WHEN r.session_id = r.root_session_id THEN r.project_path END),
+      MAX(r.project_path)
+    ) AS project_path,
+    COALESCE(
+      MAX(CASE WHEN r.session_id = r.root_session_id THEN r.git_root END),
+      MAX(r.git_root)
+    ) AS git_root,
+    COALESCE(
+      MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
+      MAX(r.title)
+    ) AS title,
+    MIN(r.body_available) AS body_available
+  FROM sessions r
+  GROUP BY r.root_session_id;
 `;
 
 // Idempotent migrations for databases created by an earlier schema version.
