@@ -184,7 +184,9 @@ const SESSION_MERGE_COLUMNS = [
 // untouched on conflict (relinkThreads owns it); on insert it defaults to the
 // session itself, so a row is never NULL-rooted even before relinkThreads runs.
 const writeSessionRow = (db: Database, row: SessionRow, preserveIdentity: boolean): void => {
-  const [first, second] = preserveIdentity ? ["sessions", "excluded"] : ["excluded", "sessions"];
+  const [first, second] = preserveIdentity
+    ? (["sessions", "excluded"] as const)
+    : (["excluded", "sessions"] as const);
   const mergeSet = SESSION_MERGE_COLUMNS.map(
     (column) => `${column} = COALESCE(${first}.${column}, ${second}.${column})`,
   ).join(",\n       ");
@@ -251,10 +253,13 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
 };
 
 // A subagent file's messages belong to the parent session. Ensure that parent row
-// exists and refresh its aggregate, but never clobber the parent's identity fields
-// (source_file, project_dir, title, cwd, git_*) which are owned by its top-level
-// file. NULLs for the unowned fields preserve whatever the top-level wrote (and on
-// a pure-subagent stub leave source_file NULL, so it reads as body-unavailable).
+// exists and refresh its aggregate, but never clobber the parent's identity fields,
+// which are owned by its top-level file. preserveIdentity=true makes the existing
+// row win the COALESCE, so the values it does pass (project_dir, project_path, cwd,
+// git_branch) only fill a not-yet-seen parent and never overwrite the top-level's.
+// The fields a subagent cannot know (git_root, git_remote, source_file, title) are
+// passed NULL, so on a pure-subagent stub source_file stays NULL and the row reads
+// as body-unavailable.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
