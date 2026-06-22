@@ -10,10 +10,15 @@
     "cerebro": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "lint": "biome lint",
+    "format": "biome format --write",
+    "check": "biome check",
+    "check:fix": "biome check --write",
     "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro",
     "deploy": "bun run build && DEST=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && mkdir -p \"$DEST\" && cp dist/cerebro \"$DEST/cerebro\" && cp hooks/summarize-on-clear.sh \"$DEST/summarize-on-clear.sh\" && chmod +x \"$DEST/summarize-on-clear.sh\""
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
     "@types/bun": "latest",
     "@types/stopword": "^2.0.3",
     "typescript": "^5.6.0"

@@ -8,15 +8,21 @@ code.
 ## Stack
 
 - Bun >= 1.1, `import { Database } from "bun:sqlite"` (synchronous API). One small
-  pure-JS runtime dependency (`stopword`, for relevance stopword filtering);
-  otherwise dev deps are types only. Do not add native or network deps.
+  pure-JS runtime dependency (`stopword`, for relevance stopword filtering); dev
+  deps are types only plus Biome (lint + format). Do not add native or network
+  runtime deps.
 - TypeScript strict, `moduleResolution: bundler`, `.ts` extensions in imports.
 - Code style follows the global conventions (const arrow functions, async/await,
-  no em dashes in output). Commits in English.
+  no em dashes in output) and is enforced by Biome (`biome.json`): 2-space indent,
+  double quotes, semicolons, trailing commas, 100-col width. Commits in English.
 
 ## Developing and testing
 
 - Typecheck: `bun run typecheck` (must stay green before you finish).
+- Lint + format: `bun run check` (read-only, the same `biome ci` CI runs) or
+  `bun run check:fix` to apply. Config in `biome.json`: `noNonNullAssertion` is off
+  (the code uses `!` deliberately) and the two untyped-JSONL parser sites in
+  `jsonl.ts` carry `biome-ignore` comments for `noExplicitAny`. Keep it clean.
 - Tests: `bun test`. The suite under `test/` runs against an in-memory SQLite DB
   (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
