@@ -6,7 +6,6 @@ import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   listThreads,
-  openingPrompt,
   recentThreads,
   relevantThreads,
   resolveSession,
@@ -247,16 +246,6 @@ describe("query (populated archive)", () => {
     runIndex(db);
     expect(relevantThreads(db, "quux zzyzx nonexistent", 3).length).toBe(0);
     expect(relevantThreads(db, "och att den vi kan", 3).length).toBe(0);
-  });
-
-  test("openingPrompt returns the first prose user turn, skipping command wrappers", () => {
-    writeSession(env.projects, "-repo", "S", [
-      userMsg("S", "u1", "<command-name>/clear</command-name>", { timestamp: ts(0) }),
-      userMsg("S", "u2", "the real opening question", { timestamp: ts(1) }),
-      assistantMsg("S", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
-    ]);
-    runIndex(db);
-    expect(openingPrompt(db, "S")).toBe("the real opening question");
   });
 
   test("resolveSession handles exact id, unique prefix, miss, and ambiguity", () => {

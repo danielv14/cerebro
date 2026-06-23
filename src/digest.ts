@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots, threadMeta, toMatchQuery } from "./query.ts";
+import { rootOf, threadLastTs } from "./thread.ts";
 
 // The summarization contract lives here, in the CLI, not in the hook that invokes
 // the model. cerebro owns the prompt and the storage format together (they are two
@@ -144,15 +145,6 @@ export const buildDigestInput = (
   return render(lo);
 };
 
-// Resolve any session id (a root, a resume, or a subagent's parent) to its thread
-// root, so a summary is always attributed to the thread, never a single resume.
-const threadRoot = (db: Database, sessionId: string): string => {
-  const row = db
-    .query("SELECT root_session_id FROM sessions WHERE session_id = ?")
-    .get(sessionId) as { root_session_id: string | null } | null;
-  return row?.root_session_id ?? sessionId;
-};
-
 export interface StaleThread {
   id: string;
   last_ts: string | null;
@@ -193,10 +185,8 @@ export const writeSummary = (
   summary: string,
   model: string | null = null,
 ): string => {
-  const root = threadRoot(db, sessionId);
-  const span = db
-    .query("SELECT MAX(last_ts) AS mx FROM sessions WHERE root_session_id = ?")
-    .get(root) as { mx: string | null };
+  const root = rootOf(db, sessionId);
+  const sourceLastTs = threadLastTs(db, root);
 
   db.query(
     `INSERT INTO summaries (root_session_id, summary, prompt_version, model, summarized_at, source_last_ts)
@@ -207,7 +197,7 @@ export const writeSummary = (
        model          = excluded.model,
        summarized_at  = excluded.summarized_at,
        source_last_ts = excluded.source_last_ts`,
-  ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), span.mx);
+  ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), sourceLastTs);
 
   return root;
 };
@@ -224,7 +214,7 @@ export interface StoredSummary {
 export const getSummary = (db: Database, sessionId: string): StoredSummary | null =>
   db
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
-    .get(threadRoot(db, sessionId)) as StoredSummary | null;
+    .get(rootOf(db, sessionId)) as StoredSummary | null;
 
 export interface SummaryHit {
   id: string;
