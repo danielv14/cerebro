@@ -10,7 +10,7 @@ after Claude Code removes the originals.
 ## Install
 
 ```sh
-bun install                                              # one small pure-JS dep (stopword) + types
+bun install                                              # two small pure-JS deps (stopword, valibot) + types
 ln -sf /path/to/cerebro/src/cli.ts ~/.local/bin/cerebro  # global `cerebro` on PATH
 cerebro index                                            # build the archive
 ```
@@ -254,6 +254,8 @@ test/
   *.test.ts    bun test suite + fixtures.ts (temp claude dir + sessions)
 ```
 
-Built on Bun (`bun:sqlite`, synchronous, no native or network deps). One small
-pure-JS dependency (`stopword`) filters filler words out of relevance queries.
-FTS5 external-content tables over `messages` and `summaries` provide ranked search.
+Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
+pure-JS dependencies: `stopword` filters filler words out of relevance queries, and
+`valibot` validates the untrusted I/O boundaries (the session JSONL and the hook
+stdin payload). FTS5 external-content tables over `messages` and `summaries` provide
+ranked search.

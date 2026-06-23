@@ -85,6 +85,14 @@ describe("flattenContent", () => {
     expect(flattenContent([{ type: "image", source: {} }])).toBe("[image]");
   });
 
+  test("skips an unrecognized block type, keeping the rest", () => {
+    const out = flattenContent([
+      { type: "redacted_thinking", data: "opaque" },
+      { type: "text", text: "kept" },
+    ]);
+    expect(out).toBe("kept");
+  });
+
   test("returns empty string for null / non-array content", () => {
     expect(flattenContent(null)).toBe("");
     expect(flattenContent(undefined)).toBe("");
@@ -120,6 +128,57 @@ describe("classify", () => {
   test("drops a user/assistant event with no uuid or no message", () => {
     expect(classify({ type: "user", message: { content: "x" } })).toEqual({ kind: "skip" });
     expect(classify({ type: "assistant", uuid: "a1" })).toEqual({ kind: "skip" });
+  });
+
+  test("classifies a message with every optional field missing as nulls + isSidechain false", () => {
+    // The tolerant default: only type, uuid, and message are required; the rest
+    // default to null (parentUuid, sessionId, ts, cwd, gitBranch) or false (sidechain).
+    expect(classify({ type: "user", uuid: "u1", message: { content: "hi" } })).toEqual({
+      kind: "message",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: null,
+      role: "user",
+      text: "hi",
+      ts: null,
+      cwd: null,
+      gitBranch: null,
+      isSidechain: false,
+    });
+  });
+
+  test("keeps the message when an optional field has an unexpected type, defaulting that field", () => {
+    // Only type/uuid/message are load-bearing. If a future log format changes an
+    // optional scalar's type, the turn is still archived (the bad field defaults),
+    // never dropped: skip the unknown, default the bad, never lose a conversation turn.
+    expect(
+      classify({
+        type: "user",
+        uuid: "u1",
+        message: { content: "still archived" },
+        timestamp: 1_700_000_000, // number, not the usual ISO string
+        isSidechain: "yes", // string, not boolean
+        parentUuid: 42, // number, not a uuid string
+      }),
+    ).toEqual({
+      kind: "message",
+      uuid: "u1",
+      parentUuid: null,
+      sessionId: null,
+      role: "user",
+      text: "still archived",
+      ts: null,
+      cwd: null,
+      gitBranch: null,
+      isSidechain: false,
+    });
+  });
+
+  test("skips an unknown event type so an evolving log format never crashes indexing", () => {
+    expect(classify({ type: "tool-call-record", uuid: "x1", message: { content: "x" } })).toEqual({
+      kind: "skip",
+    });
+    expect(classify({ type: "x-future-event" })).toEqual({ kind: "skip" });
   });
 
   test("title precedence: custom (3) > ai (2) > summary (1)", () => {

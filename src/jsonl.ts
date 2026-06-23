@@ -1,4 +1,15 @@
 // Parsing + classification of raw JSONL event lines.
+//
+// This is one of cerebro's two untrusted I/O boundaries (the other is the hook
+// stdin payload in cli.ts): the session JSONL is produced by Claude Code, a tool we
+// do not control and whose format evolves. The accepted shapes are declared once as
+// Valibot schemas and validated with safeParse, never a throwing parse, so the
+// parser stays deliberately tolerant: an unknown event type classifies to `skip`,
+// missing optional fields default to null, and an unrecognized content block is
+// dropped. Extra/unknown keys are ignored (v.object is non-strict), so a new field
+// in the log never breaks indexing.
+
+import * as v from "valibot";
 
 export type Classified =
   | {
@@ -15,6 +26,66 @@ export type Classified =
     }
   | { kind: "title"; sessionId: string | null; title: string; priority: number }
   | { kind: "skip" };
+
+// The accepted event shape, as a discriminated variant over `type`. user/assistant
+// carry a message; the three title-bearing events carry their title field. An
+// unknown `type`, a non-object, or a missing required field fails safeParse and
+// classify returns `skip`.
+//
+// For the message variant only `type`, `uuid`, and `message` are load-bearing (the
+// same fields the old `if (!o.uuid || !o.message)` guard required). The optional
+// scalars stay permissive (`unknown`, coerced in the mapping below) instead of typed,
+// so a future Claude Code change to one of those field *types* defaults that field
+// and still archives the turn, rather than failing the whole variant and dropping the
+// message. That is the "tolerant to an evolving log" contract this boundary exists to
+// keep: skip the unknown type, default the bad field, never silently lose a turn.
+const EventSchema = v.variant("type", [
+  v.object({
+    type: v.picklist(["user", "assistant"]),
+    uuid: v.string(),
+    message: v.object({ content: v.unknown() }),
+    parentUuid: v.optional(v.unknown()),
+    sessionId: v.optional(v.unknown()),
+    timestamp: v.optional(v.unknown()),
+    cwd: v.optional(v.unknown()),
+    gitBranch: v.optional(v.unknown()),
+    isSidechain: v.optional(v.unknown()),
+  }),
+  v.object({
+    type: v.literal("custom-title"),
+    customTitle: v.optional(v.string()),
+    sessionId: v.nullish(v.string(), null),
+  }),
+  v.object({
+    type: v.literal("ai-title"),
+    aiTitle: v.optional(v.string()),
+    sessionId: v.nullish(v.string(), null),
+  }),
+  v.object({
+    type: v.literal("summary"),
+    summary: v.optional(v.string()),
+    sessionId: v.nullish(v.string(), null),
+  }),
+]);
+
+// The accepted content-block shapes, as a union over `type`. The schema supplies
+// typed shape only; the flattening transformation in flattenContent stays
+// hand-written. An unrecognized block fails safeParse and is skipped.
+const BlockSchema = v.variant("type", [
+  v.object({ type: v.literal("text"), text: v.optional(v.string()) }),
+  v.object({ type: v.literal("thinking"), thinking: v.optional(v.string()) }),
+  v.object({
+    type: v.literal("tool_use"),
+    name: v.optional(v.string()),
+    input: v.optional(v.unknown()),
+  }),
+  v.object({
+    type: v.literal("tool_result"),
+    content: v.unknown(),
+    is_error: v.optional(v.boolean()),
+  }),
+  v.object({ type: v.literal("image") }),
+]);
 
 // Returns `undefined` (never a valid JSON value) on parse failure, so callers can
 // distinguish a malformed line from a line that legitimately parses to a falsy
@@ -41,17 +112,20 @@ const capToolText = (rendered: string): string =>
 
 // Flatten a message's `content` into greppable plain text. Strings pass through;
 // block arrays concatenate text/thinking and tag tool_use / tool_result compactly
-// so they stay searchable without drowning the prose. Tool blocks are capped (see
-// capToolText) so a single grep dump or Write payload cannot bloat the archive.
+// so they stay searchable without drowning the prose. Each block is validated by
+// BlockSchema (unrecognized blocks are skipped); the capping, tagging, and recursion
+// over nested tool_result content stay hand-written here, not in the schema. Tool
+// blocks are capped (see capToolText) so a single grep dump or Write payload cannot
+// bloat the archive.
 export const flattenContent = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
 
   const parts: string[] = [];
   for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    // biome-ignore lint/suspicious/noExplicitAny: raw JSONL blocks are untyped; the type switch below narrows each shape
-    const b = block as any;
+    const parsed = v.safeParse(BlockSchema, block);
+    if (!parsed.success) continue;
+    const b = parsed.output;
     switch (b.type) {
       case "text":
         if (typeof b.text === "string") parts.push(b.text);
@@ -76,51 +150,55 @@ export const flattenContent = (content: unknown): string => {
       case "image":
         parts.push("[image]");
         break;
-      default:
-        break;
     }
   }
   return parts.join("\n");
 };
 
+// Coerce a permissive optional field to the Classified contract: a string passes
+// through, anything else (missing, null, or a wrong type from an evolving log)
+// defaults to null. This is the historic `?? null` made type-honest.
+const asStringOrNull = (value: unknown): string | null =>
+  typeof value === "string" ? value : null;
+
 // Keep only real conversation turns (user / assistant) in `messages`. Everything
 // else is dropped, except title-bearing events which surface a session title.
 // Dropping non-message events before dedup is essential: file-history-snapshot and
 // friends reuse other messages' UUIDs and would otherwise cause false collisions.
-// biome-ignore lint/suspicious/noExplicitAny: classifies a raw parsed JSONL value of unknown shape
-export const classify = (o: any): Classified => {
-  if (!o || typeof o !== "object") return { kind: "skip" };
+// Validation declares the accepted shape; the title-priority numbers, the role
+// passthrough, the optional-scalar coercion, and the call into flattenContent are
+// business mapping and stay here.
+export const classify = (raw: unknown): Classified => {
+  const parsed = v.safeParse(EventSchema, raw);
+  if (!parsed.success) return { kind: "skip" };
+  const event = parsed.output;
 
-  switch (o.type) {
+  switch (event.type) {
     case "user":
-    case "assistant": {
-      if (!o.uuid || !o.message) return { kind: "skip" };
+    case "assistant":
       return {
         kind: "message",
-        uuid: o.uuid,
-        parentUuid: o.parentUuid ?? null,
-        sessionId: o.sessionId ?? null,
-        role: o.type,
-        text: flattenContent(o.message.content),
-        ts: o.timestamp ?? null,
-        cwd: o.cwd ?? null,
-        gitBranch: o.gitBranch ?? null,
-        isSidechain: o.isSidechain === true,
+        uuid: event.uuid,
+        parentUuid: asStringOrNull(event.parentUuid),
+        sessionId: asStringOrNull(event.sessionId),
+        role: event.type,
+        text: flattenContent(event.message.content),
+        ts: asStringOrNull(event.timestamp),
+        cwd: asStringOrNull(event.cwd),
+        gitBranch: asStringOrNull(event.gitBranch),
+        isSidechain: event.isSidechain === true,
       };
-    }
     case "custom-title":
-      return o.customTitle
-        ? { kind: "title", sessionId: o.sessionId ?? null, title: o.customTitle, priority: 3 }
+      return event.customTitle
+        ? { kind: "title", sessionId: event.sessionId, title: event.customTitle, priority: 3 }
         : { kind: "skip" };
     case "ai-title":
-      return o.aiTitle
-        ? { kind: "title", sessionId: o.sessionId ?? null, title: o.aiTitle, priority: 2 }
+      return event.aiTitle
+        ? { kind: "title", sessionId: event.sessionId, title: event.aiTitle, priority: 2 }
         : { kind: "skip" };
     case "summary":
-      return o.summary
-        ? { kind: "title", sessionId: o.sessionId ?? null, title: o.summary, priority: 1 }
+      return event.summary
+        ? { kind: "title", sessionId: event.sessionId, title: event.summary, priority: 1 }
         : { kind: "skip" };
-    default:
-      return { kind: "skip" };
   }
 };
