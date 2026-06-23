@@ -7,10 +7,19 @@ code.
 
 ## Stack
 
-- Bun >= 1.1, `import { Database } from "bun:sqlite"` (synchronous API). One small
-  pure-JS runtime dependency (`stopword`, for relevance stopword filtering); dev
-  deps are types only plus Biome (lint + format). Do not add native or network
-  runtime deps.
+- Bun >= 1.1, `import { Database } from "bun:sqlite"` (synchronous API). Two small
+  pure-JS runtime dependencies: `stopword` (relevance stopword filtering) and
+  `valibot` (runtime validation at the I/O boundaries; see the I/O-boundary rule
+  below). Dev deps are types only plus Biome (lint + format). Do not add native or
+  network runtime deps.
+- **Valibot validates the untrusted I/O boundaries only**: the session JSONL events
+  and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the hook stdin
+  payload in `cli.ts` (`parseHookPayload`). Anything that comes out of SQLite or is
+  built internally (the `db.query(...).get/all(...) as X` rows, `FileMeta`,
+  `SessionRow`, `ThreadRow`, and the other internal shapes) stays typed by interface
+  plus a cast. Do not wrap queries or internal structures in schemas: the cast
+  documents a shape cerebro itself owns, and re-validating it would only add overhead
+  on the hook hot path.
 - TypeScript strict, `moduleResolution: bundler`, `.ts` extensions in imports.
 - Code style follows the global conventions (const arrow functions, async/await,
   no em dashes in output) and is enforced by Biome (`biome.json`): 2-space indent,
@@ -21,8 +30,8 @@ code.
 - Typecheck: `bun run typecheck` (must stay green before you finish).
 - Lint + format: `bun run check` (read-only, the same `biome ci` CI runs) or
   `bun run check:fix` to apply. Config in `biome.json`: `noNonNullAssertion` is off
-  (the code uses `!` deliberately) and the two untyped-JSONL parser sites in
-  `jsonl.ts` carry `biome-ignore` comments for `noExplicitAny`. Keep it clean.
+  (the code uses `!` deliberately). The codebase carries no `biome-ignore` escapes;
+  the JSONL parser is validated with Valibot rather than narrowing `any`. Keep it clean.
 - Tests: `bun test`. The suite under `test/` runs against an in-memory SQLite DB
   (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type CliIO, runCli } from "../src/cli.ts";
+import { type CliIO, parseHookPayload, runCli } from "../src/cli.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
@@ -41,6 +41,27 @@ const makeIO = () => {
     },
   };
 };
+
+describe("parseHookPayload (relevant --stdin)", () => {
+  test("reads the prompt from a valid payload", () => {
+    expect(parseHookPayload('{"prompt":"how did the migration go","cwd":"/repo"}')).toEqual({
+      prompt: "how did the migration go",
+    });
+  });
+
+  test("degrades to an empty prompt when the field is missing", () => {
+    expect(parseHookPayload('{"cwd":"/repo"}')).toEqual({ prompt: "" });
+  });
+
+  test("degrades to an empty prompt when the field is not a string", () => {
+    expect(parseHookPayload('{"prompt":42}')).toEqual({ prompt: "" });
+  });
+
+  test("degrades to an empty prompt on malformed JSON", () => {
+    expect(parseHookPayload("{not json")).toEqual({ prompt: "" });
+    expect(parseHookPayload("")).toEqual({ prompt: "" });
+  });
+});
 
 describe("runCli", () => {
   let env: TempClaude;
