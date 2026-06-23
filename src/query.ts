@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
+import { threadOpeningPrompt } from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -105,22 +106,6 @@ export const recentThreads = (
        LIMIT ?`,
     )
     .all(...params) as ThreadRow[];
-};
-
-// The opening human prompt of a thread (earliest non-sidechain user turn across
-// the thread, preferring prose over a bracket-tagged tool echo). Used to make a
-// surfaced thread recognizable without opening it.
-export const openingPrompt = (db: Database, rootId: string): string | null => {
-  const row = db
-    .query(
-      `SELECT text FROM messages
-       WHERE session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)
-         AND role = 'user' AND is_sidechain = 0
-       ORDER BY (CASE WHEN text LIKE '[%' OR text LIKE '<command-%' THEN 1 ELSE 0 END), ts, id
-       LIMIT 1`,
-    )
-    .get(rootId) as { text: string | null } | null;
-  return row?.text ?? null;
 };
 
 // Turn a natural-language prompt into an FTS5 OR-of-tokens query, ranked by bm25.
@@ -265,7 +250,7 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
       project_path: meta?.project_path ?? null,
       title: meta?.title ?? null,
       snippet: info.snippet,
-      opening: openingPrompt(db, root),
+      opening: threadOpeningPrompt(db, root),
       fromSummary: info.fromSummary,
     };
   });
@@ -291,32 +276,6 @@ export const resolveSession = (db: Database, idOrPrefix: string): string | null 
     );
   }
   return matches[0]!.session_id;
-};
-
-export interface ThreadMessage {
-  role: string;
-  ts: string | null;
-  text: string;
-  session_id: string;
-  is_sidechain: number;
-}
-
-// Find the root of whatever session id is given, then return the whole thread's
-// messages (root + every resume) ordered chronologically.
-export const threadMessages = (db: Database, sessionId: string): ThreadMessage[] => {
-  const row = db
-    .query("SELECT root_session_id FROM sessions WHERE session_id = ?")
-    .get(sessionId) as { root_session_id: string | null } | null;
-  const root = row?.root_session_id ?? sessionId;
-
-  return db
-    .query(
-      `SELECT m.role, m.ts, m.text, m.session_id, m.is_sidechain
-       FROM messages m
-       WHERE m.session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)
-       ORDER BY m.ts, m.id`,
-    )
-    .all(root) as ThreadMessage[];
 };
 
 export interface Stats {

@@ -18,13 +18,11 @@ import { dryRunIndex, runIndex } from "./indexer.ts";
 import { defaultDbPath } from "./paths.ts";
 import {
   listThreads,
-  openingPrompt,
   recentThreads,
   relevantThreads,
   resolveSession,
   search,
   stats,
-  threadMessages,
 } from "./query.ts";
 import {
   humanBytes,
@@ -42,6 +40,7 @@ import {
   shortId,
   shortTime,
 } from "./render.ts";
+import { threadMessages, threadOpeningPrompt } from "./thread.ts";
 
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
 
@@ -281,7 +280,7 @@ export const runCli = (
           io.log(recentContextIntro(repoLabel));
           for (const thread of threads) {
             io.log(recentThreadLine(thread, { showMsgs: false }));
-            const opening = openingPrompt(db, thread.id);
+            const opening = threadOpeningPrompt(db, thread.id);
             if (opening) io.log(openedLine(opening));
           }
           io.log(recentContextFooter());
@@ -289,7 +288,7 @@ export const runCli = (
           io.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
           for (const thread of threads) {
             io.log(recentThreadLine(thread, { showMsgs: true }));
-            const opening = openingPrompt(db, thread.id);
+            const opening = threadOpeningPrompt(db, thread.id);
             if (opening) io.log(openedLine(opening));
           }
           io.log('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
