@@ -26,20 +26,21 @@ import {
   stats,
 } from "./query.ts";
 import {
-  humanBytes,
-  oneLine,
-  openedLine,
-  projectName,
-  recentContextFooter,
-  recentContextIntro,
-  recentThreadLine,
-  relevantContextIntro,
-  relevantFooter,
-  relevantSnippetLine,
-  relevantThreadLine,
-  sessionThreadLine,
-  shortId,
-  shortTime,
+  digestShow,
+  dryRunReport,
+  indexResult,
+  noSummaryHint,
+  recentBlock,
+  relevantBlock,
+  searchListing,
+  sessionsListing,
+  showFull,
+  showOutline,
+  staleIds,
+  staleListing,
+  statsReport,
+  summarySaved,
+  summarySearchListing,
 } from "./render.ts";
 import { threadMessages, threadOpeningPrompt } from "./thread.ts";
 
@@ -218,33 +219,10 @@ export const runCli = (
     switch (command) {
       case "index": {
         if (values["dry-run"]) {
-          const plan = dryRunIndex(db, values.full);
-          if (plan.full) {
-            io.log(`Dry run (--full): would re-read all ${plan.filesToRead} file(s).`);
-            io.log(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
-            io.log(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
-            io.log("  On an up-to-date archive dedup collapses this to ~0 net-new messages.");
-          } else if (plan.filesToRead === 0) {
-            io.log(
-              `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged.`,
-            );
-          } else {
-            io.log("Dry run. Would index:");
-            io.log(`  New messages:  ${plan.candidateMessages}`);
-            io.log(`  New bytes:     ${humanBytes(plan.newBytes)}`);
-            io.log(
-              `  Files:         ${plan.newFiles} new, ${plan.grownFiles} grown, ` +
-                `${plan.truncatedFiles} truncated, ${plan.unchangedFiles} unchanged (skipped)`,
-            );
-          }
-          io.log("\nNothing written. Run `cerebro index` to apply.");
+          for (const line of dryRunReport(dryRunIndex(db, values.full))) io.log(line);
           break;
         }
-        const result = runIndex(db, values.full);
-        io.log(
-          `Indexed ${result.newMessages} new message(s) ` +
-            `(${result.filesIndexed}/${result.filesScanned} files touched).`,
-        );
+        for (const line of indexResult(runIndex(db, values.full))) io.log(line);
         break;
       }
 
@@ -259,13 +237,7 @@ export const runCli = (
           io.log("No matches.");
           break;
         }
-        for (const hit of hits) {
-          io.log(
-            `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}`,
-          );
-          io.log(`    ${oneLine(hit.snippet, 160)}`);
-        }
-        io.log(`\n${hits.length} hit(s). Open one with: cerebro show <id>`);
+        for (const line of searchListing(hits)) io.log(line);
         break;
       }
 
@@ -275,10 +247,7 @@ export const runCli = (
           io.log("No sessions indexed yet. Run: cerebro index");
           break;
         }
-        for (const thread of threads) {
-          io.log(sessionThreadLine(thread));
-          io.log(`    ${oneLine(thread.title ?? "(untitled)", 120)}`);
-        }
+        for (const line of sessionsListing(threads)) io.log(line);
         break;
       }
 
@@ -299,24 +268,17 @@ export const runCli = (
           break;
         }
 
-        const repoLabel = projectName(repoRoot ?? cwd);
-
-        if (values.context) {
-          io.log(recentContextIntro(repoLabel));
-          for (const thread of threads) {
-            io.log(recentThreadLine(thread, { showMsgs: false }));
-            const opening = threadOpeningPrompt(db, thread.id);
-            if (opening) io.log(openedLine(opening));
-          }
-          io.log(recentContextFooter());
-        } else {
-          io.log(`Recent sessions in ${repoLabel} (last ${days} days):`);
-          for (const thread of threads) {
-            io.log(recentThreadLine(thread, { showMsgs: true }));
-            const opening = threadOpeningPrompt(db, thread.id);
-            if (opening) io.log(openedLine(opening));
-          }
-          io.log('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
+        // Fetch the opening prompt per thread here so render stays db-free.
+        const rows = threads.map((thread) => ({
+          thread,
+          opening: threadOpeningPrompt(db, thread.id),
+        }));
+        for (const line of recentBlock(rows, {
+          repoPath: repoRoot ?? cwd,
+          days,
+          context: values.context,
+        })) {
+          io.log(line);
         }
         break;
       }
@@ -349,14 +311,7 @@ export const runCli = (
           if (!values.context) io.log("No related past sessions.");
           break;
         }
-
-        io.log(values.context ? relevantContextIntro() : "Related past sessions:");
-        for (const thread of threads) {
-          io.log(relevantThreadLine(thread));
-          if (thread.opening) io.log(openedLine(thread.opening));
-          if (thread.snippet) io.log(relevantSnippetLine(thread.snippet, thread.fromSummary));
-        }
-        io.log(relevantFooter());
+        for (const line of relevantBlock(threads, { context: values.context })) io.log(line);
         break;
       }
 
@@ -364,24 +319,10 @@ export const runCli = (
         const sessionId = resolveOrFail(db, positionals[1], "show", fail);
         if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
-        io.log(`Thread ${shortId(sessionId)}  ${messages.length} message(s)\n`);
-
-        if (values.full) {
-          for (const message of messages) {
-            const tag = message.is_sidechain ? " · subagent" : "";
-            io.log(`──── ${message.role}${tag} · ${shortTime(message.ts)} ────`);
-            io.log(message.text);
-            io.log("");
-          }
-        } else {
-          messages.forEach((message, i) => {
-            const marker = message.is_sidechain ? "[subagent] " : "";
-            io.log(
-              `${String(i + 1).padStart(3)}. ${message.role.padEnd(9)} ${shortTime(message.ts)}  ${marker}${oneLine(message.text, 110)}`,
-            );
-          });
-          io.log("\nFull transcript: cerebro show <id> --full");
-        }
+        const lines = values.full
+          ? showFull(sessionId, messages)
+          : showOutline(sessionId, messages);
+        for (const line of lines) io.log(line);
         break;
       }
 
@@ -420,29 +361,16 @@ export const runCli = (
             // output means nothing is stale. Full ids, not shortId, so the caller skips
             // the prefix round-trip.
             if (values.ids) {
-              for (const row of rows) io.log(row.id);
+              for (const line of staleIds(rows)) io.log(line);
               break;
             }
             if (rows.length === 0) {
               io.log("All threads are summarized and up to date.");
               break;
             }
-            for (const row of rows) {
-              const reason =
-                row.summary_version == null
-                  ? "never summarized"
-                  : row.summary_version < DIGEST_PROMPT_VERSION
-                    ? `prompt v${row.summary_version} < v${DIGEST_PROMPT_VERSION}`
-                    : "new activity since summary";
-              io.log(
-                `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
-              );
-              io.log(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
+            for (const line of staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })) {
+              io.log(line);
             }
-            io.log(
-              `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
-                `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
-            );
             break;
           }
 
@@ -460,7 +388,7 @@ export const runCli = (
               break;
             }
             const root = writeSummary(db, sessionId, text, values.model ?? null);
-            io.log(`Saved summary for thread ${shortId(root)} (${text.length} chars).`);
+            io.log(summarySaved(root, text.length));
             break;
           }
 
@@ -475,15 +403,7 @@ export const runCli = (
               io.log("No matching summaries.");
               break;
             }
-            for (const hit of hits) {
-              io.log(
-                `${shortId(hit.id)}  ${shortTime(hit.last_ts)}  ${projectName(hit.project_path)}  ${oneLine(hit.title ?? "(untitled)", 70)}`,
-              );
-              io.log(`    ${oneLine(hit.snippet, 160)}`);
-            }
-            io.log(
-              `\n${hits.length} summary hit(s). Open one: cerebro show <id>  |  full summary: cerebro digest show <id>`,
-            );
+            for (const line of summarySearchListing(hits)) io.log(line);
             break;
           }
 
@@ -492,17 +412,10 @@ export const runCli = (
             if (!sessionId) break;
             const summary = getSummary(db, sessionId);
             if (!summary) {
-              io.log(
-                `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`,
-              );
+              io.log(noSummaryHint(sessionId));
               break;
             }
-            const model = summary.model ? `, ${summary.model}` : "";
-            io.log(
-              `Summary for thread ${shortId(summary.root_session_id)}  ` +
-                `(${shortTime(summary.summarized_at)}${model}, prompt v${summary.prompt_version})\n`,
-            );
-            io.log(summary.summary);
+            for (const line of digestShow(summary)) io.log(line);
             break;
           }
 
@@ -516,11 +429,7 @@ export const runCli = (
       }
 
       case "stats": {
-        const s = stats(db);
-        io.log(`Threads:          ${s.threads}`);
-        io.log(`Sessions:         ${s.sessions}`);
-        io.log(`Messages:         ${s.messages}`);
-        io.log(`Deleted sources:  ${s.deletedSources}`);
+        for (const line of statsReport(stats(db))) io.log(line);
         break;
       }
 
