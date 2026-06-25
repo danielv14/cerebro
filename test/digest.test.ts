@@ -31,6 +31,11 @@ describe("DIGEST_PROMPT", () => {
     expect(DIGEST_PROMPT.toLowerCase()).toContain("routine");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("output only the summary");
   });
+
+  test("instructs a deterministic marker for empty/non-substantive sessions", () => {
+    expect(DIGEST_PROMPT).toContain("(No substantive session content.)");
+    expect(DIGEST_PROMPT.toLowerCase()).toContain("do not ask for a transcript");
+  });
 });
 
 describe("pickDigestModel (size -> model tiering)", () => {
@@ -183,6 +188,26 @@ describe("digest (summaries layer)", () => {
 
     writeSummary(db, "S", "Summary of S. Keywords: thing");
     expect(staleThreads(db).length).toBe(0);
+  });
+
+  test("a thread with no indexed messages is never stale (nothing to summarize)", () => {
+    // A real thread proves the filter is selective, not a blanket exclusion.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "real work", { timestamp: ts(0) }),
+    ]);
+    runIndex(db);
+
+    // A session that indexed into a sessions row but contributed no messages
+    // (e.g. a /clear-only or resume-marker session): rolls up to msgs = 0 in the
+    // threads view, so there is nothing to summarize. Feeding its empty transcript
+    // to the model used to produce a "please paste the transcript" non-summary.
+    db.run(
+      `INSERT INTO sessions (session_id, root_session_id, project_path, msg_count, first_ts, last_ts)
+       VALUES ('EMPTY', 'EMPTY', '-repo', 0, ?, ?)`,
+      [ts(0), ts(0)],
+    );
+
+    expect(staleThreads(db).map((t) => t.id)).toEqual(["S"]);
   });
 
   test("a thread becomes stale again when new messages arrive after its summary", () => {

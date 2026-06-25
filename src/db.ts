@@ -4,6 +4,12 @@ import { dirname } from "node:path";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
+-- Wait up to 5s for a lock instead of failing instantly. cerebro is opened
+-- concurrently by short-lived processes (the index/digest hooks, manual reads,
+-- and a draining batch) against one WAL file; with the default timeout of 0 a
+-- writer that meets a checkpoint or WAL-recovery window fails immediately with
+-- SQLITE_BUSY. A timeout rides out those sub-second windows.
+PRAGMA busy_timeout = 5000;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS index_state (
