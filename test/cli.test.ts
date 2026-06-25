@@ -241,6 +241,35 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("digest stale --ids prints one full session id per line, no human formatting", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "unsummarized work", { timestamp: ts(0) }),
+    ]);
+    const cap = makeIO();
+    runCli(["digest", "stale", "--ids"], cap.io, seeded());
+    // Exactly the full id, nothing else: no msg counts, titles, or help footer that
+    // the batch hook would otherwise have to scrape past.
+    expect(cap.logs).toEqual(["SESS"]);
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("digest stale --ids stays silent when nothing is stale", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+    ]);
+    const cap = makeIO();
+    runCli(["digest", "stale", "--ids"], cap.io, () => {
+      const db = openDb(":memory:");
+      runIndex(db);
+      writeSummary(db, "SESS", "A stored summary. Keywords: work");
+      return db;
+    });
+    // No "All threads are summarized" line in machine mode, so the hook's
+    // `[ -n "$ids" ]` guard reads empty output as a clean backlog.
+    expect(cap.logs).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+  });
+
   test("recent --context emits the agent-facing block with guardrail and recall clauses", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "some work", { timestamp: ts(0) }),

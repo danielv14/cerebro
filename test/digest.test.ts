@@ -69,12 +69,23 @@ describe("digestModelConfig (env overrides)", () => {
     }
   });
 
-  test("defaults match the hook's historical defaults", () => {
+  test("defaults to the token-derived threshold", () => {
+    // (SMALL_MODEL_CONTEXT_TOKENS 200k - RESERVED_CONTEXT_TOKENS 90k) * BYTES_PER_TOKEN 3.
+    // Leaves room for claude -p's ~77k-token system-prompt/tools overhead so a thread
+    // that fits on size also fits the real request.
     expect(digestModelConfig()).toEqual({
       small: "claude-haiku-4-5",
       large: "claude-sonnet-4-6[1m]",
-      thresholdChars: 540_000,
+      thresholdChars: 330_000,
     });
+  });
+
+  test("a dense thread that overflowed Haiku now escalates", () => {
+    // Regression: a ~535k-byte thread rendered to ~136k transcript tokens but the
+    // request reached ~213k tokens once claude -p added its overhead, overflowing
+    // Haiku's 200k window. The old 540k-char threshold kept it on Haiku; the
+    // token-derived 330k threshold escalates it to the large model.
+    expect(pickDigestModel(535_524, digestModelConfig())).toBe("claude-sonnet-4-6[1m]");
   });
 
   test("env vars override each field", () => {
