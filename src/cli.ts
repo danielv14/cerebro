@@ -56,7 +56,7 @@ Usage:
   cerebro digest <action>                Curated session summaries (see below)
 
 Digest actions:
-  cerebro digest stale [--limit N]            List threads needing a (re)summary
+  cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
   cerebro digest prompt                       Print the summarization prompt
   cerebro digest input <id>                   Print the size-bounded transcript to summarize
   cerebro digest model <id>                   Print the model the size tiering would pick
@@ -78,6 +78,7 @@ Options:
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
   --stdin         relevant: read the prompt from a hook's JSON payload on stdin
+  --ids           digest stale: print one full session id per line (for scripts)
   --model <name>  digest write: record which model produced the summary
   -h, --help      Show this help
 
@@ -181,6 +182,7 @@ export const runCli = (
           days: { type: "string" },
           context: { type: "boolean", default: false },
           stdin: { type: "boolean", default: false },
+          ids: { type: "boolean", default: false },
           model: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
@@ -412,6 +414,15 @@ export const runCli = (
 
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
+            // --ids: machine-readable mode for scripts (the digest-stale batch hook).
+            // One full session id per line, nothing else (no header, titles, or help
+            // footer), so a caller never has to scrape the human listing format. Empty
+            // output means nothing is stale. Full ids, not shortId, so the caller skips
+            // the prefix round-trip.
+            if (values.ids) {
+              for (const row of rows) io.log(row.id);
+              break;
+            }
             if (rows.length === 0) {
               io.log("All threads are summarized and up to date.");
               break;

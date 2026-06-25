@@ -65,7 +65,7 @@ Deploy a standalone binary so the hooks start fast (no `bun` spawn per event) an
 even where `bun` is not on `PATH`:
 
 ```sh
-bun run deploy   # builds dist/cerebro, copies it + summarize-on-clear.sh into $CLAUDE_CONFIG_DIR/cerebro (default ~/.claude/cerebro)
+bun run deploy   # builds dist/cerebro, copies it + the hook scripts (summarize-on-clear.sh, digest-stale-batch.sh) into $CLAUDE_CONFIG_DIR/cerebro (default ~/.claude/cerebro)
 ```
 
 The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
@@ -113,10 +113,74 @@ default 200k window and a giant thread still fails with "Prompt is too long". ce
 owns the tiering: the hook asks `cerebro digest model <id>`, which decides by the rendered
 transcript's byte size (`cerebro digest input` is the size-bounded transcript; see the
 `digest` section), and `cerebro digest input` water-fill-caps anything large enough to
-risk overflowing even a 1M context. Override the tier via `CEREBRO_DIGEST_MODEL` (small,
-default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default `claude-sonnet-4-6[1m]`),
-and `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 540000) in the hook's
-environment.
+risk overflowing even a 1M context. The threshold is derived from a token budget, not the
+raw window: `claude -p` prepends its own system prompt and tool definitions (~77k tokens
+measured), so the default reserves 90k tokens of the small model's 200k window and treats
+the rest (≈330k bytes at 3 bytes/token) as the transcript budget. Override the tier via
+`CEREBRO_DIGEST_MODEL` (small, default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default
+`claude-sonnet-4-6[1m]`), and `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold,
+default 330000) in the hook's environment.
+
+### Drain the backlog (scheduled reconciler)
+
+The `/clear` hook only summarizes the one session you just cleared, so every session
+that ends another way (headless `claude -p`, abandoned, still open) never gets a summary
+on its own. `digest-stale-batch.sh` is the reconciler that closes that gap: it indexes,
+then summarizes up to `CEREBRO_DIGEST_BATCH_CAP` (default 8) stale threads per run,
+newest first, reusing the same `claude -p` pipeline and size tiering as the `/clear`
+hook. A `mkdir` lock keeps two runs from overlapping, and failures are left for the next
+run. Cap the per-run count so a large backlog drains over several runs instead of one
+token burst; raise the cap (or run it by hand) to drain faster:
+
+```sh
+CEREBRO_DIGEST_BATCH_CAP=400 ~/.claude/cerebro/digest-stale-batch.sh   # one-shot full drain
+```
+
+Schedule it however you like. On macOS, a `launchd` agent every 6 hours keeps the
+backlog near zero. The plist is machine-specific (absolute paths; launchd does not
+expand `~` or `$HOME`), so it is not checked in; create
+`~/Library/LaunchAgents/com.<you>.cerebro.digest-stale.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.you.cerebro.digest-stale</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOU/.claude/cerebro/digest-stale-batch.sh</string>
+  </array>
+  <!-- Fixed clock times, not StartInterval: on a laptop that sleeps, StartInterval
+       coalesces missed runs into one burst on wake. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>17</integer></dict>
+  </array>
+  <!-- launchd starts with a bare environment; claude and cerebro are native binaries
+       but still need a sane PATH. -->
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>/Users/YOU/.claude/cerebro/digest-stale.launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/.claude/cerebro/digest-stale.launchd.log</string>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+</dict>
+</plist>
+```
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-stale.plist   # load
+launchctl kickstart -k gui/$(id -u)/com.you.cerebro.digest-stale                              # run now
+launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-stale.plist   # unload
+```
+
+Progress lands in `digest.log` (lines prefixed `[stale ...]`). A plain `cron` entry that
+runs the same script works just as well on Linux.
 
 ### Relevant past threads per prompt
 
@@ -158,8 +222,9 @@ cerebro stays pure storage and **never calls an LLM**. It owns the prompt and th
 storage format (one versioned contract), and accepts a summary the model produced:
 
 ```sh
-cerebro digest stale [--limit N]            # threads needing a (re)summary (never summarized,
-                                            #   new activity since, or older prompt version)
+cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (never summarized,
+                                            #   new activity since, or older prompt version).
+                                            #   --ids: one full id per line, for scripts
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
 cerebro digest model <id>                   # print the model the size tiering would pick
