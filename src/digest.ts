@@ -39,16 +39,45 @@ Last line: a single line beginning "Keywords:" with a compact comma-separated li
 
 Write in the session's dominant language (Swedish or English). Be terse. Output only the summary itself: no preamble, no heading, no sign-off, no markdown formatting.`;
 
-// Upper bound, in characters, for the transcript handed to a single `claude -p`
-// summarization call. cerebro has no tokenizer (it takes no deps), so this is a
-// character proxy: at a conservative ~3 chars/token for dense transcripts it
-// keeps the rendered input under ~850k tokens, which fits a 1M-context model with
-// room left for the prompt and the summary. Threads below this render verbatim
-// (byte-identical to `show --full`); only the rare oversized thread is condensed.
-// pickDigestModel picks the model by measured size (small -> Haiku's 200k, large
-// -> a 1M-context model), so this cap is the final backstop ensuring even a 1M
-// model never overflows, not the primary size control.
-export const DIGEST_INPUT_MAX_CHARS = 2_700_000;
+// cerebro takes no deps, so it has no tokenizer: it sizes a transcript by bytes and
+// converts to a token estimate at a conservative bytes-per-token ratio. Real
+// transcripts here run ~3.5-4 bytes/token; 3 errs low (it estimates *more* tokens
+// than reality) so the tiering keeps headroom rather than overflowing on a
+// denser-than-average thread.
+const BYTES_PER_TOKEN = 3;
+
+// claude -p does not hand the model's whole context window to the transcript: it
+// prepends its own system prompt and tool definitions, and needs room to emit the
+// summary. A measured overflow had a ~136k-token transcript arrive as a ~213k-token
+// request, i.e. ~77k tokens of fixed non-transcript overhead. Reserve a slice above
+// that so a transcript that fits on size also fits the real request. The original
+// tiering ignored this and treated the whole window as transcript budget, so a
+// thread that fit on chars still failed with "Prompt is too long".
+const RESERVED_CONTEXT_TOKENS = 90_000;
+
+// Context windows of the two tiers: small is Haiku's 200k, large is a 1M-context
+// model (Sonnet [1m]).
+const SMALL_MODEL_CONTEXT_TOKENS = 200_000;
+const LARGE_MODEL_CONTEXT_TOKENS = 1_000_000;
+
+// The largest transcript (in bytes, measured the way `digest model` does with
+// `wc -c`) that fits a model's usable budget: (context - reserve) tokens converted
+// back to bytes. Both the escalation threshold and the water-fill cap derive from
+// this, so one token model drives the whole tiering.
+const transcriptByteBudget = (contextTokens: number): number =>
+  Math.max(0, contextTokens - RESERVED_CONTEXT_TOKENS) * BYTES_PER_TOKEN;
+
+// Default escalation threshold: a transcript larger than the small model's usable
+// budget escalates to the large model. (200000 - 90000) * 3 = 330000 bytes.
+// Overridable via CEREBRO_DIGEST_HAIKU_MAX_CHARS.
+const DEFAULT_HAIKU_MAX_CHARS = transcriptByteBudget(SMALL_MODEL_CONTEXT_TOKENS);
+
+// Upper bound for the transcript handed to a single `claude -p` call: the large
+// model's usable budget. Threads below this render verbatim (byte-identical to
+// `show --full`); only the rare oversized thread is condensed by the water-fill in
+// buildDigestInput. This is the final backstop so even the 1M model never overflows;
+// pickDigestModel is the primary size control.
+export const DIGEST_INPUT_MAX_CHARS = transcriptByteBudget(LARGE_MODEL_CONTEXT_TOKENS);
 
 export interface DigestModelConfig {
   small: string;
@@ -57,17 +86,17 @@ export interface DigestModelConfig {
 }
 
 // The size -> model tiering config, read from the same env vars the summarize hook
-// has always used (so any override keeps working) with the same defaults. Empty or
-// unset falls back to the default, matching bash `${VAR:-default}`.
+// has always used (so any override keeps working). Empty or unset falls back to the
+// token-derived default, matching bash `${VAR:-default}`.
 export const digestModelConfig = (): DigestModelConfig => {
   const threshold = process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS;
-  const parsed = threshold ? Number(threshold) : 540_000;
+  const parsed = threshold ? Number(threshold) : DEFAULT_HAIKU_MAX_CHARS;
   return {
     small: process.env.CEREBRO_DIGEST_MODEL || "claude-haiku-4-5",
     large: process.env.CEREBRO_DIGEST_MODEL_LARGE || "claude-sonnet-4-6[1m]",
     // A non-numeric override falls back rather than becoming NaN (which would
     // wedge every thread on the small model).
-    thresholdChars: Number.isFinite(parsed) ? parsed : 540_000,
+    thresholdChars: Number.isFinite(parsed) ? parsed : DEFAULT_HAIKU_MAX_CHARS,
   };
 };
 
@@ -75,10 +104,8 @@ export const digestModelConfig = (): DigestModelConfig => {
 // the rendered `digest input`, measured the same way the hook did with `wc -c` --
 // bytes, not characters, so multibyte threads tier correctly). Small threads (the
 // common case) get the cheap small model; only an oversized thread escalates to the
-// large 1M-context model. The threshold is a byte proxy because cerebro has no
-// tokenizer. Single source of truth for the tiering the summarize hook used to
-// inline in bash; `> threshold` matches its strict comparison (a thread at the
-// threshold stays on the small model).
+// large 1M-context model. `> threshold` is strict, so a thread exactly at the
+// threshold stays on the small model.
 export const pickDigestModel = (
   byteCount: number,
   config: DigestModelConfig = digestModelConfig(),
