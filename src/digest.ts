@@ -27,6 +27,8 @@ export const DIGEST_PROMPT = `${DIGEST_PROMPT_SIGNATURE} The summary is read lat
 
 You will be given the full session transcript. Write a summary as follows.
 
+If the transcript has no substantive content (it is empty, or holds only a slash-command such as /clear or /resume, boilerplate, or local-command output with no real conversation or work), do not ask for a transcript and do not invent activity. Output exactly two lines: "(No substantive session content.)" then "Keywords: (none)".
+
 First line: one sentence stating what the session was about and where it happened (name the repo, service, or project when identifiable).
 
 Then a few tight sentences of plain prose covering what actually happened: what was explored, built, changed, fixed, decided, or discussed. Adapt to the session. Most sessions are routine work (grinding through tickets, small edits, quick lookups) with no significant decision, and that is fine. Do not manufacture importance. A routine session deserves one or two sentences; a substantial design or debugging session deserves a short paragraph. Never pad, never invent.
@@ -193,10 +195,11 @@ export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
               su.prompt_version AS summary_version, su.summarized_at AS summarized_at
        FROM threads t
        LEFT JOIN summaries su ON su.root_session_id = t.id
-       WHERE su.root_session_id IS NULL
-          OR su.source_last_ts IS NULL
-          OR su.source_last_ts < t.last_ts
-          OR su.prompt_version < ?
+       WHERE t.msgs > 0
+         AND (su.root_session_id IS NULL
+           OR su.source_last_ts IS NULL
+           OR su.source_last_ts < t.last_ts
+           OR su.prompt_version < ?)
        ORDER BY t.last_ts DESC
        LIMIT ?`,
     )
