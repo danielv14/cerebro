@@ -139,86 +139,17 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
     )
     .get(sessionId) as SessionAggregate;
 
-interface SessionRow {
-  sessionId: string;
-  rootSessionId: string;
-  projectDir: string;
-  projectPath: string | null;
-  cwd: string | null;
-  gitRoot: string | null;
-  gitRemote: string | null;
-  gitBranch: string | null;
-  sourceFile: string | null;
-  title: string | null;
-  firstTs: string | null;
-  lastTs: string | null;
-  msgCount: number;
-  bodyAvailable: number;
-}
+// Both session-row writers share one INSERT shape and one set of refreshed
+// aggregates; they differ only in which operand wins the per-column COALESCE on
+// conflict. The aggregate columns (first_ts, last_ts, msg_count) always refresh from
+// the just-recomputed counts, and root_session_id is left untouched on conflict
+// (relinkThreads owns it) while defaulting to the session itself on insert, so a row
+// is never NULL-rooted even before relinkThreads runs. body_available is NOT NULL, so
+// whichever side the COALESCE prefers always supplies a value.
 
-// The non-aggregate columns. On update they merge via COALESCE; which operand wins
-// is the only thing that differs between a top-level write and a parent-stub write,
-// so the direction is the single switch below. (body_available is NOT NULL, so for
-// a stub the existing value always survives the COALESCE.) These names are fixed
-// literals, never user input, so interpolating them into the SET clause is safe.
-const SESSION_MERGE_COLUMNS = [
-  "project_dir",
-  "project_path",
-  "cwd",
-  "git_root",
-  "git_remote",
-  "git_branch",
-  "source_file",
-  "title",
-  "body_available",
-] as const;
-
-// The single writer for a sessions row. `preserveIdentity` flips the COALESCE
-// direction: a top-level file is the authority for its row, so its fresh values win
-// (excluded first); a subagent-parent stub must never clobber identity owned by the
-// top-level file, so the existing row wins (sessions first) and the caller passes
-// NULL for the fields it does not own (git_*, source_file, title). The aggregate
-// columns always refresh from the just-recomputed counts. root_session_id is left
-// untouched on conflict (relinkThreads owns it); on insert it defaults to the
-// session itself, so a row is never NULL-rooted even before relinkThreads runs.
-const writeSessionRow = (db: Database, row: SessionRow, preserveIdentity: boolean): void => {
-  const [first, second] = preserveIdentity
-    ? (["sessions", "excluded"] as const)
-    : (["excluded", "sessions"] as const);
-  const mergeSet = SESSION_MERGE_COLUMNS.map(
-    (column) => `${column} = COALESCE(${first}.${column}, ${second}.${column})`,
-  ).join(",\n       ");
-
-  db.query(
-    `INSERT INTO sessions (
-       session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
-       body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(session_id) DO UPDATE SET
-       ${mergeSet},
-       first_ts  = excluded.first_ts,
-       last_ts   = excluded.last_ts,
-       msg_count = excluded.msg_count`,
-  ).run(
-    row.sessionId,
-    row.rootSessionId,
-    row.projectDir,
-    row.projectPath,
-    row.cwd,
-    row.gitRoot,
-    row.gitRemote,
-    row.gitBranch,
-    row.sourceFile,
-    row.title,
-    row.firstTs,
-    row.lastTs,
-    row.msgCount,
-    row.bodyAvailable,
-  );
-};
-
-// Write the session row for a top-level file, which is the authority for its row.
+// Write the session row for a top-level file. The top-level file is the authority for
+// its session, so its fresh values win the merge: COALESCE prefers excluded (the new
+// row) and falls back to the existing row only where the new value is NULL.
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -228,58 +159,88 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
   const git = gitInfo(cwd);
   const agg = sessionAggregate(db, meta.sessionId);
 
-  writeSessionRow(
-    db,
-    {
-      sessionId: meta.sessionId,
-      rootSessionId: meta.sessionId,
-      projectDir: meta.projectDir,
-      projectPath: cwd,
-      cwd,
-      gitRoot: git.root,
-      gitRemote: git.remote,
-      gitBranch: meta.gitBranch,
-      sourceFile: meta.sourceFile,
-      title: meta.title,
-      firstTs: agg.mn,
-      lastTs: agg.mx,
-      msgCount: agg.c,
-      bodyAvailable: 1,
-    },
-    false,
+  db.query(
+    `INSERT INTO sessions (
+       session_id, root_session_id, project_dir, project_path, cwd, git_root,
+       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
+       body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
+       project_path   = COALESCE(excluded.project_path, sessions.project_path),
+       cwd            = COALESCE(excluded.cwd, sessions.cwd),
+       git_root       = COALESCE(excluded.git_root, sessions.git_root),
+       git_remote     = COALESCE(excluded.git_remote, sessions.git_remote),
+       git_branch     = COALESCE(excluded.git_branch, sessions.git_branch),
+       source_file    = COALESCE(excluded.source_file, sessions.source_file),
+       title          = COALESCE(excluded.title, sessions.title),
+       body_available = COALESCE(excluded.body_available, sessions.body_available),
+       first_ts       = excluded.first_ts,
+       last_ts        = excluded.last_ts,
+       msg_count      = excluded.msg_count`,
+  ).run(
+    meta.sessionId,
+    meta.sessionId,
+    meta.projectDir,
+    cwd,
+    cwd,
+    git.root,
+    git.remote,
+    meta.gitBranch,
+    meta.sourceFile,
+    meta.title,
+    agg.mn,
+    agg.mx,
+    agg.c,
+    1,
   );
 };
 
 // A subagent file's messages belong to the parent session. Ensure that parent row
 // exists and refresh its aggregate, but never clobber the parent's identity fields,
-// which are owned by its top-level file. preserveIdentity=true makes the existing
-// row win the COALESCE, so the values it does pass (project_dir, project_path, cwd,
-// git_branch) only fill a not-yet-seen parent and never overwrite the top-level's.
-// The fields a subagent cannot know (git_root, git_remote, source_file, title) are
-// passed NULL, so on a pure-subagent stub source_file stays NULL and the row reads
-// as body-unavailable.
+// which are owned by its top-level file. Here the existing row wins the merge:
+// COALESCE prefers sessions, so the values this passes (project_dir, project_path,
+// cwd, git_branch) only fill a not-yet-seen parent and never overwrite the
+// top-level's. The fields a subagent cannot know (git_root, git_remote, source_file,
+// title) are passed NULL, so on a pure-subagent stub source_file stays NULL and the
+// row reads as body-unavailable.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
-  writeSessionRow(
-    db,
-    {
-      sessionId: parentId,
-      rootSessionId: parentId,
-      projectDir: meta.projectDir,
-      projectPath: meta.cwd,
-      cwd: meta.cwd,
-      gitRoot: null,
-      gitRemote: null,
-      gitBranch: meta.gitBranch,
-      sourceFile: null,
-      title: null,
-      firstTs: agg.mn,
-      lastTs: agg.mx,
-      msgCount: agg.c,
-      bodyAvailable: 1,
-    },
-    true,
+  db.query(
+    `INSERT INTO sessions (
+       session_id, root_session_id, project_dir, project_path, cwd, git_root,
+       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
+       body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
+       project_path   = COALESCE(sessions.project_path, excluded.project_path),
+       cwd            = COALESCE(sessions.cwd, excluded.cwd),
+       git_root       = COALESCE(sessions.git_root, excluded.git_root),
+       git_remote     = COALESCE(sessions.git_remote, excluded.git_remote),
+       git_branch     = COALESCE(sessions.git_branch, excluded.git_branch),
+       source_file    = COALESCE(sessions.source_file, excluded.source_file),
+       title          = COALESCE(sessions.title, excluded.title),
+       body_available = COALESCE(sessions.body_available, excluded.body_available),
+       first_ts       = excluded.first_ts,
+       last_ts        = excluded.last_ts,
+       msg_count      = excluded.msg_count`,
+  ).run(
+    parentId,
+    parentId,
+    meta.projectDir,
+    meta.cwd,
+    meta.cwd,
+    null,
+    null,
+    meta.gitBranch,
+    null,
+    null,
+    agg.mn,
+    agg.mx,
+    agg.c,
+    1,
   );
 };
 
