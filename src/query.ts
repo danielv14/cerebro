@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-import { threadOpeningPrompt } from "./thread.ts";
+import { countThreads, threadOpeningPrompt } from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -288,9 +288,7 @@ export interface Stats {
 export const stats = (db: Database): Stats => {
   const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
   return {
-    threads: one(
-      "SELECT COUNT(*) AS c FROM sessions WHERE session_id = root_session_id OR root_session_id IS NULL",
-    ),
+    threads: countThreads(db),
     sessions: one("SELECT COUNT(*) AS c FROM sessions"),
     messages: one("SELECT COUNT(*) AS c FROM messages"),
     deletedSources: one("SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0"),

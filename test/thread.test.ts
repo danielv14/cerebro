@@ -2,7 +2,13 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { runIndex } from "../src/indexer.ts";
-import { rootOf, threadLastTs, threadMessages, threadOpeningPrompt } from "../src/thread.ts";
+import {
+  countThreads,
+  rootOf,
+  threadLastTs,
+  threadMessages,
+  threadOpeningPrompt,
+} from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -120,6 +126,22 @@ describe("thread (identity + membership)", () => {
 
     test("is null for an unknown thread root", () => {
       expect(threadLastTs(db, "does-not-exist")).toBeNull();
+    });
+  });
+
+  describe("countThreads", () => {
+    test("counts a root once; its resumes and folded subagents do not inflate it", () => {
+      seedThread();
+      // ORIG + RESUME + the subagent folded into RESUME are one logical thread.
+      expect(countThreads(db)).toBe(1);
+    });
+
+    test("counts each distinct root, and is zero for an empty archive", () => {
+      expect(countThreads(db)).toBe(0);
+      writeSession(env.projects, "-repo", "A", [userMsg("A", "u1", "a", { timestamp: ts(0) })]);
+      writeSession(env.projects, "-repo", "B", [userMsg("B", "u1", "b", { timestamp: ts(1) })]);
+      runIndex(db);
+      expect(countThreads(db)).toBe(2);
     });
   });
 });

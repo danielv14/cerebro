@@ -267,11 +267,15 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
+    // A second, independent thread so the thread count is exercised above one.
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "u3", "another", { timestamp: ts(3) }),
+    ]);
     runIndex(db);
     const s = stats(db);
-    expect(s.sessions).toBe(2);
-    expect(s.threads).toBe(1); // RESUME folds into ORIG
-    expect(s.messages).toBe(3);
+    expect(s.sessions).toBe(3);
+    expect(s.threads).toBe(2); // RESUME folds into ORIG; OTHER is its own thread
+    expect(s.messages).toBe(4);
     expect(s.deletedSources).toBe(0);
   });
 });
