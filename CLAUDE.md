@@ -16,7 +16,7 @@ code.
   and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the hook stdin
   payload in `cli.ts` (`parseHookPayload`). Anything that comes out of SQLite or is
   built internally (the `db.query(...).get/all(...) as X` rows, `FileMeta`,
-  `SessionRow`, `ThreadRow`, and the other internal shapes) stays typed by interface
+  `ThreadRow`, and the other internal shapes) stays typed by interface
   plus a cast. Do not wrap queries or internal structures in schemas: the cast
   documents a shape cerebro itself owns, and re-validating it would only add overhead
   on the hook hot path.

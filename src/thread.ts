@@ -11,8 +11,8 @@ import type { Database } from "bun:sqlite";
 // thread root are the rows whose root_session_id matches it. Every reader that scopes
 // to a thread's sessions composes this fragment instead of restating the predicate,
 // so the membership rule cannot drift between queries. It is a fixed literal the
-// codebase owns (never user input), interpolated the same way the indexer interpolates
-// SESSION_MERGE_COLUMNS; the root id stays a bound `?` parameter at the call site.
+// codebase owns (never user input), safe to interpolate; the root id stays a bound
+// `?` parameter at the call site.
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
 
