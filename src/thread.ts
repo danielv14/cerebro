@@ -7,6 +7,15 @@ import type { Database } from "bun:sqlite";
 // reader: relinkThreads (in the indexer) stays the sole writer of root_session_id,
 // and the `threads` view stays the single owner of thread rollup/aggregation.
 
+// The thread-membership rule, expressed exactly once: the sessions that belong to a
+// thread root are the rows whose root_session_id matches it. Every reader that scopes
+// to a thread's sessions composes this fragment instead of restating the predicate,
+// so the membership rule cannot drift between queries. It is a fixed literal the
+// codebase owns (never user input), interpolated the same way the indexer interpolates
+// SESSION_MERGE_COLUMNS; the root id stays a bound `?` parameter at the call site.
+const THREAD_MEMBERSHIP =
+  "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
+
 // Resolve any session id (a root, a resume, or a subagent's parent) to its thread
 // root. Falls back to the given id when the session row is absent or
 // root_session_id is NULL (a not-yet-relinked session), preserving the historical
@@ -36,7 +45,7 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
     .query(
       `SELECT m.role, m.ts, m.text, m.session_id, m.is_sidechain
        FROM messages m
-       WHERE m.session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)
+       WHERE m.${THREAD_MEMBERSHIP}
        ORDER BY m.ts, m.id`,
     )
     .all(root) as ThreadMessage[];
@@ -50,7 +59,7 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
   const row = db
     .query(
       `SELECT text FROM messages
-       WHERE session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)
+       WHERE ${THREAD_MEMBERSHIP}
          AND role = 'user' AND is_sidechain = 0
        ORDER BY (CASE WHEN text LIKE '[%' OR text LIKE '<command-%' THEN 1 ELSE 0 END), ts, id
        LIMIT 1`,
@@ -67,4 +76,14 @@ export const threadLastTs = (db: Database, root: string): string | null => {
     .query("SELECT MAX(last_ts) AS mx FROM sessions WHERE root_session_id = ?")
     .get(root) as { mx: string | null };
   return row.mx;
+};
+
+// The number of logical threads in the archive. Counts rows of the canonical
+// `threads` rollup view (one row per root_session_id), so the count derives from the
+// same thread definition the listings use and can never diverge from what sessions,
+// recent, and digest stale surface. The thread module owns this count; the stats
+// reader calls here instead of re-deriving a root-vs-resume expression.
+export const countThreads = (db: Database): number => {
+  const row = db.query("SELECT COUNT(*) AS c FROM threads").get() as { c: number };
+  return row.c;
 };
