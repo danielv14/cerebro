@@ -291,6 +291,23 @@ describe("digest (summaries layer)", () => {
     expect(searchSummaries(db, "och att den vi kan").length).toBe(0);
   });
 
+  test("searchSummaries orders matches by bm25 (dense summary before a buried one)", () => {
+    // Both summaries match "limiter", so this exercises ranking rather than the
+    // single-hit filtering the test above covers: the dense, term-heavy summary must
+    // outrank the one where the term is buried in filler. Pins the ORDER BY bm25.
+    writeSession(env.projects, "-repo-a", "DENSE", [
+      userMsg("DENSE", "ua", "a", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-b", "BURIED", [
+      userMsg("BURIED", "ub", "b", { timestamp: ts(10) }),
+    ]);
+    runIndex(db);
+    writeSummary(db, "DENSE", "limiter limiter limiter. Keywords: limiter");
+    writeSummary(db, "BURIED", `limiter ${"filler ".repeat(200)} Keywords: filler`);
+
+    expect(searchSummaries(db, "limiter").map((h) => h.id)).toEqual(["DENSE", "BURIED"]);
+  });
+
   test("getSummary returns null when nothing is stored", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db);

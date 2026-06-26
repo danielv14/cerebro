@@ -70,6 +70,60 @@ describe("query (populated archive)", () => {
     expect(hits[0]!.snippet).toContain("[limiter]");
   });
 
+  test("search orders hits by bm25 relevance (dense match before a buried one)", () => {
+    // DENSE: the term dominates a short message. BURIED: one occurrence drowned in
+    // filler. bm25 ranks the dense, shorter document higher; this pins the ORDER BY
+    // so a regression that drops or reverses it is caught (every other search test
+    // has a single hit and would stay green regardless of ordering).
+    writeSession(env.projects, "-repo", "DENSE", [
+      userMsg("DENSE", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "BURIED", [
+      userMsg("BURIED", "u2", `limiter ${"filler ".repeat(200)}`, { timestamp: ts(10) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 10);
+    expect(hits.map((h) => h.session_id)).toEqual(["DENSE", "BURIED"]);
+  });
+
+  test("search caps results at the limit, keeping the most relevant", () => {
+    writeSession(env.projects, "-repo", "TOP", [
+      userMsg("TOP", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "MID", [
+      userMsg("MID", "u2", `limiter ${"filler ".repeat(100)}`, { timestamp: ts(10) }),
+    ]);
+    writeSession(env.projects, "-repo", "LOW", [
+      userMsg("LOW", "u3", `limiter ${"filler ".repeat(400)}`, { timestamp: ts(20) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 2);
+    // Three documents match, but limit=2 truncates to the two best by bm25.
+    expect(hits.map((h) => h.session_id)).toEqual(["TOP", "MID"]);
+  });
+
+  test("search recovers from a malformed FTS query via the sanitized fallback", () => {
+    // A bare unbalanced quote is invalid FTS5 (`unterminated string`) and throws on
+    // the verbatim MATCH. The catch re-runs the query as a sanitized phrase of the
+    // bare tokens, so a fat-fingered query still returns its hit instead of erroring.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "alpha beta gamma", { timestamp: ts(0) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, 'alpha"', 10);
+    expect(hits.map((h) => h.session_id)).toEqual(["S"]);
+  });
+
+  test("search returns no hits when a malformed query sanitizes to nothing matchable", () => {
+    // The fallback must also fail soft: a punctuation-only query throws on the raw
+    // MATCH, sanitizes to a phrase with no tokens, and yields [] rather than throwing.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "alpha beta", { timestamp: ts(0) }),
+    ]);
+    runIndex(db);
+    expect(search(db, '"""', 10)).toEqual([]);
+  });
+
   test("listThreads lists roots newest-first and filters by project after grouping", () => {
     writeSession(env.projects, "-repo-a", "A", [
       userMsg("A", "ua", "alpha", { cwd: "/repo-a", timestamp: ts(0) }),
