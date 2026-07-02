@@ -40,6 +40,7 @@ cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
 cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
 cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
+cerebro maintain                            # optimize FTS indexes, refresh planner stats, truncate WAL
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
 ```
 
@@ -67,6 +68,11 @@ explicit target, and `--keep N` prunes the oldest default-named backups beyond N
 A natural place to hang it is the scheduled digest batch, e.g. append
 `~/.claude/cerebro/cerebro backup --keep 8` to `digest-stale-batch.sh`'s schedule
 or run it from the same launchd/cron entry.
+
+`cerebro maintain` is the other housekeeping entry point: it merges the FTS
+indexes' incremental b-trees (`optimize`), refreshes the query planner's stats
+(`PRAGMA optimize`), and truncates the WAL. The scheduled digest batch runs it
+automatically at the end of each run.
 
 ## Hooks (auto-index + context injection)
 

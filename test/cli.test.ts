@@ -211,6 +211,14 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("maintain runs the housekeeping and reports it (#56)", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work")]);
+    const cap = makeIO();
+    runCli(["maintain"], cap.io, seeded());
+    expect(cap.logs.join("\n")).toContain("Maintenance done");
+    expect(cap.exitCode).toBe(0);
+  });
+
   test("digest input writes the raw transcript to io.write (not log)", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "the body text", { timestamp: ts(0) }),

@@ -99,4 +99,8 @@ while IFS= read -r sid; do
 done <<< "$ids"
 
 log "run complete: $done_n summarized, $failed failed"
+
+# Housekeeping while we already hold the single-flight lock: merge the FTS
+# indexes' incremental b-trees, refresh planner stats, truncate the WAL.
+"$CEREBRO" maintain >> "$LOG" 2>&1 || true
 exit 0
