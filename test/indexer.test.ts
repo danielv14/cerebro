@@ -324,6 +324,30 @@ describe("runIndex", () => {
     expect(runIndex(db).filesIndexed).toBe(0);
   });
 
+  test("a digest transcript that grows after detection stays excluded (#42)", () => {
+    // The digest run is still writing while the first index detects it. The later
+    // lines must not leak into the archive on the next incremental run.
+    const path = writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
+    runIndex(db);
+    appendRaw(
+      path,
+      `${JSON.stringify(assistantMsg("DIG", "d2", "the summary", { parentUuid: "d1" }))}\n`,
+    );
+    // Real run: nothing indexed, no session row appears.
+    expect(runIndex(db).newMessages).toBe(0);
+    expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    // Dry run agrees: the grown digest file is not a candidate.
+    appendRaw(path, `${JSON.stringify(assistantMsg("DIG", "d3", "more", { parentUuid: "d2" }))}\n`);
+    const plan = dryRunIndex(db);
+    expect(plan.candidateMessages).toBe(0);
+    expect(plan.filesToRead).toBe(0);
+  });
+
   test("a session that merely contains the digest prompt later is still indexed", () => {
     // The prompt only disqualifies a file when it is the FIRST turn (a digest run).
     // A genuine session that quotes or discusses it mid-conversation is unaffected.

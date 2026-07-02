@@ -373,10 +373,22 @@ interface FileReadPlan {
 // short-circuits as unchanged; in full mode the status is always "grown"/"new"
 // and callers ignore it for categorization.
 export const planFileRead = (
-  state: { bytes_indexed: number; mtime_ms: number } | null,
+  state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
   file: SessionFile,
   full: boolean,
 ): FileReadPlan => {
+  // A file flagged as cerebro's own digest summarization transcript is permanently
+  // excluded, even when it grows: the content guard (isDigestRunTranscript) only
+  // inspects reads that start at byte 0, so without this flag a digest transcript
+  // still being written when first detected would leak its later lines into the
+  // archive on the next incremental run. Checked before `full` on purpose: a real
+  // --full run has already cleared index_state (no flag survives, the file is
+  // re-read and re-detected from byte 0), so honoring the flag here only affects
+  // a --full *dry run*, which must report the file as skipped to match.
+  if (state?.is_digest) {
+    return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
+  }
+
   if (full) {
     return { start: 0, status: state ? "grown" : "new", shouldRead: true };
   }
@@ -421,11 +433,15 @@ const eachIndexableFile = (
   opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
 ): void => {
   const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms FROM index_state WHERE source_file = ?",
+    "SELECT bytes_indexed, mtime_ms, is_digest FROM index_state WHERE source_file = ?",
   );
 
   for (const file of files) {
-    const state = getState.get(file.path) as { bytes_indexed: number; mtime_ms: number } | null;
+    const state = getState.get(file.path) as {
+      bytes_indexed: number;
+      mtime_ms: number;
+      is_digest: number;
+    } | null;
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {
@@ -477,12 +493,13 @@ export const runIndex = (db: Database, full = false): IndexResult => {
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   const files = discoverSessionFiles();
   const saveState = db.query(
-    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(source_file) DO UPDATE SET
        bytes_indexed = excluded.bytes_indexed,
        mtime_ms      = excluded.mtime_ms,
-       indexed_at    = excluded.indexed_at`,
+       indexed_at    = excluded.indexed_at,
+       is_digest     = excluded.is_digest`,
   );
 
   let filesIndexed = 0;
@@ -496,13 +513,13 @@ export const runIndex = (db: Database, full = false): IndexResult => {
       // touched-but-unchanged file settles to "unchanged" on the next run.
       const tx = db.transaction(() => {
         if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) {
-          // cerebro's own digest summarization transcript, not a session: advance the
-          // cursor so it is never re-scanned, but index none of it.
-          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+          // cerebro's own digest summarization transcript, not a session: flag it so
+          // it is never read again (even if it grows), and index none of it.
+          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return;
         }
         const meta = ingestLines(db, file, lines);
-        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta);
       });

@@ -16,7 +16,11 @@ CREATE TABLE IF NOT EXISTS index_state (
   source_file   TEXT PRIMARY KEY,
   bytes_indexed INTEGER NOT NULL DEFAULT 0,
   mtime_ms      REAL    NOT NULL DEFAULT 0,
-  indexed_at    TEXT
+  indexed_at    TEXT,
+  -- 1 = detected as cerebro's own digest summarization transcript. The file is
+  -- permanently excluded from indexing, even if it grows after detection (the
+  -- detection itself only inspects a read that starts at byte 0).
+  is_digest     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -150,6 +154,10 @@ const migrate = (db: Database): void => {
     // Pre-migration titles get priority 0: the next title event of any priority may
     // replace them once, after which the real priority is tracked.
     db.run("ALTER TABLE sessions ADD COLUMN title_priority INTEGER NOT NULL DEFAULT 0");
+  }
+  const stateColumns = db.query("PRAGMA table_info(index_state)").all() as { name: string }[];
+  if (!stateColumns.some((c) => c.name === "is_digest")) {
+    db.run("ALTER TABLE index_state ADD COLUMN is_digest INTEGER NOT NULL DEFAULT 0");
   }
 };
 
