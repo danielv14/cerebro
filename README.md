@@ -307,6 +307,24 @@ optional fast path on top, never the source of truth.
 - **Index-first retrieval.** `search` returns id + timestamp + project + snippet;
   full text is fetched on demand via `show`, keeping the context window small.
 
+### Search tokenization
+
+The FTS tables use FTS5's default `unicode61` tokenizer with its default
+`remove_diacritics 1`. That is a deliberate choice for a mixed Swedish/English
+archive, with known trade-offs:
+
+- **Diacritics fold**: `för` matches `for`, and `å/ä/ö` fold to `a/o`. Good for
+  recall (queries typed without diacritics still hit), a slight precision loss.
+- **No stemming**: `sessioner` does not match `session`, English plurals miss
+  too. The `porter` stemmer would fix English but mangle Swedish; a `trigram`
+  tokenizer would give substring matching at roughly 3x the index size. Neither
+  trade is clearly worth it, so exact-token matching stands; `relevant`'s
+  OR-of-tokens queries soften the impact for prose prompts.
+
+Changing the tokenizer later means recreating the FTS tables and re-running
+`cerebro index --rebuild`, so revisit this only with a concrete recall problem
+in hand.
+
 ## Tests
 
 ```sh
