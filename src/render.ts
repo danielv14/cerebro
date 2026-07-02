@@ -327,6 +327,13 @@ export const indexResult = (result: IndexResult): string[] => [
     `(${result.filesIndexed}/${result.filesScanned} files touched).`,
 ];
 
+// `index --rebuild`: like indexResult but states what a rebuild actually did:
+// texts of on-disk messages were re-flattened in place, deleted sources kept.
+export const rebuildResult = (result: IndexResult): string[] => [
+  `Rebuilt from disk: ${result.newMessages} net-new message(s), stored texts re-flattened ` +
+    `(${result.filesIndexed}/${result.filesScanned} files read; messages from deleted sources kept).`,
+];
+
 // `stats`: the archive counts, labels left-aligned to a shared column.
 export const statsReport = (s: Stats): string[] => [
   `Threads:          ${s.threads}`,

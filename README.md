@@ -30,7 +30,7 @@ ln -sf /path/to/cerebro/skills/cerebro ~/.claude/skills/cerebro
 ## Usage
 
 ```sh
-cerebro index [--full] [--dry-run]          # incremental index (--full re-reads all; --dry-run writes nothing)
+cerebro index [--full] [--rebuild] [--dry-run]   # incremental index (--full re-reads all; --rebuild also re-flattens stored text; --dry-run writes nothing)
 cerebro search <query> [--limit N]          # ranked full-text search, snippet-first
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
@@ -252,9 +252,14 @@ optional fast path on top, never the source of truth.
 
 - **Incremental + idempotent.** A per-file byte cursor (`index_state`) means each
   run reads only newly appended bytes; unchanged files are skipped entirely. Plain
-  `cerebro index` is the everyday command. `--full` (re-read everything, dedup makes
-  it safe) is only for a suspected-corrupt index or a schema change. `--dry-run`
-  reports what would be indexed without writing.
+  `cerebro index` is the everyday command. `--full` re-reads everything (dedup makes
+  it safe) and is only for a suspected-corrupt cursor state; because dedup skips
+  known messages, it never touches stored text. `--rebuild` is the one that does:
+  it re-reads everything *and* re-flattens the stored text of every message whose
+  source is still on disk (use it after a `flattenContent`/parser change). Messages
+  whose source file Claude Code already deleted are never touched by either mode:
+  the archive is their only copy. `--dry-run` reports what would be indexed without
+  writing.
 - **Dedup on message UUID.** The only stable key across resumes, so reopening and
   re-indexing a session appends to the existing thread instead of duplicating it.
 - **Sidecar metadata survives deletion.** A session stays searchable in the

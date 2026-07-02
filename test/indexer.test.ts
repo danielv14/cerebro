@@ -300,6 +300,55 @@ describe("runIndex", () => {
     expect(countMessages(db)).toBe(before);
   });
 
+  test("--rebuild re-flattens stored text of on-disk messages and syncs FTS (#43)", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "the real searchable text")]);
+    runIndex(db);
+    // Simulate an old flattening generation: stored text differs from a fresh parse.
+    db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
+    db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
+    runIndex(db, false, true);
+    const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
+    expect(row.text).toBe("the real searchable text");
+    // The update trigger kept the FTS index in sync with the refreshed text.
+    const hit = db
+      .query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'searchable'")
+      .get();
+    expect(hit).not.toBeNull();
+  });
+
+  test("--rebuild keeps messages whose source file is deleted (#43)", () => {
+    const path = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "ug", "precious")]);
+    writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "uk", "still here")]);
+    runIndex(db);
+    require("node:fs").rmSync(path);
+    const result = runIndex(db, false, true);
+    expect(result.newMessages).toBe(0);
+    // The deleted session's only copy survives the rebuild.
+    const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
+    expect(row.text).toBe("precious");
+    const avail = db.query("SELECT body_available FROM sessions WHERE session_id='GONE'").get() as {
+      body_available: number;
+    };
+    expect(avail.body_available).toBe(0);
+  });
+
+  test("--rebuild never re-attributes a shared message to the resume (#43)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+    ]);
+    // The resume file carries a copy of the original's message (same uuid).
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u1", "start", { timestamp: ts(0) }),
+      userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    runIndex(db, false, true);
+    const row = db.query("SELECT session_id FROM messages WHERE uuid='u1'").get() as {
+      session_id: string;
+    };
+    expect(row.session_id).toBe("ORIG");
+  });
+
   test("mid-write final line is deferred, then indexed once complete", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "complete")]);
     const a1 = JSON.stringify(assistantMsg("S", "a1", "later", { parentUuid: "u1" }));

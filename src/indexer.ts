@@ -72,7 +72,20 @@ export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; curs
 // Insert any new messages from a file's freshly-split lines and harvest the
 // metadata for its session row. The bytes were already read and split by
 // eachIndexableFile; this is the write half, run inside the per-file transaction.
-const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta => {
+//
+// `rebuild` switches the dedup from ignore to refresh: still keyed on the message
+// UUID (invariant #4), but an existing row gets its payload (text, ts, role,
+// parent_uuid, is_sidechain) re-written from the fresh parse, so a changed
+// flattenContent reaches already-indexed messages. session_id is deliberately NOT
+// refreshed: attribution belongs to the first owner (invariant #6), and a resume
+// file re-read in rebuild mode must not steal the shared prefix. Messages whose
+// source file is gone are simply never re-read, so their only copy stays intact.
+const ingestLines = (
+  db: Database,
+  file: SessionFile,
+  lines: string[],
+  rebuild = false,
+): FileMeta => {
   const meta: FileMeta = {
     sessionId: file.sessionId,
     projectDir: file.projectDir,
@@ -84,8 +97,17 @@ const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta
   };
 
   const insert = db.query(
-    `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    rebuild
+      ? `INSERT INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(uuid) DO UPDATE SET
+           parent_uuid  = excluded.parent_uuid,
+           ts           = excluded.ts,
+           role         = excluded.role,
+           text         = excluded.text,
+           is_sidechain = excluded.is_sidechain`
+      : `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (const line of lines) {
@@ -493,8 +515,13 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 
 // Incrementally index every session file. `full` clears the per-file cursors so
 // every file is re-read from the start; dedup on message UUID makes that safe.
-export const runIndex = (db: Database, full = false): IndexResult => {
-  if (full) db.run("DELETE FROM index_state");
+// `rebuild` (implies full) additionally re-flattens already-indexed messages in
+// place (see ingestLines): the only way a flattenContent change reaches old rows,
+// since plain dedup ignores re-reads. It never deletes anything, so messages whose
+// source Claude Code already removed are untouched.
+export const runIndex = (db: Database, full = false, rebuild = false): IndexResult => {
+  const readAll = full || rebuild;
+  if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   const files = discoverSessionFiles();
@@ -512,7 +539,7 @@ export const runIndex = (db: Database, full = false): IndexResult => {
   eachIndexableFile(
     db,
     files,
-    full,
+    readAll,
     ({ file, plan, lines, cursor }) => {
       // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
       // we do not skip it: running saveState still records the new mtime, so a
@@ -524,7 +551,7 @@ export const runIndex = (db: Database, full = false): IndexResult => {
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return;
         }
-        const meta = ingestLines(db, file, lines);
+        const meta = ingestLines(db, file, lines, rebuild);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta);

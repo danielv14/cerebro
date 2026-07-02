@@ -24,8 +24,8 @@ Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefi
 
 ## Kommandon
 
-### `cerebro index [--full] [--dry-run]`
-Indexerar inkrementellt sedan förra körningen. Varje fil har en byte-cursor: oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Du behöver alltså **inte** köra `--full` i vardagen, bara `cerebro index`. `--full` nollar cursorerna och läser om allt (säkert tack vare dedup på meddelande-UUID, men långsammare och netto 0 nya på ett aktuellt arkiv). `--dry-run` rapporterar vad som skulle indexeras utan att skriva något.
+### `cerebro index [--full] [--rebuild] [--dry-run]`
+Indexerar inkrementellt sedan förra körningen. Varje fil har en byte-cursor: oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Du behöver alltså **inte** köra `--full` i vardagen, bara `cerebro index`. `--full` nollar cursorerna och läser om allt (säkert tack vare dedup på meddelande-UUID, men långsammare och netto 0 nya på ett aktuellt arkiv; lagrad text rörs aldrig). `--rebuild` gör som `--full` men skriver dessutom om den lagrade texten för varje meddelande vars källfil finns kvar på disk (behövs efter en ändring i flattening-logiken); meddelanden vars källfil raderats behålls orörda. `--dry-run` rapporterar vad som skulle indexeras utan att skriva något.
 
 ```
 $ cerebro index
@@ -210,7 +210,7 @@ Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: 
 
 - **`cerebro index` är allt du behöver i vardagen.** Den är inkrementell: varje fil har en byte-cursor (`index_state`) med hur långt vi läst plus filens mtime. Oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Att köra om är billigt.
 - **Kör `index` innan du söker i färskt arbete.** Den aktiva sessionen skrivs löpande till disk och fångas vid nästa indexering.
-- **`--full` behövs nästan aldrig.** Den nollar cursorerna och läser om allt från början. Dedup på meddelande-UUID gör det ofarligt (netto 0 nya på ett aktuellt arkiv), men det är långsammare. Använd bara vid misstänkt trasigt index eller efter en schema-ändring.
+- **`--full` behövs nästan aldrig.** Den nollar cursorerna och läser om allt från början. Dedup på meddelande-UUID gör det ofarligt (netto 0 nya på ett aktuellt arkiv), men det är långsammare. Använd bara vid misstänkt trasig cursor-state. Efter en ändring i hur meddelanden plattas till text är det `--rebuild` som gäller: den uppdaterar även lagrad text (för filer som finns kvar på disk).
 - **`--dry-run` skriver ingenting**, rapporterar bara vad en körning skulle göra (nya meddelanden, bytes, filuppdelning). Bra för att inspektera innan en stor `--full`.
 - **Dedup på UUID, inte fil eller session-id.** Samma meddelande som dyker upp i flera filer (resumes, subagent-ekon) lagras en gång. Därför ger `--full` aldrig dubbletter.
 

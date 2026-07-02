@@ -72,6 +72,13 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text)
     VALUES ('delete', old.id, old.text);
 END;
+-- Messages are normally insert-only, but 'index --rebuild' re-flattens stored text
+-- in place via an upsert; this keeps the FTS index in sync with those updates.
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text)
+    VALUES ('delete', old.id, old.text);
+  INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
 
 -- One LLM-written summary per logical thread (keyed by root_session_id), the
 -- curated layer on top of the verbatim archive. Derived and regenerable: safe to

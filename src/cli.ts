@@ -30,6 +30,7 @@ import {
   dryRunReport,
   indexResult,
   noSummaryHint,
+  rebuildResult,
   recentBlock,
   relevantBlock,
   searchListing,
@@ -47,7 +48,7 @@ import { threadMessages, threadOpeningPrompt } from "./thread.ts";
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
 
 Usage:
-  cerebro index [--full] [--dry-run]     Index all sessions incrementally
+  cerebro index [--full] [--rebuild] [--dry-run]   Index all sessions incrementally
   cerebro search <query> [--limit N]     Full-text search (ranked, snippet-first)
   cerebro sessions [--project P] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
@@ -71,7 +72,11 @@ Digest actions:
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
-  --full          index: ignore cursors and re-read everything; show: print full text
+  --full          index: ignore cursors and re-read everything (dedup skips known
+                  messages, so stored text is never touched); show: print full text
+  --rebuild       index: like --full, but also re-flatten the stored text of every
+                  message still on disk (needed after a flattening/parser change;
+                  messages whose source file is deleted are kept untouched)
   --dry-run       index: report what would be indexed, write nothing
   --limit <n>     Max rows to return
   --project <p>   Filter sessions by project path substring
@@ -176,6 +181,7 @@ export const runCli = (
         options: {
           db: { type: "string" },
           full: { type: "boolean", default: false },
+          rebuild: { type: "boolean", default: false },
           "dry-run": { type: "boolean", default: false },
           limit: { type: "string" },
           project: { type: "string" },
@@ -219,7 +225,14 @@ export const runCli = (
     switch (command) {
       case "index": {
         if (values["dry-run"]) {
-          for (const line of dryRunReport(dryRunIndex(db, values.full))) io.log(line);
+          // A rebuild reads exactly what --full reads; the dry run reports that plan.
+          for (const line of dryRunReport(dryRunIndex(db, values.full || values.rebuild))) {
+            io.log(line);
+          }
+          break;
+        }
+        if (values.rebuild) {
+          for (const line of rebuildResult(runIndex(db, false, true))) io.log(line);
           break;
         }
         for (const line of indexResult(runIndex(db, values.full))) io.log(line);
