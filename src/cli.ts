@@ -106,6 +106,8 @@ Options:
   --model <name>  digest write: record which model produced the summary
   --bytes <n>     digest model: tier by an already-measured transcript byte count
                   (skips re-rendering the transcript; used by the hooks)
+  --json          search/sessions/recent/relevant/show/stats/digest stale|search|show:
+                  emit the rows as JSON instead of the human listing
   -h, --help      Show this help
 
 Env:
@@ -191,6 +193,11 @@ export const runCli = (
     io.setExitCode(1);
   };
 
+  // --json: emit the typed rows as a JSON document instead of the human listing.
+  // A far more robust contract for agents and scripts than the pinned column
+  // widths; empty results emit an empty array/object rather than prose.
+  const emitJson = (payload: unknown): void => io.log(JSON.stringify(payload, null, 2));
+
   // parseArgs throws on unknown options; turn that into a clean message + exit 1
   // instead of a raw stack trace. The IIFE preserves parseArgs's inferred types.
   const parsed = (() => {
@@ -217,6 +224,7 @@ export const runCli = (
           range: { type: "string" },
           to: { type: "string" },
           keep: { type: "string" },
+          json: { type: "boolean", default: false },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -280,6 +288,10 @@ export const runCli = (
           since: values.since,
           all: values.all,
         });
+        if (values.json) {
+          emitJson(hits);
+          break;
+        }
         if (hits.length === 0) {
           io.log("No matches.");
           break;
@@ -290,6 +302,10 @@ export const runCli = (
 
       case "sessions": {
         const threads = listThreads(db, { project: values.project, limit: limit ?? 30 });
+        if (values.json) {
+          emitJson(threads);
+          break;
+        }
         if (threads.length === 0) {
           io.log("No sessions indexed yet. Run: cerebro index");
           break;
@@ -308,6 +324,13 @@ export const runCli = (
         const since = new Date(Date.now() - days * 86_400_000).toISOString();
         const repoRoot = gitInfo(cwd).root;
         const threads = recentThreads(db, { repoRoot, cwd, since, limit: limit ?? 5 });
+
+        if (values.json) {
+          emitJson(
+            threads.map((thread) => ({ ...thread, opening: threadOpeningPrompt(db, thread.id) })),
+          );
+          break;
+        }
 
         if (threads.length === 0) {
           // Silent in --context mode so the SessionStart hook injects nothing.
@@ -353,6 +376,10 @@ export const runCli = (
           break;
         }
         const threads = relevantThreads(db, prompt, limit ?? 3);
+        if (values.json) {
+          emitJson(threads);
+          break;
+        }
         if (threads.length === 0) {
           // Silent in --context mode so the UserPromptSubmit hook injects nothing.
           if (!values.context) io.log("No related past sessions.");
@@ -366,6 +393,10 @@ export const runCli = (
         const sessionId = resolveOrFail(db, positionals[1], "show", fail);
         if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
+        if (values.json) {
+          emitJson({ id: sessionId, total: messages.length, messages });
+          break;
+        }
         if (values.range !== undefined) {
           // --range A..B (or a single N): a verbatim slice in outline numbering,
           // the jump target for search's #N ordinals.
@@ -438,6 +469,10 @@ export const runCli = (
 
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
+            if (values.json) {
+              emitJson(rows);
+              break;
+            }
             // --ids: machine-readable mode for scripts (the digest-stale batch hook).
             // One full session id per line, nothing else (no header, titles, or help
             // footer), so a caller never has to scrape the human listing format. Empty
@@ -489,6 +524,10 @@ export const runCli = (
               break;
             }
             const hits = searchSummaries(db, query, limit ?? 10);
+            if (values.json) {
+              emitJson(hits);
+              break;
+            }
             if (hits.length === 0) {
               io.log("No matching summaries.");
               break;
@@ -501,6 +540,10 @@ export const runCli = (
             const sessionId = resolveOrFail(db, positionals[2], "digest show", fail);
             if (!sessionId) break;
             const summary = getSummary(db, sessionId);
+            if (values.json) {
+              emitJson(summary);
+              break;
+            }
             if (!summary) {
               io.log(noSummaryHint(sessionId));
               break;
@@ -529,6 +572,10 @@ export const runCli = (
           dbBytes = null;
         }
         const stale = staleThreads(db, Number.MAX_SAFE_INTEGER).length;
+        if (values.json) {
+          emitJson({ ...stats(db), dbBytes, staleThreads: stale });
+          break;
+        }
         for (const line of statsReport(stats(db), { dbBytes, staleThreads: stale })) {
           io.log(line);
         }

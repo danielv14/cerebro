@@ -211,6 +211,50 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("--json emits parseable rows for search, sessions, and stats (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "a limiter question", { timestamp: ts(0) }),
+    ]);
+
+    const searchCap = makeIO();
+    runCli(["search", "limiter", "--json"], searchCap.io, seeded());
+    const hits = JSON.parse(searchCap.logs.join("\n"));
+    expect(hits.length).toBe(1);
+    expect(hits[0].session_id).toBe("SESS");
+    expect(hits[0].ordinal).toBe(1);
+
+    const sessionsCap = makeIO();
+    runCli(["sessions", "--json"], sessionsCap.io, seeded());
+    expect(JSON.parse(sessionsCap.logs.join("\n"))[0].id).toBe("SESS");
+
+    const statsCap = makeIO();
+    runCli(["stats", "--json"], statsCap.io, seeded());
+    const s = JSON.parse(statsCap.logs.join("\n"));
+    expect(s.messages).toBe(1);
+    expect(s.staleThreads).toBe(1);
+  });
+
+  test("--json emits an empty array on no matches instead of prose (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "hello")]);
+    const cap = makeIO();
+    runCli(["search", "zzyzx", "--json"], cap.io, seeded());
+    expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("show --json returns the thread's messages (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "hello there", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "general kenobi", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--json"], cap.io, seeded());
+    const payload = JSON.parse(cap.logs.join("\n"));
+    expect(payload.id).toBe("SESS");
+    expect(payload.total).toBe(2);
+    expect(payload.messages[1].text).toBe("general kenobi");
+  });
+
   test("maintain runs the housekeeping and reports it (#56)", () => {
     writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work")]);
     const cap = makeIO();

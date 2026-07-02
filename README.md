@@ -45,7 +45,10 @@ cerebro digest <action>                     # curated session summaries (see "Cu
 ```
 
 `show` and search accept abbreviated session ids (the 8-char prefix shown in
-listings); an ambiguous prefix errors.
+listings); an ambiguous prefix errors. The reader commands (`search`, `sessions`,
+`recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) take `--json`
+to emit the rows as JSON instead of the human listing -- the stable contract for
+scripts and agents.
 
 ### Database location
 

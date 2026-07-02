@@ -20,7 +20,7 @@ Dränk inte kontextfönstret. Följ den här trappan:
 3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
 4. **`cerebro show <id> --range A..B`** för att läsa en ordagrann skiva runt en träff (`search` visar varje träffs `#N`-position). **`--full`** först när du behöver hela transkriptet; hämta det inte i onödan, trådar kan vara tusentals meddelanden.
 
-Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel.
+Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel. Läskommandona (`search`, `sessions`, `recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) tar `--json` när du vill ha raderna som JSON i stället för den människoläsbara listan (tomt resultat ger `[]`, aldrig prosa).
 
 ## Kommandon
 
