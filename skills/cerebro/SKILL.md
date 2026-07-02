@@ -160,6 +160,14 @@ Database size:    48.2 MB
 Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
 
+### `cerebro backup [--to <path>] [--keep N]` och `cerebro maintain`
+Underhåll av arkivet. `backup` tar en konsistent snapshot av databasen (`VACUUM INTO`) till `<db-katalog>/backups/archive-<tidsstämpel>.sqlite`; `--to <path>` väljer explicit mål, `--keep N` rensar de äldsta default-namngivna backuperna utöver N. `maintain` optimerar FTS-indexen, uppdaterar query-plannerns statistik och trunkerar WAL-filen (den schemalagda digest-batchen kör den automatiskt). Du behöver sällan köra dessa själv, men de finns om användaren ber om backup eller om arkivet känns segt.
+
+```
+$ cerebro backup --keep 8
+Backup written: /Users/you/.claude/cerebro/backups/archive-20260702-121530.sqlite (48.1 MB)
+```
+
 ### `cerebro digest <action>`
 Ett kurerat lager ovanpå rådatan: en LLM-skriven sammanfattning per tråd, lagrad i samma databas med eget FTS-index. Sammanfattningarna är täta och ämnesinriktade, så att söka i dem hittar "vad jobbade jag med kring X" mycket bättre än bm25 mot råa transkript. cerebro anropar **aldrig** en LLM själv: det äger prompten och lagringsformatet, och tar emot en sammanfattning som modellen producerat.
 
@@ -203,7 +211,7 @@ Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
 
 **Att producera en sammanfattning.** Modellsteget bor utanför binären. Två vägar:
 - En hook eller skill pipear transkriptet genom `claude -p`: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
-- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den).
+- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den). `digest write` vägrar lagra text som inte kan vara en summering (för kort, eller något som ser ut som ett felmeddelande i stil med "Prompt is too long"/"API Error") och avslutar då med exit 1 — tråden förblir stale så att reconcilern försöker igen.
 
 Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: det renderar samma transkript men storleksbegränsat så att det får plats i ett enda modellkontext. Korta trådar kommer ut ordagrant; en jättetråd kapas (water-fill: korta meddelanden behålls helt, de längsta essäerna trimmas först) så att inte ens ett 1M-kontext spräcks. cerebro äger modellvalet: `cerebro digest model <id>` väljer modell efter transkriptets storlek (hookarna använder `digest model --bytes <n>` med storleken på den redan renderade `digest input`-filen, så transkriptet inte renderas två gånger), och clear-hooken frågar den i stället för att hårdkoda tröskeln. Små trådar → `claude-haiku-4-5` (billigast, vanligaste fallet), överstora → `claude-sonnet-4-6[1m]` i ett skott (1M-kontext, platt pris, ingen long-context-premie), så att en tråd på 400-600k tokens summeras hel istället för trunkerad. `[1m]`-suffixet krävs: det är så Claude Code väljer 1M-varianten; utan det får `claude -p` default-fönstret 200k och en jättetråd failar fortfarande med "Prompt is too long". Tröskel och modellnamn kan overridas via `CEREBRO_DIGEST_MODEL`, `CEREBRO_DIGEST_MODEL_LARGE` och `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
 

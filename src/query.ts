@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-import { countThreads, threadOpeningPrompt } from "./thread.ts";
+import { countThreads, messageOrdinal, threadOpeningPrompt } from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -49,42 +49,39 @@ export const search = (
   }
 
   // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
-  // which rules out a window-function dedup in SQL. Instead: over-fetch the ranked
-  // hits (bm25 order) and keep the first (= best) per thread root in JS, mirroring
-  // how relevantThreads dedups its raw tier.
-  const fetchLimit = opts.all ? limit : Math.max(200, limit * 10);
-  // `ordinal` replicates threadMessages' ORDER BY (ts, id) counting -- including
-  // SQLite's NULLs-first -- so the number matches show's outline numbering and a
-  // hit can be opened in place with show --range.
+  // which rules out a window-function dedup in SQL. Instead the ranked hits are
+  // fetched in pages and the first (= best) hit per thread root is kept in JS,
+  // mirroring how relevantThreads dedups its raw tier. Paging (not a single capped
+  // over-fetch) matters: one chatty thread can own hundreds of the top bm25 rows,
+  // and a fixed window would silently starve every thread ranked below it. The
+  // ordinal is deliberately NOT computed here: it would run a thread-wide COUNT for
+  // every matched row the sorter sees; instead messageOrdinal (thread.ts, the owner
+  // of thread ordering) runs once per *kept* hit below.
+  const pageSize = opts.all ? limit : Math.max(200, limit * 10);
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
            s.root_session_id AS root,
-           snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet,
-           (SELECT COUNT(*) FROM messages m2
-            WHERE m2.session_id IN (
-              SELECT session_id FROM sessions WHERE root_session_id = s.root_session_id
-            )
-            AND (
-              (m2.ts IS NULL AND m.ts IS NOT NULL)
-              OR (m2.ts IS NULL AND m.ts IS NULL AND m2.id <= m.id)
-              OR (m2.ts IS NOT NULL AND m.ts IS NOT NULL
-                  AND (m2.ts < m.ts OR (m2.ts = m.ts AND m2.id <= m.id)))
-            )) AS ordinal
+           snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
     FROM messages_fts
     JOIN messages m  ON m.id = messages_fts.rowid
     JOIN sessions s  ON s.session_id = m.session_id
     WHERE messages_fts MATCH ?
     ${filters.join("\n    ")}
     ORDER BY bm25(messages_fts)
-    LIMIT ?`;
+    LIMIT ? OFFSET ?`;
   const stmt = db.query(sql);
 
-  type RawHit = SearchHit & { root: string | null };
-  const run = (match: string): RawHit[] => stmt.all(match, ...filterParams, fetchLimit) as RawHit[];
+  interface RawHit extends Omit<SearchHit, "ordinal"> {
+    root: string | null;
+  }
+  const runPage = (match: string, offset: number): RawHit[] =>
+    stmt.all(match, ...filterParams, pageSize, offset) as RawHit[];
 
-  let raw: RawHit[];
+  // Resolve the effective MATCH query on the first page; later pages reuse it.
+  let match = query;
+  let page: RawHit[];
   try {
-    raw = run(query);
+    page = runPage(match, 0);
   } catch {
     const sanitized = query
       .split(/\s+/)
@@ -92,22 +89,34 @@ export const search = (
       .map((token) => `"${token.replace(/"/g, '""')}"`)
       .join(" ");
     if (!sanitized) return [];
-    raw = run(sanitized);
+    match = sanitized;
+    page = runPage(match, 0);
   }
 
-  const strip = ({ root: _root, ...hit }: RawHit): SearchHit => hit;
-  if (opts.all) return raw.map(strip);
-
-  const seen = new Set<string>();
-  const deduped: SearchHit[] = [];
-  for (const hit of raw) {
-    const key = hit.root ?? hit.session_id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(strip(hit));
-    if (deduped.length >= limit) break;
+  const kept: RawHit[] = [];
+  if (opts.all) {
+    kept.push(...page);
+  } else {
+    const seen = new Set<string>();
+    let offset = 0;
+    for (;;) {
+      for (const hit of page) {
+        const key = hit.root ?? hit.session_id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        kept.push(hit);
+        if (kept.length >= limit) break;
+      }
+      if (kept.length >= limit || page.length < pageSize) break;
+      offset += pageSize;
+      page = runPage(match, offset);
+    }
   }
-  return deduped;
+
+  return kept.map(({ root, ...hit }) => ({
+    ...hit,
+    ordinal: messageOrdinal(db, root ?? hit.session_id, hit.ts, hit.id),
+  }));
 };
 
 // Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
@@ -407,7 +416,10 @@ export interface Stats {
 
 export const stats = (db: Database): Stats => {
   const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
-  const span = db.query("SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM messages").get() as {
+  // Span from the small sessions table, not a full scan of messages (ts is
+  // unindexed there): first_ts/last_ts are recomputed from messages on every
+  // session touch, so the aggregates are equivalent.
+  const span = db.query("SELECT MIN(first_ts) AS mn, MAX(last_ts) AS mx FROM sessions").get() as {
     mn: string | null;
     mx: string | null;
   };

@@ -68,6 +68,32 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
   return row?.text ?? null;
 };
 
+// The 1-based position of a message within its thread's chronological order: the
+// COUNT form of threadMessages' ORDER BY (ts, id) under SQLite's NULLs-first ASC
+// semantics (a NULL ts sorts before every non-NULL ts). Owned here, next to
+// threadMessages, so search's #N ordinals and show's outline/--range numbering
+// share one definition and cannot drift.
+export const messageOrdinal = (
+  db: Database,
+  root: string,
+  ts: string | null,
+  id: number,
+): number => {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS c FROM messages m2
+       WHERE m2.${THREAD_MEMBERSHIP}
+         AND (
+           (m2.ts IS NULL AND ? IS NOT NULL)
+           OR (m2.ts IS NULL AND ? IS NULL AND m2.id <= ?)
+           OR (m2.ts IS NOT NULL AND ? IS NOT NULL
+               AND (m2.ts < ? OR (m2.ts = ? AND m2.id <= ?)))
+         )`,
+    )
+    .get(root, ts, ts, id, ts, ts, ts, id) as { c: number };
+  return row.c;
+};
+
 // The thread's most recent activity: MAX(last_ts) across the root and all its
 // resumes. Backs digest's writeSummary when it stamps source_last_ts, so later
 // activity makes a summary stale.

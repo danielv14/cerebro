@@ -7,6 +7,7 @@ import { runBackup } from "./backup.ts";
 import { openDb } from "./db.ts";
 import {
   buildDigestInput,
+  countStaleThreads,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   getSummary,
@@ -253,7 +254,15 @@ export const runCli = (
   }
 
   const dbPath = values.db || defaultDbPath();
-  const db = makeDb(dbPath);
+  // Opening can fail (permissions, corrupt file, a lost migration race): report it
+  // like any other error instead of escaping runCli as an unhandled stack trace.
+  let db: Database;
+  try {
+    db = makeDb(dbPath);
+  } catch (error) {
+    fail(`could not open database at ${dbPath}: ${(error as Error).message}`);
+    return;
+  }
 
   try {
     switch (command) {
@@ -279,9 +288,21 @@ export const runCli = (
           fail("search: missing <query>");
           break;
         }
-        if (values.since && !/^\d{4}-\d{2}-\d{2}/.test(values.since)) {
-          fail(`--since must be an ISO date like 2026-01-31 (got "${values.since}")`);
-          break;
+        // Anchored shape check plus a round-trip calendar check: an unanchored
+        // regex would let "2026-31-01" or trailing garbage through, and Date.parse
+        // alone is engine-dependent (JSC rolls "2026-02-30" over to March 2). A
+        // bad date would make the lexical ts comparison silently exclude
+        // everything instead of erroring.
+        if (values.since !== undefined) {
+          const parsed = Date.parse(`${values.since}T00:00:00Z`);
+          const roundTrips =
+            /^\d{4}-\d{2}-\d{2}$/.test(values.since) &&
+            !Number.isNaN(parsed) &&
+            new Date(parsed).toISOString().slice(0, 10) === values.since;
+          if (!roundTrips) {
+            fail(`--since must be a valid ISO date like 2026-01-31 (got "${values.since}")`);
+            break;
+          }
         }
         const hits = search(db, query, limit ?? 20, {
           project: values.project,
@@ -393,29 +414,36 @@ export const runCli = (
         const sessionId = resolveOrFail(db, positionals[1], "show", fail);
         if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
-        if (values.json) {
-          emitJson({ id: sessionId, total: messages.length, messages });
-          break;
-        }
+
+        // --range is resolved (and validated) BEFORE the output format is chosen,
+        // so `--range A..B --json` returns the requested slice as JSON instead of
+        // silently dumping the whole thread.
+        let slice = messages;
+        let from = 1;
         if (values.range !== undefined) {
           // --range A..B (or a single N): a verbatim slice in outline numbering,
           // the jump target for search's #N ordinals.
           const match = values.range.match(/^(\d+)(?:\.\.(\d+))?$/);
-          const from = match ? Number(match[1]) : 0;
-          const to = match?.[2] ? Number(match[2]) : from;
-          if (!match || from < 1 || to < from) {
+          const start = match ? Number(match[1]) : 0;
+          const to = match?.[2] ? Number(match[2]) : start;
+          if (!match || start < 1 || to < start) {
             fail(`--range must be N or A..B with 1 <= A <= B (got "${values.range}")`);
             break;
           }
-          if (from > messages.length) {
-            fail(`--range starts at ${from} but the thread has ${messages.length} message(s)`);
+          if (start > messages.length) {
+            fail(`--range starts at ${start} but the thread has ${messages.length} message(s)`);
             break;
           }
-          const slice = messages.slice(from - 1, Math.min(to, messages.length));
-          for (const line of showRange(sessionId, slice, {
-            from,
-            total: messages.length,
-          })) {
+          from = start;
+          slice = messages.slice(start - 1, Math.min(to, messages.length));
+        }
+
+        if (values.json) {
+          emitJson({ id: sessionId, total: messages.length, from, messages: slice });
+          break;
+        }
+        if (values.range !== undefined) {
+          for (const line of showRange(sessionId, slice, { from, total: messages.length })) {
             io.log(line);
           }
           break;
@@ -571,7 +599,7 @@ export const runCli = (
         } catch {
           dbBytes = null;
         }
-        const stale = staleThreads(db, Number.MAX_SAFE_INTEGER).length;
+        const stale = countStaleThreads(db);
         if (values.json) {
           emitJson({ ...stats(db), dbBytes, staleThreads: stale });
           break;

@@ -72,7 +72,14 @@ while IFS= read -r sid; do
   [ -n "$sid" ] || continue
   tmp="$(mktemp)"; out="$(mktemp)"
 
-  "$CEREBRO" digest input "$sid" > "$tmp"
+  # A failed or empty render must skip this thread: `digest model --bytes` always
+  # resolves a model, so without this check an empty transcript would be summarized
+  # as "(No substantive session content.)" and stored, permanently marking a thread
+  # with real content as summarized-and-fresh.
+  if ! "$CEREBRO" digest input "$sid" > "$tmp" || [ ! -s "$tmp" ]; then
+    log "$sid: digest input failed or empty — skipped, left for next run"
+    rm -f "$tmp" "$out"; failed=$((failed + 1)); continue
+  fi
   # Tier on the transcript we just rendered (digest model --bytes) instead of
   # having `digest model <id>` render the whole thread a second time.
   bytes="$(wc -c < "$tmp" | tr -d ' ')"

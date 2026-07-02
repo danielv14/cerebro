@@ -257,7 +257,9 @@ cerebro digest input <id>                   # print the size-bounded transcript 
 cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
                                             #   (--bytes: tier an already-measured size
                                             #    without re-rendering the transcript)
-cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
+cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
+                                            #   rejects error-looking or too-short input with
+                                            #   exit 1 so the thread stays stale and is retried)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
@@ -367,6 +369,7 @@ src/
   thread.ts    rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
   query.ts     search(), listThreads(), recentThreads(), relevantThreads(), ...
   digest.ts    DIGEST_PROMPT + staleThreads(), writeSummary(), searchSummaries(), ...
+  backup.ts    runBackup() (VACUUM INTO snapshots + pruning)
 test/
   *.test.ts    bun test suite + fixtures.ts (temp claude dir + sessions)
 ```

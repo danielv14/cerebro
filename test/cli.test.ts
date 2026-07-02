@@ -255,6 +255,67 @@ describe("runCli", () => {
     expect(payload.messages[1].text).toBe("general kenobi");
   });
 
+  test("show --range combined with --json returns the slice, not the whole thread", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "first", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "second", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("SESS", "u2", "third", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--range", "2..3", "--json"], cap.io, seeded());
+    const payload = JSON.parse(cap.logs.join("\n"));
+    expect(payload.total).toBe(3);
+    expect(payload.from).toBe(2);
+    expect(payload.messages.map((m: { text: string }) => m.text)).toEqual(["second", "third"]);
+    // Range validation still applies in JSON mode.
+    const bad = makeIO();
+    runCli(["show", "SESS", "--range", "9", "--json"], bad.io, seeded());
+    expect(bad.errs.join("\n")).toContain("starts at 9");
+    expect(bad.exitCode).toBe(1);
+  });
+
+  test("search --since rejects invalid calendar dates and trailing garbage", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    for (const since of ["2026-31-01", "2026-01-31foo", "2026-02-30"]) {
+      const cap = makeIO();
+      runCli(["search", "limiter", "--since", since], cap.io, seeded());
+      expect(cap.errs.join("\n")).toContain("--since must be a valid ISO date");
+      expect(cap.exitCode).toBe(1);
+    }
+  });
+
+  test("a failing database open reports cleanly instead of throwing", () => {
+    const cap = makeIO();
+    runCli(["stats"], cap.io, () => {
+      throw new Error("disk io error");
+    });
+    expect(cap.errs.join("\n")).toContain("could not open database");
+    expect(cap.errs.join("\n")).toContain("disk io error");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("backup dispatch writes a snapshot and validates --keep", () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const join = require("node:path").join;
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "cerebro-cli-backup-"));
+    try {
+      const dbPath = join(dir, "archive.sqlite");
+      const ok = makeIO();
+      runCli(["backup", "--db", dbPath], ok.io);
+      expect(ok.logs.join("\n")).toContain("Backup written:");
+      expect(fs.readdirSync(join(dir, "backups")).length).toBe(1);
+      expect(ok.exitCode).toBe(0);
+
+      const bad = makeIO();
+      runCli(["backup", "--db", dbPath, "--keep", "0"], bad.io);
+      expect(bad.errs.join("\n")).toContain("--keep must be a positive integer");
+      expect(bad.exitCode).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("maintain runs the housekeeping and reports it (#56)", () => {
     writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work")]);
     const cap = makeIO();

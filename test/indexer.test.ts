@@ -230,17 +230,20 @@ describe("runIndex", () => {
     expect(resume.root_session_id).toBe("ORIG");
   });
 
-  test("a NULL-ts or sidechain message cannot shadow the resume link (#44)", () => {
+  test("relink picks the true first main-chain turn: NULL ts and sidechain rows cannot shadow it (#44)", () => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
       assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
     writeSession(env.projects, "-repo", "RESUME", [
-      // A tolerated missing-ts message: sorts first in naive ASC ordering.
-      userMsg("RESUME", "noise-null-ts", "no ts", { timestamp: undefined, parentUuid: null }),
-      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
+      // The true first turn carries the resume link but has a tolerated missing ts:
+      // ordering by id (file order) still picks it, where either ts-based ordering
+      // would be shadowed (NULLs-first picks noise, NULLs-last skips this one).
+      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: undefined }),
+      userMsg("RESUME", "u3", "later", { parentUuid: "u2", timestamp: ts(2) }),
     ]);
-    // A sidechain turn folded into RESUME, timestamped before its first main turn.
+    // A sidechain turn folded into RESUME: excluded outright by the is_sidechain
+    // filter, so it can never carry or shadow the link regardless of ts or id.
     writeSubagent(env.projects, "-repo", "RESUME", "agent-x", [
       userMsg("RESUME", "sa1", "sub", { isSidechain: true, timestamp: ts(1), parentUuid: null }),
     ]);

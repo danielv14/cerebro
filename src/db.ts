@@ -9,8 +9,10 @@ import { dirname } from "node:path";
 // migrations once and is stamped.
 export const SCHEMA_VERSION = 3;
 
-// Per-connection pragmas: these do not persist in the database file, so they run
-// on every open, outside the version-gated DDL.
+// Per-connection pragmas: these run on every open, outside the version-gated DDL.
+// busy_timeout / foreign_keys do not persist in the file; journal_mode does, but it
+// cannot be changed inside a transaction, so it lives here (a no-op re-apply on an
+// already-WAL database) rather than in the transactional migration block below.
 const CONNECTION_PRAGMAS = `
 -- Wait up to 5s for a lock instead of failing instantly. cerebro is opened
 -- concurrently by short-lived processes (the index/digest hooks, manual reads,
@@ -19,11 +21,10 @@ const CONNECTION_PRAGMAS = `
 -- SQLITE_BUSY. A timeout rides out those sub-second windows.
 PRAGMA busy_timeout = 5000;
 PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
 `;
 
 const SCHEMA = `
-PRAGMA journal_mode = WAL;
-
 CREATE TABLE IF NOT EXISTS index_state (
   source_file   TEXT PRIMARY KEY,
   bytes_indexed INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +63,11 @@ CREATE TABLE IF NOT EXISTS messages (
   uuid         TEXT UNIQUE NOT NULL,
   session_id   TEXT NOT NULL,
   parent_uuid  TEXT,
+  -- Legacy, always NULL and no longer written. Kept (never dropped) on purpose:
+  -- the deployed hook binary is a frozen snapshot whose INSERT names this column;
+  -- dropping it would make every automated index run fail silently until the next
+  -- 'bun run deploy'. Harmless to carry.
+  line_no      INTEGER,
   ts           TEXT,
   role         TEXT,
   text         TEXT,
@@ -177,23 +183,35 @@ const migrate = (db: Database): void => {
   if (!stateColumns.some((c) => c.name === "is_digest")) {
     db.run("ALTER TABLE index_state ADD COLUMN is_digest INTEGER NOT NULL DEFAULT 0");
   }
-  if (columns.some((c) => c.name === "line_no")) {
-    // Dead column: it was never populated (always NULL). Nothing references it.
-    db.run("ALTER TABLE messages DROP COLUMN line_no");
-  }
 };
 
 export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
   db.exec(CONNECTION_PRAGMAS);
-  const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
-  if (user_version !== SCHEMA_VERSION) {
-    // The DDL is idempotent (IF NOT EXISTS everywhere), so two processes racing
-    // through a first open are safe; busy_timeout above rides out lock windows.
+  const version = (): number =>
+    (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+
+  if (version() !== SCHEMA_VERSION) {
+    // The DDL itself is idempotent (IF NOT EXISTS everywhere; each statement takes
+    // the write lock, which busy_timeout serializes), so it can run unwrapped. The
+    // migrations are NOT: they are check-then-ALTER, and two processes racing the
+    // first open after an upgrade (a prompt hook plus an index hook) could both
+    // pass the column-existence check and the loser's ALTER would throw. BEGIN
+    // IMMEDIATE takes the write lock up front and the version is re-checked under
+    // it, so the loser sees the winner's stamp and skips.
     db.exec(SCHEMA);
-    migrate(db);
-    db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (version() !== SCHEMA_VERSION) {
+        migrate(db);
+        db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
   return db;
 };

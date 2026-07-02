@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import {
   buildDigestInput,
+  countStaleThreads,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   digestModelConfig,
@@ -347,6 +348,16 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db);
     expect(getSummary(db, "S")).toBeNull();
+  });
+
+  test("countStaleThreads matches the unbounded stale listing", () => {
+    writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "one", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "two", { timestamp: ts(1) })]);
+    runIndex(db);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
+    writeSummary(db, "A", "Summary of A with enough length. Keywords: a");
+    expect(countStaleThreads(db)).toBe(1);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
   });
 
   test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {

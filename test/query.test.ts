@@ -134,6 +134,24 @@ describe("query (populated archive)", () => {
     expect(search(db, "limiter", 10).length).toBe(2);
   });
 
+  test("deduped search paginates past a chatty thread that fills the first fetch page", () => {
+    // 210 matching messages in one thread outrank the other thread's single match.
+    // A fixed 200-row window would starve OTHER; pagination must surface it.
+    const chatty = Array.from({ length: 210 }, (_, i) =>
+      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
+        timestamp: ts(i),
+        parentUuid: i === 0 ? null : `c${i - 1}`,
+      }),
+    );
+    writeSession(env.projects, "-repo", "CHATTY", chatty);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 5);
+    expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+  });
+
   test("search hits carry the thread ordinal matching show's numbering (#58)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "opening prompt", { timestamp: ts(0) }),
