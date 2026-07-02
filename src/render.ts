@@ -165,12 +165,15 @@ export const relevantFooter = (): string =>
 // calls one of these, and emits the result line by line. Empty-state and exit
 // decisions stay in cli.ts; these assume there is something to render.
 
-// `search`: one header + one snippet line per hit, then the count footer.
+// `search`: one header + one snippet line per hit, then the count footer. The
+// thread title (when there is one) trails the header line, truncated at 60, so a
+// hit is recognizable without opening it.
 export const searchListing = (hits: SearchHit[]): string[] => {
   const lines: string[] = [];
   for (const hit of hits) {
+    const title = hit.title ? `  ${oneLine(hit.title, 60)}` : "";
     lines.push(
-      `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}`,
+      `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}${title}`,
     );
     lines.push(`    ${oneLine(hit.snippet, 160)}`);
   }

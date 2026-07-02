@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 // the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
 // schema work. An old database (or a fresh one, user_version 0) runs the DDL +
 // migrations once and is stamped.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Per-connection pragmas: these do not persist in the database file, so they run
 // on every open, outside the version-gated DDL.
@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS messages (
   uuid         TEXT UNIQUE NOT NULL,
   session_id   TEXT NOT NULL,
   parent_uuid  TEXT,
-  line_no      INTEGER,
   ts           TEXT,
   role         TEXT,
   text         TEXT,
@@ -177,6 +176,10 @@ const migrate = (db: Database): void => {
   const stateColumns = db.query("PRAGMA table_info(index_state)").all() as { name: string }[];
   if (!stateColumns.some((c) => c.name === "is_digest")) {
     db.run("ALTER TABLE index_state ADD COLUMN is_digest INTEGER NOT NULL DEFAULT 0");
+  }
+  if (columns.some((c) => c.name === "line_no")) {
+    // Dead column: it was never populated (always NULL). Nothing references it.
+    db.run("ALTER TABLE messages DROP COLUMN line_no");
   }
 };
 

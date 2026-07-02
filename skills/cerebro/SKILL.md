@@ -55,9 +55,9 @@ Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade
 
 ```
 $ cerebro search "rate limiter" --limit 2
-5e6f7a8b  2026-02-10 09:14  assistant  api-server
+5e6f7a8b  2026-02-10 09:14  assistant  api-server  Fix flaky auth test
     … added a token-bucket [rate] [limiter] to the auth middleware, 100 req/min per …
-5e6f7a8b  2026-02-10 09:31  user       api-server
+5e6f7a8b  2026-02-10 09:31  user       api-server  Fix flaky auth test
     … the [rate] [limiter] should return 429 with a Retry-After header when the …
 
 2 hit(s). Open one with: cerebro show <id>

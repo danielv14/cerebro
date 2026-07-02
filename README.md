@@ -320,7 +320,7 @@ src/
   paths.ts     session-file discovery (top-level + subagents)
   jsonl.ts     parseLine() + classify() + flattenContent()
   git.ts       gitInfo(cwd) with cache
-  indexer.ts   runIndex(), dryRunIndex(), indexOneFile(), relinkThreads()
+  indexer.ts   runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
   thread.ts    rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
   query.ts     search(), listThreads(), recentThreads(), relevantThreads(), ...
   digest.ts    DIGEST_PROMPT + staleThreads(), writeSummary(), searchSummaries(), ...

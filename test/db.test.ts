@@ -39,16 +39,19 @@ describe("openDb schema versioning", () => {
   });
 
   test("an old-version database re-runs DDL and migrations on open", () => {
-    // Simulate a database from before a migration: strip a migrated column and
-    // reset the stamp. Reopening must re-add the column and re-stamp.
+    // Simulate a database from before a migration: strip a migrated column, re-add
+    // a dropped one, and reset the stamp. Reopening must migrate both and re-stamp.
     const db = openDb(path);
     db.run("ALTER TABLE sessions DROP COLUMN title_priority");
+    db.run("ALTER TABLE messages ADD COLUMN line_no INTEGER");
     db.run("PRAGMA user_version = 0");
     db.close();
 
     const reopened = openDb(path);
     const cols = reopened.query("PRAGMA table_info(sessions)").all() as { name: string }[];
     expect(cols.some((c) => c.name === "title_priority")).toBe(true);
+    const msgCols = reopened.query("PRAGMA table_info(messages)").all() as { name: string }[];
+    expect(msgCols.some((c) => c.name === "line_no")).toBe(false);
     const version = reopened.query("PRAGMA user_version").get() as { user_version: number };
     expect(version.user_version).toBe(SCHEMA_VERSION);
     reopened.close();

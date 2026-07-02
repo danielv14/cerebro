@@ -184,6 +184,33 @@ describe("searchListing", () => {
     ]);
     expect(lines[1]).toBe(`    ${"s".repeat(159)}…`);
   });
+
+  test("appends the thread title to the header line when present, truncated at 60", () => {
+    const lines = searchListing([
+      {
+        id: 1,
+        session_id: "0123456789abcdef",
+        ts: "2026-07-15T08:00:00Z",
+        role: "assistant",
+        project_path: "/Users/foo/cerebro",
+        title: "Fix flaky auth test",
+        snippet: "a snippet",
+      },
+    ]);
+    expect(lines[0]).toBe("01234567  2026-07-15 10:00  assistant  cerebro  Fix flaky auth test");
+    const long = searchListing([
+      {
+        id: 1,
+        session_id: "0123456789abcdef",
+        ts: "2026-07-15T08:00:00Z",
+        role: "user",
+        project_path: "/Users/foo/cerebro",
+        title: "t".repeat(80),
+        snippet: "a snippet",
+      },
+    ]);
+    expect(long[0]).toBe(`01234567  2026-07-15 10:00  user       cerebro  ${"t".repeat(59)}…`);
+  });
 });
 
 describe("sessionsListing", () => {

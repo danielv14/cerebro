@@ -98,16 +98,16 @@ const ingestLines = (
 
   const insert = db.query(
     rebuild
-      ? `INSERT INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ? `INSERT INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(uuid) DO UPDATE SET
            parent_uuid  = excluded.parent_uuid,
            ts           = excluded.ts,
            role         = excluded.role,
            text         = excluded.text,
            is_sidechain = excluded.is_sidechain`
-      : `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      : `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (const line of lines) {
@@ -125,7 +125,6 @@ const ingestLines = (
         classified.uuid,
         meta.sessionId,
         classified.parentUuid,
-        null,
         classified.ts,
         classified.role,
         classified.text,
