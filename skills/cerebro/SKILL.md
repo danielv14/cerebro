@@ -101,7 +101,7 @@ Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
 ```
 
 ### `cerebro relevant <prompt> [--limit N]`
-Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
+Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Rankingen är recency-viktad: bm25-poängen decayas med trådens ålder (halveringstid 90 dagar), så vid likvärdig textmatch vinner det färska arbetet (`search` är ren bm25). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
 
 ```
 $ cerebro relevant "how did we set up CI"

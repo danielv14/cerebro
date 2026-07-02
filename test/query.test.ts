@@ -5,6 +5,7 @@ import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
+  decayedRank,
   listThreads,
   recentThreads,
   relevantThreads,
@@ -336,6 +337,33 @@ describe("query (populated archive)", () => {
     const byId = new Map(hits.map((h) => [h.id, h]));
     expect(byId.get("SUMM")!.fromSummary).toBe(true);
     expect(byId.get("RAW")!.fromSummary).toBe(false);
+  });
+
+  test("decayedRank shrinks a hit's bm25 magnitude with age (#52)", () => {
+    const now = Date.parse("2026-07-01T00:00:00Z");
+    const fresh = decayedRank(-10, "2026-07-01T00:00:00Z", now);
+    const halfLife = decayedRank(-10, "2026-04-02T00:00:00Z", now); // ~90 days old
+    const unknown = decayedRank(-10, null, now);
+    expect(fresh).toBeCloseTo(-10);
+    expect(halfLife).toBeCloseTo(-5, 0);
+    expect(fresh).toBeLessThan(halfLife); // fresher = more negative = ranked first
+    expect(halfLife).toBeLessThan(unknown); // unknown activity ranks worst
+  });
+
+  test("relevantThreads prefers a recent thread over an old one at similar text relevance (#52)", () => {
+    // OLD matches slightly more densely, but its last activity is half a year before
+    // NEW's. Recency decay must flip the order for the injection use case.
+    writeSession(env.projects, "-repo", "OLD", [
+      userMsg("OLD", "u1", "the limiter limiter design", { timestamp: ts(0) }),
+    ]);
+    const halfYear = 180 * 86_400;
+    writeSession(env.projects, "-repo", "NEW", [
+      userMsg("NEW", "u2", "notes about the limiter approach", { timestamp: ts(halfYear) }),
+    ]);
+    runIndex(db);
+    const now = Date.parse(ts(halfYear));
+    const hits = relevantThreads(db, "limiter", 2, now);
+    expect(hits.map((h) => h.id)).toEqual(["NEW", "OLD"]);
   });
 
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {

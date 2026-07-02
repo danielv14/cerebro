@@ -197,9 +197,29 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
+// Recency weighting for `relevant`. bm25 is negative (lower = more relevant);
+// multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0,
+// ranking it worse, so an equal text match prefers the recent thread. Half-life 90
+// days; a thread with no known activity timestamp is treated as a year old.
+// `search` and `digest search` stay pure bm25 on purpose: an explicit search should
+// be deterministic text relevance, the per-prompt injection should favor fresh work.
+const RELEVANCE_HALF_LIFE_DAYS = 90;
+const UNKNOWN_AGE_DAYS = 365;
+export const decayedRank = (bm25: number, lastTs: string | null, nowMs: number): number => {
+  const parsed = lastTs ? Date.parse(lastTs) : Number.NaN;
+  const ageDays = Number.isFinite(parsed)
+    ? Math.max(0, (nowMs - parsed) / 86_400_000)
+    : UNKNOWN_AGE_DAYS;
+  return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS);
+};
+
 export interface SummaryRootHit {
   root: string;
   snippet: string;
+  // bm25 of the summary match plus the thread's latest activity, so `relevant` can
+  // recency-weight the tier. `digest search` ignores both.
+  score: number;
+  last_ts: string | null;
 }
 
 // The curated-summary FTS search, ranked by bm25, for an already-tokenized MATCH
@@ -218,7 +238,10 @@ export const searchSummaryRoots = (
   db
     .query(
       `SELECT s.root_session_id AS root,
-              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet
+              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
+              bm25(summaries_fts) AS score,
+              (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
+                AS last_ts
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
        WHERE summaries_fts MATCH ?
@@ -256,9 +279,17 @@ export interface RelevantThread {
 // matches for threads that have no summary yet (so the hook keeps working during
 // backfill and for un-summarized recent sessions). bm25 scores are not comparable
 // across the two FTS indexes, so we rank within each and prefer the summary tier
-// wholesale rather than merging scores. Each thread is enriched with title +
-// opening prompt so it is recognizable in injected context.
-export const relevantThreads = (db: Database, prompt: string, limit = 3): RelevantThread[] => {
+// wholesale rather than merging scores. Within each tier the bm25 score is
+// recency-decayed (decayedRank): the injection hook asks "what recent work relates
+// to this prompt", so a two-year-old thread must not outrank last week's on an
+// equal text match. Each thread is enriched with title + opening prompt so it is
+// recognizable in injected context. `now` is injectable for tests.
+export const relevantThreads = (
+  db: Database,
+  prompt: string,
+  limit = 3,
+  now = Date.now(),
+): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
 
@@ -266,9 +297,11 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
   // summary tier always outranks the raw tier for the same thread.
   const chosen = new Map<string, { snippet: string; fromSummary: boolean }>();
 
-  // Tier 1: curated summaries, ranked by bm25.
+  // Tier 1: curated summaries. Over-fetch by bm25, then re-rank with recency decay.
   try {
-    const summaryHits = searchSummaryRoots(db, match, limit, 10);
+    const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10)
+      .map((hit) => ({ ...hit, rank: decayedRank(hit.score, hit.last_ts, now) }))
+      .sort((a, b) => a.rank - b.rank);
     for (const hit of summaryHits) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
@@ -283,6 +316,7 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
       root: string | null;
       snippet: string;
       score: number;
+      last_ts: string | null;
     }
     let hits: Hit[] = [];
     try {
@@ -290,7 +324,9 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
         .query(
           `SELECT s.root_session_id AS root,
                   snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
-                  bm25(messages_fts) AS score
+                  bm25(messages_fts) AS score,
+                  (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
+                    AS last_ts
            FROM messages_fts
            JOIN messages m ON m.id = messages_fts.rowid
            JOIN sessions s ON s.session_id = m.session_id
@@ -303,14 +339,15 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
       hits = [];
     }
 
-    // Best (lowest bm25) raw hit per thread root, then fill remaining slots.
-    const byRoot = new Map<string, Hit>();
+    // Best (lowest decayed rank) raw hit per thread root, then fill remaining slots.
+    const byRoot = new Map<string, Hit & { rank: number }>();
     for (const hit of hits) {
       if (!hit.root) continue;
+      const ranked = { ...hit, rank: decayedRank(hit.score, hit.last_ts, now) };
       const existing = byRoot.get(hit.root);
-      if (!existing || hit.score < existing.score) byRoot.set(hit.root, hit);
+      if (!existing || ranked.rank < existing.rank) byRoot.set(hit.root, ranked);
     }
-    for (const hit of [...byRoot.values()].sort((a, b) => a.score - b.score)) {
+    for (const hit of [...byRoot.values()].sort((a, b) => a.rank - b.rank)) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root!)) {
         chosen.set(hit.root!, { snippet: hit.snippet, fromSummary: false });

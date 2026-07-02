@@ -189,9 +189,11 @@ runs the same script works just as well on Linux.
 ### Relevant past threads per prompt
 
 `cerebro recent` lists recent threads for a repo and `cerebro relevant <prompt>`
-returns the threads most relevant to a prompt (FTS, bm25). `relevant` matches the
-curated summaries first (high signal) and falls back to raw-transcript bm25 for
-threads not yet summarized; a snippet labelled `summary:` came from the summary,
+returns the threads most relevant to a prompt (FTS, bm25, recency-decayed: within
+each tier the bm25 score decays with the thread's age at a 90-day half-life, so an
+equal text match prefers recent work; plain `search` stays pure bm25). `relevant`
+matches the curated summaries first (high signal) and falls back to raw-transcript
+bm25 for threads not yet summarized; a snippet labelled `summary:` came from the summary,
 `match:` from the transcript. Both surface compact, recognizable breadcrumbs (id,
 date, title, the opening prompt, and for `relevant` a matching snippet), index-first
 so the model pulls detail on demand with `show` / `search`. `--context` emits an
