@@ -353,6 +353,17 @@ export const noSummaryHint = (sessionId: string): string =>
 export const summarySaved = (root: string, chars: number): string =>
   `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
+// `backup`: where the snapshot landed, its size, and anything pruned.
+export const backupReport = (result: {
+  path: string;
+  bytes: number;
+  pruned: string[];
+}): string[] => {
+  const lines = [`Backup written: ${result.path} (${humanBytes(result.bytes)})`];
+  for (const pruned of result.pruned) lines.push(`Pruned old backup: ${pruned}`);
+  return lines;
+};
+
 // `index`: the one-line result of a real run.
 export const indexResult = (result: IndexResult): string[] => [
   `Indexed ${result.newMessages} new message(s) ` +

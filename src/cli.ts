@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as v from "valibot";
+import { runBackup } from "./backup.ts";
 import { openDb } from "./db.ts";
 import {
   buildDigestInput,
@@ -27,6 +28,7 @@ import {
   stats,
 } from "./query.ts";
 import {
+  backupReport,
   digestShow,
   dryRunReport,
   indexResult,
@@ -61,6 +63,9 @@ Usage:
                                          Show a thread (outline, full transcript, or
                                          a verbatim slice in outline numbering)
   cerebro stats                          Archive counts
+  cerebro backup [--to <path>] [--keep N]
+                                         Snapshot the database (VACUUM INTO); default
+                                         target <db-dir>/backups/archive-<ts>.sqlite
   cerebro digest <action>                Curated session summaries (see below)
 
 Digest actions:
@@ -89,6 +94,8 @@ Options:
   --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
   --all           search: every matching message instead of the best hit per thread
   --range <a..b>  show: only messages a through b (the outline / search #N numbering)
+  --to <path>     backup: explicit target file (default: timestamped in backups/)
+  --keep <n>      backup: prune oldest default-named backups beyond n
   --cwd <path>    recent: directory to scope by (default: current dir)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
@@ -206,6 +213,8 @@ export const runCli = (
           model: { type: "string" },
           bytes: { type: "string" },
           range: { type: "string" },
+          to: { type: "string" },
+          keep: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -509,6 +518,21 @@ export const runCli = (
 
       case "stats": {
         for (const line of statsReport(stats(db))) io.log(line);
+        break;
+      }
+
+      case "backup": {
+        let keep: number | undefined;
+        if (values.keep !== undefined) {
+          keep = Number(values.keep);
+          if (!Number.isInteger(keep) || keep < 1) {
+            fail(`--keep must be a positive integer (got "${values.keep}")`);
+            break;
+          }
+        }
+        for (const line of backupReport(runBackup(db, dbPath, { to: values.to, keep }))) {
+          io.log(line);
+        }
         break;
       }
 

@@ -39,6 +39,7 @@ cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
 cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
+cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
 ```
 
@@ -55,6 +56,17 @@ The database lives outside this repo on purpose: it is derived, machine-local da
 that grows large (tens of MB) and holds verbatim private conversations. `*.sqlite`
 is gitignored regardless. Keeping it next to the Claude data it indexes (the
 default) keeps the repo pure source.
+
+### Backups
+
+For sessions whose source files Claude Code has already deleted, the archive is the
+only copy, so back it up. `cerebro backup` snapshots the database with `VACUUM INTO`
+(safe against a concurrently-writing WAL database, produces a compact standalone
+file) into `<db-dir>/backups/archive-<timestamp>.sqlite`; `--to <path>` picks an
+explicit target, and `--keep N` prunes the oldest default-named backups beyond N.
+A natural place to hang it is the scheduled digest batch, e.g. append
+`~/.claude/cerebro/cerebro backup --keep 8` to `digest-stale-batch.sh`'s schedule
+or run it from the same launchd/cron entry.
 
 ## Hooks (auto-index + context injection)
 
