@@ -377,13 +377,31 @@ export const rebuildResult = (result: IndexResult): string[] => [
     `(${result.filesIndexed}/${result.filesScanned} files read; messages from deleted sources kept).`,
 ];
 
-// `stats`: the archive counts, labels left-aligned to a shared column.
-export const statsReport = (s: Stats): string[] => [
-  `Threads:          ${s.threads}`,
-  `Sessions:         ${s.sessions}`,
-  `Messages:         ${s.messages}`,
-  `Deleted sources:  ${s.deletedSources}`,
-];
+// `stats`: the archive counts, labels left-aligned to a shared column. `extras`
+// carries what the query layer cannot know: the database file size (measured on
+// the path by cli.ts; null for :memory: or a missing file) and the stale-thread
+// count (owned by the digest layer, since it depends on the prompt version).
+export const statsReport = (
+  s: Stats,
+  extras: { dbBytes: number | null; staleThreads: number } = { dbBytes: null, staleThreads: 0 },
+): string[] => {
+  const lines = [
+    `Threads:          ${s.threads} (${s.summarizedThreads} summarized, ${extras.staleThreads} stale)`,
+    `Sessions:         ${s.sessions}`,
+    `Messages:         ${s.messages}`,
+    `Deleted sources:  ${s.deletedSources}`,
+    `Span:             ${shortDate(s.firstTs)} .. ${shortDate(s.lastTs)}`,
+  ];
+  if (extras.dbBytes !== null) lines.push(`Database size:    ${humanBytes(extras.dbBytes)}`);
+  if (s.topProjects.length > 0) {
+    lines.push(
+      `Top projects:     ${s.topProjects
+        .map((p) => `${projectName(p.project_path)} (${p.threads})`)
+        .join(", ")}`,
+    );
+  }
+  return lines;
+};
 
 // `index --dry-run`: what a real run would do, writing nothing. Three shapes: a
 // --full re-read, an up-to-date archive with nothing to do, or a normal incremental

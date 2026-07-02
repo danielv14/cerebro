@@ -396,10 +396,21 @@ export interface Stats {
   sessions: number;
   messages: number;
   deletedSources: number;
+  // Oldest and newest message timestamps: how far back the archive reaches.
+  firstTs: string | null;
+  lastTs: string | null;
+  // Digest coverage: summaries are tier 1 of `relevant`, so this is recall quality.
+  summarizedThreads: number;
+  // Threads per project, largest first (top 5).
+  topProjects: { project_path: string; threads: number }[];
 }
 
 export const stats = (db: Database): Stats => {
   const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
+  const span = db.query("SELECT MIN(ts) AS mn, MAX(ts) AS mx FROM messages").get() as {
+    mn: string | null;
+    mx: string | null;
+  };
   return {
     threads: countThreads(db),
     sessions: one("SELECT COUNT(*) AS c FROM sessions"),
@@ -410,5 +421,15 @@ export const stats = (db: Database): Stats => {
     deletedSources: one(
       "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
     ),
+    firstTs: span.mn,
+    lastTs: span.mx,
+    summarizedThreads: one("SELECT COUNT(*) AS c FROM summaries"),
+    topProjects: db
+      .query(
+        `SELECT project_path, COUNT(*) AS threads FROM threads
+         WHERE project_path IS NOT NULL
+         GROUP BY project_path ORDER BY threads DESC, project_path LIMIT 5`,
+      )
+      .all() as { project_path: string; threads: number }[],
   };
 };

@@ -147,14 +147,17 @@ I'll start by finding the settings page and the theme provider.
 ```
 
 ### `cerebro stats`
-Antal trådar / sessioner / meddelanden / raderade källor.
+Arkivets nyckeltal: trådar (med summerings-täckning och stale-antal), sessioner, meddelanden, raderade källor, tidsspann, databasstorlek och toppprojekt.
 
 ```
 $ cerebro stats
-Threads:          196
+Threads:          196 (184 summarized, 12 stale)
 Sessions:         210
 Messages:         24817
 Deleted sources:  12
+Span:             2025-11-02 .. 2026-07-01
+Database size:    48.2 MB
+Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
 
 ### `cerebro digest <action>`

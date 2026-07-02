@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as v from "valibot";
 import { runBackup } from "./backup.ts";
@@ -517,7 +517,19 @@ export const runCli = (
       }
 
       case "stats": {
-        for (const line of statsReport(stats(db))) io.log(line);
+        // The file size lives outside the query layer (and is meaningless for the
+        // in-memory databases tests use); the stale count is the digest layer's,
+        // since staleness depends on DIGEST_PROMPT_VERSION.
+        let dbBytes: number | null = null;
+        try {
+          dbBytes = statSync(dbPath).size;
+        } catch {
+          dbBytes = null;
+        }
+        const stale = staleThreads(db, Number.MAX_SAFE_INTEGER).length;
+        for (const line of statsReport(stats(db), { dbBytes, staleThreads: stale })) {
+          io.log(line);
+        }
         break;
       }
 
