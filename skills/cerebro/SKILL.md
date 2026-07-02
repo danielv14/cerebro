@@ -18,14 +18,14 @@ Dränk inte kontextfönstret. Följ den här trappan:
 1. **`cerebro index`** först om sökningen gäller nyligt arbete (indexet är inkrementellt och snabbt; sessioner som är öppna just nu kanske inte är fullständigt skrivna än).
 2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevans-rankat mot en prompt) eller **`cerebro sessions`** / **`cerebro recent`** för att hitta rätt tråd. Ger bara id + tidsstämpel + projekt + snippet.
 3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
-4. **`cerebro show <id> --full`** först när du behöver det ordagranna transkriptet. Hämta inte `--full` i onödan; trådar kan vara tusentals meddelanden.
+4. **`cerebro show <id> --range A..B`** för att läsa en ordagrann skiva runt en träff (`search` visar varje träffs `#N`-position). **`--full`** först när du behöver hela transkriptet; hämta det inte i onödan, trådar kan vara tusentals meddelanden.
 
-Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel.
+Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel. Läskommandona (`search`, `sessions`, `recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) tar `--json` när du vill ha raderna som JSON i stället för den människoläsbara listan (tomt resultat ger `[]`, aldrig prosa).
 
 ## Kommandon
 
-### `cerebro index [--full] [--dry-run]`
-Indexerar inkrementellt sedan förra körningen. Varje fil har en byte-cursor: oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Du behöver alltså **inte** köra `--full` i vardagen, bara `cerebro index`. `--full` nollar cursorerna och läser om allt (säkert tack vare dedup på meddelande-UUID, men långsammare och netto 0 nya på ett aktuellt arkiv). `--dry-run` rapporterar vad som skulle indexeras utan att skriva något.
+### `cerebro index [--full] [--rebuild] [--dry-run]`
+Indexerar inkrementellt sedan förra körningen. Varje fil har en byte-cursor: oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Du behöver alltså **inte** köra `--full` i vardagen, bara `cerebro index`. `--full` nollar cursorerna och läser om allt (säkert tack vare dedup på meddelande-UUID, men långsammare och netto 0 nya på ett aktuellt arkiv; lagrad text rörs aldrig). `--rebuild` gör som `--full` men skriver dessutom om den lagrade texten för varje meddelande vars källfil finns kvar på disk (behövs efter en ändring i flattening-logiken); meddelanden vars källfil raderats behålls orörda. `--dry-run` rapporterar vad som skulle indexeras utan att skriva något.
 
 ```
 $ cerebro index
@@ -50,17 +50,17 @@ Dry run (--full): would re-read all 210 file(s).
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
 ```
 
-### `cerebro search <query> [--limit N]`
-Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20.
+### `cerebro search <query> [--limit N] [--project P] [--since D] [--all]`
+Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20. Som standard visas **bästa träffen per tråd** (så att en pratig tråd inte fyller alla platser); `--all` ger varje matchande meddelande. `--project P` filtrerar på substring i projektsökvägen, `--since 2026-01-31` på tidsstämpel.
 
 ```
 $ cerebro search "rate limiter" --limit 2
-5e6f7a8b  2026-02-10 09:14  assistant  api-server
-    … added a token-bucket [rate] [limiter] to the auth middleware, 100 req/min per …
-5e6f7a8b  2026-02-10 09:31  user       api-server
-    … the [rate] [limiter] should return 429 with a Retry-After header when the …
+5e6f7a8b  2026-02-10 09:31  user       api-server  Fix flaky auth test
+    #14  … the [rate] [limiter] should return 429 with a Retry-After header when the …
+9c0d1e2f  2026-02-08 14:02  assistant  web-shop  Refactor checkout flow
+    #52  … checkout calls the [rate] [limiter] middleware before the payment step …
 
-2 hit(s). Open one with: cerebro show <id>
+2 hit(s), best per thread (--all for every message). Open one with: cerebro show <id> (jump to a hit: --range <n>)
 ```
 
 ### `cerebro sessions [--project P] [--limit N]`
@@ -101,7 +101,7 @@ Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
 ```
 
 ### `cerebro relevant <prompt> [--limit N]`
-Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
+Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Rankingen är recency-viktad: bm25-poängen decayas med trådens ålder (halveringstid 90 dagar), så vid likvärdig textmatch vinner det färska arbetet (`search` är ren bm25). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
 
 ```
 $ cerebro relevant "how did we set up CI"
@@ -115,8 +115,8 @@ To recall one: cerebro show <id> (add --full for the transcript), or cerebro sea
 
 `recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
 
-### `cerebro show <session-id> [--full]`
-Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. Subagent-turer taggas `[subagent]`.
+### `cerebro show <session-id> [--full] [--range A..B]`
+Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. `--range 12..18` (eller ett ensamt tal) ger en ordagrann skiva med samma numrering som outlinen och som `#N`-markörerna i `search`-träffar, så du kan hoppa rakt till en träff i en jättetråd utan att dra hela transkriptet. Subagent-turer taggas `[subagent]`.
 
 Outline:
 ```
@@ -147,14 +147,25 @@ I'll start by finding the settings page and the theme provider.
 ```
 
 ### `cerebro stats`
-Antal trådar / sessioner / meddelanden / raderade källor.
+Arkivets nyckeltal: trådar (med summerings-täckning och stale-antal), sessioner, meddelanden, raderade källor, tidsspann, databasstorlek och toppprojekt.
 
 ```
 $ cerebro stats
-Threads:          196
+Threads:          196 (184 summarized, 12 stale)
 Sessions:         210
 Messages:         24817
 Deleted sources:  12
+Span:             2025-11-02 .. 2026-07-01
+Database size:    48.2 MB
+Top projects:     my-app (58), api-server (33), web-shop (21)
+```
+
+### `cerebro backup [--to <path>] [--keep N]` och `cerebro maintain`
+Underhåll av arkivet. `backup` tar en konsistent snapshot av databasen (`VACUUM INTO`) till `<db-katalog>/backups/archive-<tidsstämpel>.sqlite`; `--to <path>` väljer explicit mål, `--keep N` rensar de äldsta default-namngivna backuperna utöver N. `maintain` optimerar FTS-indexen, uppdaterar query-plannerns statistik och trunkerar WAL-filen (den schemalagda digest-batchen kör den automatiskt). Du behöver sällan köra dessa själv, men de finns om användaren ber om backup eller om arkivet känns segt.
+
+```
+$ cerebro backup --keep 8
+Backup written: /Users/you/.claude/cerebro/backups/archive-20260702-121530.sqlite (48.1 MB)
 ```
 
 ### `cerebro digest <action>`
@@ -200,9 +211,9 @@ Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
 
 **Att producera en sammanfattning.** Modellsteget bor utanför binären. Två vägar:
 - En hook eller skill pipear transkriptet genom `claude -p`: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
-- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den).
+- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den). `digest write` vägrar lagra text som inte kan vara en summering (för kort, eller något som ser ut som ett felmeddelande i stil med "Prompt is too long"/"API Error") och avslutar då med exit 1 — tråden förblir stale så att reconcilern försöker igen.
 
-Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: det renderar samma transkript men storleksbegränsat så att det får plats i ett enda modellkontext. Korta trådar kommer ut ordagrant; en jättetråd kapas (water-fill: korta meddelanden behålls helt, de längsta essäerna trimmas först) så att inte ens ett 1M-kontext spräcks. cerebro äger modellvalet: `cerebro digest model <id>` väljer modell efter transkriptets storlek, och clear-hooken frågar den i stället för att hårdkoda tröskeln. Små trådar → `claude-haiku-4-5` (billigast, vanligaste fallet), överstora → `claude-sonnet-4-6[1m]` i ett skott (1M-kontext, platt pris, ingen long-context-premie), så att en tråd på 400-600k tokens summeras hel istället för trunkerad. `[1m]`-suffixet krävs: det är så Claude Code väljer 1M-varianten; utan det får `claude -p` default-fönstret 200k och en jättetråd failar fortfarande med "Prompt is too long". Tröskel och modellnamn kan overridas via `CEREBRO_DIGEST_MODEL`, `CEREBRO_DIGEST_MODEL_LARGE` och `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
+Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: det renderar samma transkript men storleksbegränsat så att det får plats i ett enda modellkontext. Korta trådar kommer ut ordagrant; en jättetråd kapas (water-fill: korta meddelanden behålls helt, de längsta essäerna trimmas först) så att inte ens ett 1M-kontext spräcks. cerebro äger modellvalet: `cerebro digest model <id>` väljer modell efter transkriptets storlek (hookarna använder `digest model --bytes <n>` med storleken på den redan renderade `digest input`-filen, så transkriptet inte renderas två gånger), och clear-hooken frågar den i stället för att hårdkoda tröskeln. Små trådar → `claude-haiku-4-5` (billigast, vanligaste fallet), överstora → `claude-sonnet-4-6[1m]` i ett skott (1M-kontext, platt pris, ingen long-context-premie), så att en tråd på 400-600k tokens summeras hel istället för trunkerad. `[1m]`-suffixet krävs: det är så Claude Code väljer 1M-varianten; utan det får `claude -p` default-fönstret 200k och en jättetråd failar fortfarande med "Prompt is too long". Tröskel och modellnamn kan overridas via `CEREBRO_DIGEST_MODEL`, `CEREBRO_DIGEST_MODEL_LARGE` och `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
 
 `cerebro digest stale` är reconcilern: kör den då och då (eller schemalagt) så fångas allt osummerat eller inaktuellt. En tråd blir inaktuell igen när den får nya meddelanden eller när prompt-versionen (`DIGEST_PROMPT_VERSION`) höjs. `--ids` ger ett maskinläsbart läge (ett fullt tråd-id per rad, ingen formatering) som skript och hooks kan loopa över utan att skrapa den människoläsbara listan; tom output betyder att inget är stale.
 
@@ -210,7 +221,7 @@ Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: 
 
 - **`cerebro index` är allt du behöver i vardagen.** Den är inkrementell: varje fil har en byte-cursor (`index_state`) med hur långt vi läst plus filens mtime. Oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Att köra om är billigt.
 - **Kör `index` innan du söker i färskt arbete.** Den aktiva sessionen skrivs löpande till disk och fångas vid nästa indexering.
-- **`--full` behövs nästan aldrig.** Den nollar cursorerna och läser om allt från början. Dedup på meddelande-UUID gör det ofarligt (netto 0 nya på ett aktuellt arkiv), men det är långsammare. Använd bara vid misstänkt trasigt index eller efter en schema-ändring.
+- **`--full` behövs nästan aldrig.** Den nollar cursorerna och läser om allt från början. Dedup på meddelande-UUID gör det ofarligt (netto 0 nya på ett aktuellt arkiv), men det är långsammare. Använd bara vid misstänkt trasig cursor-state. Efter en ändring i hur meddelanden plattas till text är det `--rebuild` som gäller: den uppdaterar även lagrad text (för filer som finns kvar på disk).
 - **`--dry-run` skriver ingenting**, rapporterar bara vad en körning skulle göra (nya meddelanden, bytes, filuppdelning). Bra för att inspektera innan en stor `--full`.
 - **Dedup på UUID, inte fil eller session-id.** Samma meddelande som dyker upp i flera filer (resumes, subagent-ekon) lagras en gång. Därför ger `--full` aldrig dubbletter.
 

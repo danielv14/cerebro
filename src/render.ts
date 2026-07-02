@@ -165,16 +165,27 @@ export const relevantFooter = (): string =>
 // calls one of these, and emits the result line by line. Empty-state and exit
 // decisions stay in cli.ts; these assume there is something to render.
 
-// `search`: one header + one snippet line per hit, then the count footer.
-export const searchListing = (hits: SearchHit[]): string[] => {
+// `search`: one header + one snippet line per hit, then the count footer. The
+// thread title (when there is one) trails the header line, truncated at 60, so a
+// hit is recognizable without opening it. The default (deduplicated) mode says so
+// in the footer and points at --all; `all` restores the plain per-message footer.
+export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): string[] => {
   const lines: string[] = [];
   for (const hit of hits) {
+    const title = hit.title ? `  ${oneLine(hit.title, 60)}` : "";
     lines.push(
-      `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}`,
+      `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}${title}`,
     );
-    lines.push(`    ${oneLine(hit.snippet, 160)}`);
+    // The ordinal is the message's position in show's numbering, so the hit can be
+    // opened in place with show <id> --range.
+    lines.push(`    #${hit.ordinal}  ${oneLine(hit.snippet, 160)}`);
   }
-  lines.push(`\n${hits.length} hit(s). Open one with: cerebro show <id>`);
+  lines.push(
+    opts.all
+      ? `\n${hits.length} hit(s). Open one with: cerebro show <id> (jump to a hit: --range <n>)`
+      : `\n${hits.length} hit(s), best per thread (--all for every message). ` +
+          "Open one with: cerebro show <id> (jump to a hit: --range <n>)",
+  );
   return lines;
 };
 
@@ -258,6 +269,27 @@ export const showFull = (sessionId: string, messages: ThreadMessage[]): string[]
   return lines;
 };
 
+// `show --range A..B`: a verbatim slice of the thread, numbered with the same
+// ordinals as the outline (and as search's #N markers), so a search hit can be
+// opened in place without pulling the whole transcript.
+export const showRange = (
+  sessionId: string,
+  slice: ThreadMessage[],
+  opts: { from: number; total: number },
+): string[] => {
+  const to = opts.from + slice.length - 1;
+  const lines: string[] = [
+    `Thread ${shortId(sessionId)}  showing ${opts.from}..${to} of ${opts.total} message(s)\n`,
+  ];
+  slice.forEach((message, i) => {
+    const tag = message.is_sidechain ? " · subagent" : "";
+    lines.push(`──── #${opts.from + i} ${message.role}${tag} · ${shortTime(message.ts)} ────`);
+    lines.push(message.text);
+    lines.push("");
+  });
+  return lines;
+};
+
 // `digest stale` (human): one row per stale thread with the staleness reason, the
 // title on its own line, then the how-to-summarize footer. `promptVersion` is passed
 // in so this stays free of the digest module.
@@ -321,19 +353,55 @@ export const noSummaryHint = (sessionId: string): string =>
 export const summarySaved = (root: string, chars: number): string =>
   `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
+// `backup`: where the snapshot landed, its size, and anything pruned.
+export const backupReport = (result: {
+  path: string;
+  bytes: number;
+  pruned: string[];
+}): string[] => {
+  const lines = [`Backup written: ${result.path} (${humanBytes(result.bytes)})`];
+  for (const pruned of result.pruned) lines.push(`Pruned old backup: ${pruned}`);
+  return lines;
+};
+
 // `index`: the one-line result of a real run.
 export const indexResult = (result: IndexResult): string[] => [
   `Indexed ${result.newMessages} new message(s) ` +
     `(${result.filesIndexed}/${result.filesScanned} files touched).`,
 ];
 
-// `stats`: the archive counts, labels left-aligned to a shared column.
-export const statsReport = (s: Stats): string[] => [
-  `Threads:          ${s.threads}`,
-  `Sessions:         ${s.sessions}`,
-  `Messages:         ${s.messages}`,
-  `Deleted sources:  ${s.deletedSources}`,
+// `index --rebuild`: like indexResult but states what a rebuild actually did:
+// texts of on-disk messages were re-flattened in place, deleted sources kept.
+export const rebuildResult = (result: IndexResult): string[] => [
+  `Rebuilt from disk: ${result.newMessages} net-new message(s), stored texts re-flattened ` +
+    `(${result.filesIndexed}/${result.filesScanned} files read; messages from deleted sources kept).`,
 ];
+
+// `stats`: the archive counts, labels left-aligned to a shared column. `extras`
+// carries what the query layer cannot know: the database file size (measured on
+// the path by cli.ts; null for :memory: or a missing file) and the stale-thread
+// count (owned by the digest layer, since it depends on the prompt version).
+export const statsReport = (
+  s: Stats,
+  extras: { dbBytes: number | null; staleThreads: number } = { dbBytes: null, staleThreads: 0 },
+): string[] => {
+  const lines = [
+    `Threads:          ${s.threads} (${s.summarizedThreads} summarized, ${extras.staleThreads} stale)`,
+    `Sessions:         ${s.sessions}`,
+    `Messages:         ${s.messages}`,
+    `Deleted sources:  ${s.deletedSources}`,
+    `Span:             ${shortDate(s.firstTs)} .. ${shortDate(s.lastTs)}`,
+  ];
+  if (extras.dbBytes !== null) lines.push(`Database size:    ${humanBytes(extras.dbBytes)}`);
+  if (s.topProjects.length > 0) {
+    lines.push(
+      `Top projects:     ${s.topProjects
+        .map((p) => `${projectName(p.project_path)} (${p.threads})`)
+        .join(", ")}`,
+    );
+  }
+  return lines;
+};
 
 // `index --dry-run`: what a real run would do, writing nothing. Three shapes: a
 // --full re-read, an up-to-date archive with nothing to do, or a normal incremental

@@ -1,15 +1,18 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as v from "valibot";
+import { runBackup } from "./backup.ts";
 import { openDb } from "./db.ts";
 import {
   buildDigestInput,
+  countStaleThreads,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   getSummary,
   pickDigestModel,
+  rejectSummaryReason,
   searchSummaries,
   staleThreads,
   writeSummary,
@@ -26,16 +29,19 @@ import {
   stats,
 } from "./query.ts";
 import {
+  backupReport,
   digestShow,
   dryRunReport,
   indexResult,
   noSummaryHint,
+  rebuildResult,
   recentBlock,
   relevantBlock,
   searchListing,
   sessionsListing,
   showFull,
   showOutline,
+  showRange,
   staleIds,
   staleListing,
   statsReport,
@@ -47,20 +53,29 @@ import { threadMessages, threadOpeningPrompt } from "./thread.ts";
 const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
 
 Usage:
-  cerebro index [--full] [--dry-run]     Index all sessions incrementally
-  cerebro search <query> [--limit N]     Full-text search (ranked, snippet-first)
+  cerebro index [--full] [--rebuild] [--dry-run]   Index all sessions incrementally
+  cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+                                         Full-text search (ranked, best hit per thread;
+                                         --all for every matching message)
   cerebro sessions [--project P] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
   cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
-  cerebro show <session-id> [--full]     Show a thread (outline, or full transcript)
+  cerebro show <session-id> [--full] [--range A..B]
+                                         Show a thread (outline, full transcript, or
+                                         a verbatim slice in outline numbering)
   cerebro stats                          Archive counts
+  cerebro backup [--to <path>] [--keep N]
+                                         Snapshot the database (VACUUM INTO); default
+                                         target <db-dir>/backups/archive-<ts>.sqlite
+  cerebro maintain                       Optimize the FTS indexes, refresh planner
+                                         stats, and truncate the WAL
   cerebro digest <action>                Curated session summaries (see below)
 
 Digest actions:
   cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
   cerebro digest prompt                       Print the summarization prompt
   cerebro digest input <id>                   Print the size-bounded transcript to summarize
-  cerebro digest model <id>                   Print the model the size tiering would pick
+  cerebro digest model <id> | --bytes N       Print the model the size tiering would pick
   cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
@@ -71,16 +86,29 @@ Digest actions:
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
-  --full          index: ignore cursors and re-read everything; show: print full text
+  --full          index: ignore cursors and re-read everything (dedup skips known
+                  messages, so stored text is never touched); show: print full text
+  --rebuild       index: like --full, but also re-flatten the stored text of every
+                  message still on disk (needed after a flattening/parser change;
+                  messages whose source file is deleted are kept untouched)
   --dry-run       index: report what would be indexed, write nothing
   --limit <n>     Max rows to return
-  --project <p>   Filter sessions by project path substring
+  --project <p>   sessions/search: filter by project path substring
+  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
+  --all           search: every matching message instead of the best hit per thread
+  --range <a..b>  show: only messages a through b (the outline / search #N numbering)
+  --to <path>     backup: explicit target file (default: timestamped in backups/)
+  --keep <n>      backup: prune oldest default-named backups beyond n
   --cwd <path>    recent: directory to scope by (default: current dir)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
   --stdin         relevant: read the prompt from a hook's JSON payload on stdin
   --ids           digest stale: print one full session id per line (for scripts)
   --model <name>  digest write: record which model produced the summary
+  --bytes <n>     digest model: tier by an already-measured transcript byte count
+                  (skips re-rendering the transcript; used by the hooks)
+  --json          search/sessions/recent/relevant/show/stats/digest stale|search|show:
+                  emit the rows as JSON instead of the human listing
   -h, --help      Show this help
 
 Env:
@@ -166,6 +194,11 @@ export const runCli = (
     io.setExitCode(1);
   };
 
+  // --json: emit the typed rows as a JSON document instead of the human listing.
+  // A far more robust contract for agents and scripts than the pinned column
+  // widths; empty results emit an empty array/object rather than prose.
+  const emitJson = (payload: unknown): void => io.log(JSON.stringify(payload, null, 2));
+
   // parseArgs throws on unknown options; turn that into a clean message + exit 1
   // instead of a raw stack trace. The IIFE preserves parseArgs's inferred types.
   const parsed = (() => {
@@ -176,15 +209,23 @@ export const runCli = (
         options: {
           db: { type: "string" },
           full: { type: "boolean", default: false },
+          rebuild: { type: "boolean", default: false },
           "dry-run": { type: "boolean", default: false },
           limit: { type: "string" },
           project: { type: "string" },
           cwd: { type: "string" },
           days: { type: "string" },
+          since: { type: "string" },
+          all: { type: "boolean", default: false },
           context: { type: "boolean", default: false },
           stdin: { type: "boolean", default: false },
           ids: { type: "boolean", default: false },
           model: { type: "string" },
+          bytes: { type: "string" },
+          range: { type: "string" },
+          to: { type: "string" },
+          keep: { type: "string" },
+          json: { type: "boolean", default: false },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -213,13 +254,28 @@ export const runCli = (
   }
 
   const dbPath = values.db || defaultDbPath();
-  const db = makeDb(dbPath);
+  // Opening can fail (permissions, corrupt file, a lost migration race): report it
+  // like any other error instead of escaping runCli as an unhandled stack trace.
+  let db: Database;
+  try {
+    db = makeDb(dbPath);
+  } catch (error) {
+    fail(`could not open database at ${dbPath}: ${(error as Error).message}`);
+    return;
+  }
 
   try {
     switch (command) {
       case "index": {
         if (values["dry-run"]) {
-          for (const line of dryRunReport(dryRunIndex(db, values.full))) io.log(line);
+          // A rebuild reads exactly what --full reads; the dry run reports that plan.
+          for (const line of dryRunReport(dryRunIndex(db, values.full || values.rebuild))) {
+            io.log(line);
+          }
+          break;
+        }
+        if (values.rebuild) {
+          for (const line of rebuildResult(runIndex(db, false, true))) io.log(line);
           break;
         }
         for (const line of indexResult(runIndex(db, values.full))) io.log(line);
@@ -232,17 +288,45 @@ export const runCli = (
           fail("search: missing <query>");
           break;
         }
-        const hits = search(db, query, limit ?? 20);
+        // Anchored shape check plus a round-trip calendar check: an unanchored
+        // regex would let "2026-31-01" or trailing garbage through, and Date.parse
+        // alone is engine-dependent (JSC rolls "2026-02-30" over to March 2). A
+        // bad date would make the lexical ts comparison silently exclude
+        // everything instead of erroring.
+        if (values.since !== undefined) {
+          const parsed = Date.parse(`${values.since}T00:00:00Z`);
+          const roundTrips =
+            /^\d{4}-\d{2}-\d{2}$/.test(values.since) &&
+            !Number.isNaN(parsed) &&
+            new Date(parsed).toISOString().slice(0, 10) === values.since;
+          if (!roundTrips) {
+            fail(`--since must be a valid ISO date like 2026-01-31 (got "${values.since}")`);
+            break;
+          }
+        }
+        const hits = search(db, query, limit ?? 20, {
+          project: values.project,
+          since: values.since,
+          all: values.all,
+        });
+        if (values.json) {
+          emitJson(hits);
+          break;
+        }
         if (hits.length === 0) {
           io.log("No matches.");
           break;
         }
-        for (const line of searchListing(hits)) io.log(line);
+        for (const line of searchListing(hits, { all: values.all })) io.log(line);
         break;
       }
 
       case "sessions": {
         const threads = listThreads(db, { project: values.project, limit: limit ?? 30 });
+        if (values.json) {
+          emitJson(threads);
+          break;
+        }
         if (threads.length === 0) {
           io.log("No sessions indexed yet. Run: cerebro index");
           break;
@@ -261,6 +345,13 @@ export const runCli = (
         const since = new Date(Date.now() - days * 86_400_000).toISOString();
         const repoRoot = gitInfo(cwd).root;
         const threads = recentThreads(db, { repoRoot, cwd, since, limit: limit ?? 5 });
+
+        if (values.json) {
+          emitJson(
+            threads.map((thread) => ({ ...thread, opening: threadOpeningPrompt(db, thread.id) })),
+          );
+          break;
+        }
 
         if (threads.length === 0) {
           // Silent in --context mode so the SessionStart hook injects nothing.
@@ -306,6 +397,10 @@ export const runCli = (
           break;
         }
         const threads = relevantThreads(db, prompt, limit ?? 3);
+        if (values.json) {
+          emitJson(threads);
+          break;
+        }
         if (threads.length === 0) {
           // Silent in --context mode so the UserPromptSubmit hook injects nothing.
           if (!values.context) io.log("No related past sessions.");
@@ -319,6 +414,40 @@ export const runCli = (
         const sessionId = resolveOrFail(db, positionals[1], "show", fail);
         if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
+
+        // --range is resolved (and validated) BEFORE the output format is chosen,
+        // so `--range A..B --json` returns the requested slice as JSON instead of
+        // silently dumping the whole thread.
+        let slice = messages;
+        let from = 1;
+        if (values.range !== undefined) {
+          // --range A..B (or a single N): a verbatim slice in outline numbering,
+          // the jump target for search's #N ordinals.
+          const match = values.range.match(/^(\d+)(?:\.\.(\d+))?$/);
+          const start = match ? Number(match[1]) : 0;
+          const to = match?.[2] ? Number(match[2]) : start;
+          if (!match || start < 1 || to < start) {
+            fail(`--range must be N or A..B with 1 <= A <= B (got "${values.range}")`);
+            break;
+          }
+          if (start > messages.length) {
+            fail(`--range starts at ${start} but the thread has ${messages.length} message(s)`);
+            break;
+          }
+          from = start;
+          slice = messages.slice(start - 1, Math.min(to, messages.length));
+        }
+
+        if (values.json) {
+          emitJson({ id: sessionId, total: messages.length, from, messages: slice });
+          break;
+        }
+        if (values.range !== undefined) {
+          for (const line of showRange(sessionId, slice, { from, total: messages.length })) {
+            io.log(line);
+          }
+          break;
+        }
         const lines = values.full
           ? showFull(sessionId, messages)
           : showOutline(sessionId, messages);
@@ -343,6 +472,19 @@ export const runCli = (
           }
 
           case "model": {
+            // --bytes N tiers on an already-measured size: the hooks render the
+            // transcript once with `digest input`, `wc -c` it for logging anyway,
+            // and pass that here, so the transcript is not rendered a second time
+            // just to be measured.
+            if (values.bytes !== undefined) {
+              const bytes = Number(values.bytes);
+              if (!Number.isInteger(bytes) || bytes < 0) {
+                fail(`--bytes must be a non-negative integer (got "${values.bytes}")`);
+                break;
+              }
+              io.log(pickDigestModel(bytes));
+              break;
+            }
             const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);
             if (!sessionId) break;
             // The model the summarize hook would pick for this thread, by the byte
@@ -355,6 +497,10 @@ export const runCli = (
 
           case "stale": {
             const rows = staleThreads(db, limit ?? 50);
+            if (values.json) {
+              emitJson(rows);
+              break;
+            }
             // --ids: machine-readable mode for scripts (the digest-stale batch hook).
             // One full session id per line, nothing else (no header, titles, or help
             // footer), so a caller never has to scrape the human listing format. Empty
@@ -387,6 +533,13 @@ export const runCli = (
               fail("digest write: no summary text on stdin");
               break;
             }
+            // Refuse to store output that cannot be a summary (an error message, a
+            // fragment). The thread stays stale, so the reconciler retries it.
+            const reason = rejectSummaryReason(text);
+            if (reason) {
+              fail(`digest write: rejected: ${reason}`);
+              break;
+            }
             const root = writeSummary(db, sessionId, text, values.model ?? null);
             io.log(summarySaved(root, text.length));
             break;
@@ -399,6 +552,10 @@ export const runCli = (
               break;
             }
             const hits = searchSummaries(db, query, limit ?? 10);
+            if (values.json) {
+              emitJson(hits);
+              break;
+            }
             if (hits.length === 0) {
               io.log("No matching summaries.");
               break;
@@ -411,6 +568,10 @@ export const runCli = (
             const sessionId = resolveOrFail(db, positionals[2], "digest show", fail);
             if (!sessionId) break;
             const summary = getSummary(db, sessionId);
+            if (values.json) {
+              emitJson(summary);
+              break;
+            }
             if (!summary) {
               io.log(noSummaryHint(sessionId));
               break;
@@ -429,7 +590,51 @@ export const runCli = (
       }
 
       case "stats": {
-        for (const line of statsReport(stats(db))) io.log(line);
+        // The file size lives outside the query layer (and is meaningless for the
+        // in-memory databases tests use); the stale count is the digest layer's,
+        // since staleness depends on DIGEST_PROMPT_VERSION.
+        let dbBytes: number | null = null;
+        try {
+          dbBytes = statSync(dbPath).size;
+        } catch {
+          dbBytes = null;
+        }
+        const stale = countStaleThreads(db);
+        if (values.json) {
+          emitJson({ ...stats(db), dbBytes, staleThreads: stale });
+          break;
+        }
+        for (const line of statsReport(stats(db), { dbBytes, staleThreads: stale })) {
+          io.log(line);
+        }
+        break;
+      }
+
+      case "maintain": {
+        // Periodic housekeeping: the FTS indexes are fed by thousands of tiny
+        // incremental transactions and fragment over time; 'optimize' merges their
+        // b-trees. PRAGMA optimize refreshes the query planner's stats, and the
+        // truncating checkpoint folds the WAL back into the main file.
+        db.run("INSERT INTO messages_fts(messages_fts) VALUES('optimize')");
+        db.run("INSERT INTO summaries_fts(summaries_fts) VALUES('optimize')");
+        db.run("PRAGMA optimize");
+        db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+        io.log("Maintenance done: FTS indexes optimized, planner stats refreshed, WAL truncated.");
+        break;
+      }
+
+      case "backup": {
+        let keep: number | undefined;
+        if (values.keep !== undefined) {
+          keep = Number(values.keep);
+          if (!Number.isInteger(keep) || keep < 1) {
+            fail(`--keep must be a positive integer (got "${values.keep}")`);
+            break;
+          }
+        }
+        for (const line of backupReport(runBackup(db, dbPath, { to: values.to, keep }))) {
+          io.log(line);
+        }
         break;
       }
 

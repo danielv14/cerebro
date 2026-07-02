@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import {
   buildDigestInput,
+  countStaleThreads,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   digestModelConfig,
   getSummary,
   pickDigestModel,
+  rejectSummaryReason,
   searchSummaries,
   staleThreads,
   writeSummary,
@@ -35,6 +37,40 @@ describe("DIGEST_PROMPT", () => {
   test("instructs a deterministic marker for empty/non-substantive sessions", () => {
     expect(DIGEST_PROMPT).toContain("(No substantive session content.)");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("do not ask for a transcript");
+  });
+});
+
+describe("rejectSummaryReason (digest write guard)", () => {
+  test("accepts a normal summary", () => {
+    expect(
+      rejectSummaryReason("Fixed the auth middleware in api-server. Keywords: auth, middleware"),
+    ).toBeNull();
+  });
+
+  test("accepts the mandated empty-session form", () => {
+    expect(rejectSummaryReason("(No substantive session content.)\nKeywords: (none)")).toBeNull();
+  });
+
+  test("rejects fragments below the minimum length", () => {
+    expect(rejectSummaryReason("ok")).toMatch(/too short/);
+  });
+
+  test("rejects known failure output regardless of exit-code guards upstream", () => {
+    expect(rejectSummaryReason("Prompt is too long for the selected model")).toMatch(
+      /error message/,
+    );
+    expect(rejectSummaryReason("API Error: 429 rate_limit_error something")).toMatch(
+      /error message/,
+    );
+    expect(rejectSummaryReason("Error: something broke in the CLI runner")).toMatch(
+      /error message/,
+    );
+  });
+
+  test("does not reject a summary that merely mentions an error mid-text", () => {
+    expect(
+      rejectSummaryReason("Debugged an API error in checkout; the fix was a retry. Keywords: api"),
+    ).toBeNull();
   });
 });
 
@@ -312,6 +348,16 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db);
     expect(getSummary(db, "S")).toBeNull();
+  });
+
+  test("countStaleThreads matches the unbounded stale listing", () => {
+    writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "one", { timestamp: ts(0) })]);
+    writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "two", { timestamp: ts(1) })]);
+    runIndex(db);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
+    writeSummary(db, "A", "Summary of A with enough length. Keywords: a");
+    expect(countStaleThreads(db)).toBe(1);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
   });
 
   test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {

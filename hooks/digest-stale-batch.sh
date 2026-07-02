@@ -72,13 +72,23 @@ while IFS= read -r sid; do
   [ -n "$sid" ] || continue
   tmp="$(mktemp)"; out="$(mktemp)"
 
-  "$CEREBRO" digest input "$sid" > "$tmp"
-  model="$("$CEREBRO" digest model "$sid")"
+  # A failed or empty render must skip this thread: `digest model --bytes` always
+  # resolves a model, so without this check an empty transcript would be summarized
+  # as "(No substantive session content.)" and stored, permanently marking a thread
+  # with real content as summarized-and-fresh.
+  if ! "$CEREBRO" digest input "$sid" > "$tmp" || [ ! -s "$tmp" ]; then
+    log "$sid: digest input failed or empty — skipped, left for next run"
+    rm -f "$tmp" "$out"; failed=$((failed + 1)); continue
+  fi
+  # Tier on the transcript we just rendered (digest model --bytes) instead of
+  # having `digest model <id>` render the whole thread a second time.
+  bytes="$(wc -c < "$tmp" | tr -d ' ')"
+  model="$("$CEREBRO" digest model --bytes "$bytes")"
   if [ -z "$model" ]; then
     log "$sid: could not resolve a model — skipped"
     rm -f "$tmp" "$out"; continue
   fi
-  log "$sid: $(wc -c < "$tmp" | tr -d ' ') chars -> $model"
+  log "$sid: $bytes bytes -> $model"
 
   # Mirror summarize-on-clear.sh: --no-session-persistence so this one-shot is not
   # written into ~/.claude/projects and re-indexed as a bogus session. Only write
@@ -96,4 +106,8 @@ while IFS= read -r sid; do
 done <<< "$ids"
 
 log "run complete: $done_n summarized, $failed failed"
+
+# Housekeeping while we already hold the single-flight lock: merge the FTS
+# indexes' incremental b-trees, refresh planner stats, truncate the WAL.
+"$CEREBRO" maintain >> "$LOG" 2>&1 || true
 exit 0

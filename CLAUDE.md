@@ -77,9 +77,12 @@ These are load-bearing. Violating one silently corrupts the archive.
 3. **Index oldest-first** (`discoverSessionFiles` sorts by mtime asc, tiebreak
    sessionId). An original session must be indexed before any resume that branches
    from it, or a shared message is attributed to the resume.
-4. **Dedup on message UUID via `INSERT OR IGNORE`**, not on file or session id. This
-   is what makes re-indexing and `--full` idempotent. Never key dedup on anything
-   else.
+4. **Dedup on message UUID**, not on file or session id. Normal runs use
+   `INSERT OR IGNORE`; `--rebuild` upserts on the same UUID key, refreshing the
+   payload (text, ts, role) but never `session_id`, so attribution stays with the
+   first owner. This is what makes re-indexing, `--full`, and `--rebuild`
+   idempotent. Never key dedup on anything else, and never delete rows during a
+   rebuild: for sessions whose source file is gone, the archive is the only copy.
 5. **Filter to `user` / `assistant` before dedup.** `classify` drops
    `file-history-snapshot`, `system`, etc. Some reuse other messages' UUIDs and
    would cause false collisions if inserted.

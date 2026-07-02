@@ -30,18 +30,25 @@ ln -sf /path/to/cerebro/skills/cerebro ~/.claude/skills/cerebro
 ## Usage
 
 ```sh
-cerebro index [--full] [--dry-run]          # incremental index (--full re-reads all; --dry-run writes nothing)
-cerebro search <query> [--limit N]          # ranked full-text search, snippet-first
+cerebro index [--full] [--rebuild] [--dry-run]   # incremental index (--full re-reads all; --rebuild also re-flattens stored text; --dry-run writes nothing)
+cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+                                            # ranked full-text search, snippet-first
+                                            #   (best hit per thread; --all for every message)
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
-cerebro show <session-id> [--full]          # outline (default) or full transcript
+cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
+cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
+cerebro maintain                            # optimize FTS indexes, refresh planner stats, truncate WAL
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
 ```
 
 `show` and search accept abbreviated session ids (the 8-char prefix shown in
-listings); an ambiguous prefix errors.
+listings); an ambiguous prefix errors. The reader commands (`search`, `sessions`,
+`recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) take `--json`
+to emit the rows as JSON instead of the human listing -- the stable contract for
+scripts and agents.
 
 ### Database location
 
@@ -53,6 +60,22 @@ The database lives outside this repo on purpose: it is derived, machine-local da
 that grows large (tens of MB) and holds verbatim private conversations. `*.sqlite`
 is gitignored regardless. Keeping it next to the Claude data it indexes (the
 default) keeps the repo pure source.
+
+### Backups
+
+For sessions whose source files Claude Code has already deleted, the archive is the
+only copy, so back it up. `cerebro backup` snapshots the database with `VACUUM INTO`
+(safe against a concurrently-writing WAL database, produces a compact standalone
+file) into `<db-dir>/backups/archive-<timestamp>.sqlite`; `--to <path>` picks an
+explicit target, and `--keep N` prunes the oldest default-named backups beyond N.
+A natural place to hang it is the scheduled digest batch, e.g. append
+`~/.claude/cerebro/cerebro backup --keep 8` to `digest-stale-batch.sh`'s schedule
+or run it from the same launchd/cron entry.
+
+`cerebro maintain` is the other housekeeping entry point: it merges the FTS
+indexes' incremental b-trees (`optimize`), refreshes the query planner's stats
+(`PRAGMA optimize`), and truncates the WAL. The scheduled digest batch runs it
+automatically at the end of each run.
 
 ## Hooks (auto-index + context injection)
 
@@ -110,7 +133,9 @@ context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token
 is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
 it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
 default 200k window and a giant thread still fails with "Prompt is too long". cerebro
-owns the tiering: the hook asks `cerebro digest model <id>`, which decides by the rendered
+owns the tiering: the hook asks `cerebro digest model` (passing `--bytes <n>`, the size of
+the `digest input` it already rendered, so the transcript is not rendered twice; `digest
+model <id>` renders and measures for manual use), which decides by the rendered
 transcript's byte size (`cerebro digest input` is the size-bounded transcript; see the
 `digest` section), and `cerebro digest input` water-fill-caps anything large enough to
 risk overflowing even a 1M context. The threshold is derived from a token budget, not the
@@ -185,9 +210,11 @@ runs the same script works just as well on Linux.
 ### Relevant past threads per prompt
 
 `cerebro recent` lists recent threads for a repo and `cerebro relevant <prompt>`
-returns the threads most relevant to a prompt (FTS, bm25). `relevant` matches the
-curated summaries first (high signal) and falls back to raw-transcript bm25 for
-threads not yet summarized; a snippet labelled `summary:` came from the summary,
+returns the threads most relevant to a prompt (FTS, bm25, recency-decayed: within
+each tier the bm25 score decays with the thread's age at a 90-day half-life, so an
+equal text match prefers recent work; plain `search` stays pure bm25). `relevant`
+matches the curated summaries first (high signal) and falls back to raw-transcript
+bm25 for threads not yet summarized; a snippet labelled `summary:` came from the summary,
 `match:` from the transcript. Both surface compact, recognizable breadcrumbs (id,
 date, title, the opening prompt, and for `relevant` a matching snippet), index-first
 so the model pulls detail on demand with `show` / `search`. `--context` emits an
@@ -227,8 +254,12 @@ cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (nev
                                             #   --ids: one full id per line, for scripts
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id>                   # print the model the size tiering would pick
-cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
+cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
+                                            #   (--bytes: tier an already-measured size
+                                            #    without re-rendering the transcript)
+cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
+                                            #   rejects error-looking or too-short input with
+                                            #   exit 1 so the thread stays stale and is retried)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
@@ -252,9 +283,14 @@ optional fast path on top, never the source of truth.
 
 - **Incremental + idempotent.** A per-file byte cursor (`index_state`) means each
   run reads only newly appended bytes; unchanged files are skipped entirely. Plain
-  `cerebro index` is the everyday command. `--full` (re-read everything, dedup makes
-  it safe) is only for a suspected-corrupt index or a schema change. `--dry-run`
-  reports what would be indexed without writing.
+  `cerebro index` is the everyday command. `--full` re-reads everything (dedup makes
+  it safe) and is only for a suspected-corrupt cursor state; because dedup skips
+  known messages, it never touches stored text. `--rebuild` is the one that does:
+  it re-reads everything *and* re-flattens the stored text of every message whose
+  source is still on disk (use it after a `flattenContent`/parser change). Messages
+  whose source file Claude Code already deleted are never touched by either mode:
+  the archive is their only copy. `--dry-run` reports what would be indexed without
+  writing.
 - **Dedup on message UUID.** The only stable key across resumes, so reopening and
   re-indexing a session appends to the existing thread instead of duplicating it.
 - **Sidecar metadata survives deletion.** A session stays searchable in the
@@ -272,6 +308,24 @@ optional fast path on top, never the source of truth.
   state that ages poorly and pollutes search. Errors are kept in full.
 - **Index-first retrieval.** `search` returns id + timestamp + project + snippet;
   full text is fetched on demand via `show`, keeping the context window small.
+
+### Search tokenization
+
+The FTS tables use FTS5's default `unicode61` tokenizer with its default
+`remove_diacritics 1`. That is a deliberate choice for a mixed Swedish/English
+archive, with known trade-offs:
+
+- **Diacritics fold**: `för` matches `for`, and `å/ä/ö` fold to `a/o`. Good for
+  recall (queries typed without diacritics still hit), a slight precision loss.
+- **No stemming**: `sessioner` does not match `session`, English plurals miss
+  too. The `porter` stemmer would fix English but mangle Swedish; a `trigram`
+  tokenizer would give substring matching at roughly 3x the index size. Neither
+  trade is clearly worth it, so exact-token matching stands; `relevant`'s
+  OR-of-tokens queries soften the impact for prose prompts.
+
+Changing the tokenizer later means recreating the FTS tables and re-running
+`cerebro index --rebuild`, so revisit this only with a concrete recall problem
+in hand.
 
 ## Tests
 
@@ -311,10 +365,11 @@ src/
   paths.ts     session-file discovery (top-level + subagents)
   jsonl.ts     parseLine() + classify() + flattenContent()
   git.ts       gitInfo(cwd) with cache
-  indexer.ts   runIndex(), dryRunIndex(), indexOneFile(), relinkThreads()
+  indexer.ts   runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
   thread.ts    rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
   query.ts     search(), listThreads(), recentThreads(), relevantThreads(), ...
   digest.ts    DIGEST_PROMPT + staleThreads(), writeSummary(), searchSummaries(), ...
+  backup.ts    runBackup() (VACUUM INTO snapshots + pruning)
 test/
   *.test.ts    bun test suite + fixtures.ts (temp claude dir + sessions)
 ```

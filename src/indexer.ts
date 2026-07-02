@@ -72,7 +72,20 @@ export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; curs
 // Insert any new messages from a file's freshly-split lines and harvest the
 // metadata for its session row. The bytes were already read and split by
 // eachIndexableFile; this is the write half, run inside the per-file transaction.
-const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta => {
+//
+// `rebuild` switches the dedup from ignore to refresh: still keyed on the message
+// UUID (invariant #4), but an existing row gets its payload (text, ts, role,
+// parent_uuid, is_sidechain) re-written from the fresh parse, so a changed
+// flattenContent reaches already-indexed messages. session_id is deliberately NOT
+// refreshed: attribution belongs to the first owner (invariant #6), and a resume
+// file re-read in rebuild mode must not steal the shared prefix. Messages whose
+// source file is gone are simply never re-read, so their only copy stays intact.
+const ingestLines = (
+  db: Database,
+  file: SessionFile,
+  lines: string[],
+  rebuild = false,
+): FileMeta => {
   const meta: FileMeta = {
     sessionId: file.sessionId,
     projectDir: file.projectDir,
@@ -84,8 +97,17 @@ const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta
   };
 
   const insert = db.query(
-    `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    rebuild
+      ? `INSERT INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(uuid) DO UPDATE SET
+           parent_uuid  = excluded.parent_uuid,
+           ts           = excluded.ts,
+           role         = excluded.role,
+           text         = excluded.text,
+           is_sidechain = excluded.is_sidechain`
+      : `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (const line of lines) {
@@ -103,7 +125,6 @@ const ingestLines = (db: Database, file: SessionFile, lines: string[]): FileMeta
         classified.uuid,
         meta.sessionId,
         classified.parentUuid,
-        null,
         classified.ts,
         classified.role,
         classified.text,
@@ -150,6 +171,13 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 // Write the session row for a top-level file. The top-level file is the authority for
 // its session, so its fresh values win the merge: COALESCE prefers excluded (the new
 // row) and falls back to the existing row only where the new value is NULL.
+//
+// The title is the exception: an incremental run only sees the *new* lines, so its
+// batch-local title may be lower-priority than the one already stored (e.g. a later
+// `summary` event must never clobber a `custom-title` indexed earlier). The stored
+// title_priority decides: the incoming title wins only when it is non-NULL and its
+// priority is >= the stored one (>= so a fresh same-priority title, like a renewed
+// ai-title, still replaces the old).
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -162,9 +190,9 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
-       body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
+       msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = COALESCE(excluded.project_path, sessions.project_path),
@@ -173,7 +201,14 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
        git_remote     = COALESCE(excluded.git_remote, sessions.git_remote),
        git_branch     = COALESCE(excluded.git_branch, sessions.git_branch),
        source_file    = COALESCE(excluded.source_file, sessions.source_file),
-       title          = COALESCE(excluded.title, sessions.title),
+       title          = CASE
+                          WHEN excluded.title IS NOT NULL
+                           AND excluded.title_priority >= sessions.title_priority
+                          THEN excluded.title ELSE sessions.title END,
+       title_priority = CASE
+                          WHEN excluded.title IS NOT NULL
+                           AND excluded.title_priority >= sessions.title_priority
+                          THEN excluded.title_priority ELSE sessions.title_priority END,
        body_available = COALESCE(excluded.body_available, sessions.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
@@ -189,6 +224,7 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
     meta.gitBranch,
     meta.sourceFile,
     meta.title,
+    meta.titlePriority,
     agg.mn,
     agg.mx,
     agg.c,
@@ -210,9 +246,9 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
-       body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
+       msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
        project_path   = COALESCE(sessions.project_path, excluded.project_path),
@@ -222,6 +258,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
        git_branch     = COALESCE(sessions.git_branch, excluded.git_branch),
        source_file    = COALESCE(sessions.source_file, excluded.source_file),
        title          = COALESCE(sessions.title, excluded.title),
+       title_priority = sessions.title_priority,
        body_available = COALESCE(sessions.body_available, excluded.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
@@ -237,6 +274,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     meta.gitBranch,
     null,
     null,
+    0,
     agg.mn,
     agg.mx,
     agg.c,
@@ -277,13 +315,22 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 // Build logical threads across resumes. A resume's first message has a parentUuid
 // owned by an earlier session; chaining those parents up gives each thread's root.
 export const relinkThreads = (db: Database): void => {
-  // Earliest message per session (ts then id), with its parentUuid.
+  // Earliest main-chain message per session, with its parentUuid. Sidechain rows
+  // are excluded: the resume link lives on the first main-chain turn, and a folded
+  // subagent turn can never carry it (a pure-subagent stub then has no candidate
+  // row, which is correct: it has no parent link to find). Ordering is by id, not
+  // ts: for a session's main-chain messages, insertion order equals file order
+  // equals conversational order on every path (files scan oldest-first, appends get
+  // higher ids, re-reads dedup onto the original rows), so the lowest id is the
+  // true first turn regardless of missing or unordered timestamps — either ts-based
+  // ordering can be shadowed by a tolerated NULL ts.
   const firsts = db
     .query(
       `SELECT session_id, parent_uuid FROM (
          SELECT session_id, parent_uuid,
-                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts, id) AS rn
+                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id) AS rn
          FROM messages
+         WHERE is_sidechain = 0
        ) WHERE rn = 1`,
     )
     .all() as { session_id: string; parent_uuid: string | null }[];
@@ -356,10 +403,22 @@ interface FileReadPlan {
 // short-circuits as unchanged; in full mode the status is always "grown"/"new"
 // and callers ignore it for categorization.
 export const planFileRead = (
-  state: { bytes_indexed: number; mtime_ms: number } | null,
+  state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
   file: SessionFile,
   full: boolean,
 ): FileReadPlan => {
+  // A file flagged as cerebro's own digest summarization transcript is permanently
+  // excluded, even when it grows: the content guard (isDigestRunTranscript) only
+  // inspects reads that start at byte 0, so without this flag a digest transcript
+  // still being written when first detected would leak its later lines into the
+  // archive on the next incremental run. Checked before `full` on purpose: a real
+  // --full run has already cleared index_state (no flag survives, the file is
+  // re-read and re-detected from byte 0), so honoring the flag here only affects
+  // a --full *dry run*, which must report the file as skipped to match.
+  if (state?.is_digest) {
+    return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
+  }
+
   if (full) {
     return { start: 0, status: state ? "grown" : "new", shouldRead: true };
   }
@@ -404,11 +463,15 @@ const eachIndexableFile = (
   opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
 ): void => {
   const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms FROM index_state WHERE source_file = ?",
+    "SELECT bytes_indexed, mtime_ms, is_digest FROM index_state WHERE source_file = ?",
   );
 
   for (const file of files) {
-    const state = getState.get(file.path) as { bytes_indexed: number; mtime_ms: number } | null;
+    const state = getState.get(file.path) as {
+      bytes_indexed: number;
+      mtime_ms: number;
+      is_digest: number;
+    } | null;
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {
@@ -454,38 +517,44 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 
 // Incrementally index every session file. `full` clears the per-file cursors so
 // every file is re-read from the start; dedup on message UUID makes that safe.
-export const runIndex = (db: Database, full = false): IndexResult => {
-  if (full) db.run("DELETE FROM index_state");
+// `rebuild` (implies full) additionally re-flattens already-indexed messages in
+// place (see ingestLines): the only way a flattenContent change reaches old rows,
+// since plain dedup ignores re-reads. It never deletes anything, so messages whose
+// source Claude Code already removed are untouched.
+export const runIndex = (db: Database, full = false, rebuild = false): IndexResult => {
+  const readAll = full || rebuild;
+  if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   const files = discoverSessionFiles();
   const saveState = db.query(
-    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(source_file) DO UPDATE SET
        bytes_indexed = excluded.bytes_indexed,
        mtime_ms      = excluded.mtime_ms,
-       indexed_at    = excluded.indexed_at`,
+       indexed_at    = excluded.indexed_at,
+       is_digest     = excluded.is_digest`,
   );
 
   let filesIndexed = 0;
   eachIndexableFile(
     db,
     files,
-    full,
+    readAll,
     ({ file, plan, lines, cursor }) => {
       // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
       // we do not skip it: running saveState still records the new mtime, so a
       // touched-but-unchanged file settles to "unchanged" on the next run.
       const tx = db.transaction(() => {
         if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) {
-          // cerebro's own digest summarization transcript, not a session: advance the
-          // cursor so it is never re-scanned, but index none of it.
-          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+          // cerebro's own digest summarization transcript, not a session: flag it so
+          // it is never read again (even if it grows), and index none of it.
+          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return;
         }
-        const meta = ingestLines(db, file, lines);
-        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString());
+        const meta = ingestLines(db, file, lines, rebuild);
+        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta);
       });

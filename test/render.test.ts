@@ -20,6 +20,7 @@ import {
   shortTime,
   showFull,
   showOutline,
+  showRange,
   staleIds,
   staleListing,
   statsReport,
@@ -161,13 +162,37 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: null,
         snippet: "a matched snippet",
+        ordinal: 1,
       },
     ]);
     expect(lines).toEqual([
       "01234567  2026-07-15 10:00  user       cerebro",
-      "    a matched snippet",
-      "\n1 hit(s). Open one with: cerebro show <id>",
+      "    #1  a matched snippet",
+      "\n1 hit(s), best per thread (--all for every message). " +
+        "Open one with: cerebro show <id> (jump to a hit: --range <n>)",
     ]);
+  });
+
+  test("--all restores the plain per-message footer", () => {
+    const lines = searchListing(
+      [
+        {
+          id: 1,
+          session_id: "0123456789abcdef",
+          ts: "2026-07-15T08:00:00Z",
+          role: "user",
+          project_path: "/Users/foo/cerebro",
+          title: null,
+          snippet: "a matched snippet",
+          ordinal: 3,
+        },
+      ],
+      { all: true },
+    );
+    expect(lines[1]).toBe("    #3  a matched snippet");
+    expect(lines[2]).toBe(
+      "\n1 hit(s). Open one with: cerebro show <id> (jump to a hit: --range <n>)",
+    );
   });
 
   test("truncates the snippet at 160 columns", () => {
@@ -180,9 +205,39 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: null,
         snippet: "s".repeat(200),
+        ordinal: 1,
       },
     ]);
-    expect(lines[1]).toBe(`    ${"s".repeat(159)}…`);
+    expect(lines[1]).toBe(`    #1  ${"s".repeat(159)}…`);
+  });
+
+  test("appends the thread title to the header line when present, truncated at 60", () => {
+    const lines = searchListing([
+      {
+        id: 1,
+        session_id: "0123456789abcdef",
+        ts: "2026-07-15T08:00:00Z",
+        role: "assistant",
+        project_path: "/Users/foo/cerebro",
+        title: "Fix flaky auth test",
+        snippet: "a snippet",
+        ordinal: 1,
+      },
+    ]);
+    expect(lines[0]).toBe("01234567  2026-07-15 10:00  assistant  cerebro  Fix flaky auth test");
+    const long = searchListing([
+      {
+        id: 1,
+        session_id: "0123456789abcdef",
+        ts: "2026-07-15T08:00:00Z",
+        role: "user",
+        project_path: "/Users/foo/cerebro",
+        title: "t".repeat(80),
+        snippet: "a snippet",
+        ordinal: 1,
+      },
+    ]);
+    expect(long[0]).toBe(`01234567  2026-07-15 10:00  user       cerebro  ${"t".repeat(59)}…`);
   });
 });
 
@@ -406,6 +461,40 @@ describe("showFull", () => {
   });
 });
 
+describe("showRange", () => {
+  test("renders a numbered verbatim slice with the range header", () => {
+    const lines = showRange(
+      "0123456789abcdef",
+      [
+        {
+          role: "user",
+          ts: "2026-01-15T08:00:00Z",
+          text: "second message",
+          session_id: "S",
+          is_sidechain: 0,
+        },
+        {
+          role: "assistant",
+          ts: "2026-01-15T08:01:00Z",
+          text: "third message",
+          session_id: "S",
+          is_sidechain: 1,
+        },
+      ],
+      { from: 2, total: 10 },
+    );
+    expect(lines).toEqual([
+      "Thread 01234567  showing 2..3 of 10 message(s)\n",
+      "──── #2 user · 2026-01-15 09:00 ────",
+      "second message",
+      "",
+      "──── #3 assistant · subagent · 2026-01-15 09:01 ────",
+      "third message",
+      "",
+    ]);
+  });
+});
+
 describe("staleListing", () => {
   test("renders each reason, the title line, and the how-to footer", () => {
     const lines = staleListing(
@@ -623,12 +712,35 @@ describe("dryRunReport", () => {
 });
 
 describe("statsReport", () => {
-  test("renders the four archive counts left-aligned to a shared column", () => {
-    expect(statsReport({ threads: 4, sessions: 6, messages: 120, deletedSources: 1 })).toEqual([
-      "Threads:          4",
+  const base = {
+    threads: 4,
+    sessions: 6,
+    messages: 120,
+    deletedSources: 1,
+    firstTs: "2026-01-15T08:00:00Z",
+    lastTs: "2026-07-15T08:00:00Z",
+    summarizedThreads: 3,
+    topProjects: [
+      { project_path: "/Users/foo/cerebro", threads: 3 },
+      { project_path: "/Users/foo/api", threads: 1 },
+    ],
+  };
+
+  test("renders counts, coverage, span, size, and top projects", () => {
+    expect(statsReport(base, { dbBytes: 5 * 1024 * 1024, staleThreads: 2 })).toEqual([
+      "Threads:          4 (3 summarized, 2 stale)",
       "Sessions:         6",
       "Messages:         120",
       "Deleted sources:  1",
+      "Span:             2026-01-15 .. 2026-07-15",
+      "Database size:    5.0 MB",
+      "Top projects:     cerebro (3), api (1)",
     ]);
+  });
+
+  test("omits the size line without a measurable file and projects when empty", () => {
+    const lines = statsReport({ ...base, topProjects: [] }, { dbBytes: null, staleThreads: 0 });
+    expect(lines.some((l) => l.startsWith("Database size"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("Top projects"))).toBe(false);
   });
 });
