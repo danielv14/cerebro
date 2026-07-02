@@ -150,6 +150,13 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 // Write the session row for a top-level file. The top-level file is the authority for
 // its session, so its fresh values win the merge: COALESCE prefers excluded (the new
 // row) and falls back to the existing row only where the new value is NULL.
+//
+// The title is the exception: an incremental run only sees the *new* lines, so its
+// batch-local title may be lower-priority than the one already stored (e.g. a later
+// `summary` event must never clobber a `custom-title` indexed earlier). The stored
+// title_priority decides: the incoming title wins only when it is non-NULL and its
+// priority is >= the stored one (>= so a fresh same-priority title, like a renewed
+// ai-title, still replaces the old).
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -162,9 +169,9 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
-       body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
+       msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = COALESCE(excluded.project_path, sessions.project_path),
@@ -173,7 +180,14 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
        git_remote     = COALESCE(excluded.git_remote, sessions.git_remote),
        git_branch     = COALESCE(excluded.git_branch, sessions.git_branch),
        source_file    = COALESCE(excluded.source_file, sessions.source_file),
-       title          = COALESCE(excluded.title, sessions.title),
+       title          = CASE
+                          WHEN excluded.title IS NOT NULL
+                           AND excluded.title_priority >= sessions.title_priority
+                          THEN excluded.title ELSE sessions.title END,
+       title_priority = CASE
+                          WHEN excluded.title IS NOT NULL
+                           AND excluded.title_priority >= sessions.title_priority
+                          THEN excluded.title_priority ELSE sessions.title_priority END,
        body_available = COALESCE(excluded.body_available, sessions.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
@@ -189,6 +203,7 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
     meta.gitBranch,
     meta.sourceFile,
     meta.title,
+    meta.titlePriority,
     agg.mn,
     agg.mx,
     agg.c,
@@ -210,9 +225,9 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, first_ts, last_ts, msg_count,
-       body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
+       msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
        project_path   = COALESCE(sessions.project_path, excluded.project_path),
@@ -222,6 +237,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
        git_branch     = COALESCE(sessions.git_branch, excluded.git_branch),
        source_file    = COALESCE(sessions.source_file, excluded.source_file),
        title          = COALESCE(sessions.title, excluded.title),
+       title_priority = sessions.title_priority,
        body_available = COALESCE(sessions.body_available, excluded.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
@@ -237,6 +253,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     meta.gitBranch,
     null,
     null,
+    0,
     agg.mn,
     agg.mx,
     agg.c,

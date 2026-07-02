@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   git_branch        TEXT,
   source_file       TEXT,
   title             TEXT,
+  -- Priority of the stored title (custom-title 3 > ai-title 2 > summary 1, 0 = none).
+  -- Persisted so an incremental run that only sees a lower-priority title event can
+  -- never clobber a higher-priority title indexed earlier.
+  title_priority    INTEGER NOT NULL DEFAULT 0,
   first_ts          TEXT,
   last_ts           TEXT,
   msg_count         INTEGER NOT NULL DEFAULT 0,
@@ -140,6 +144,12 @@ const migrate = (db: Database): void => {
   const columns = db.query("PRAGMA table_info(messages)").all() as { name: string }[];
   if (!columns.some((c) => c.name === "is_sidechain")) {
     db.run("ALTER TABLE messages ADD COLUMN is_sidechain INTEGER NOT NULL DEFAULT 0");
+  }
+  const sessionColumns = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!sessionColumns.some((c) => c.name === "title_priority")) {
+    // Pre-migration titles get priority 0: the next title event of any priority may
+    // replace them once, after which the real priority is tracked.
+    db.run("ALTER TABLE sessions ADD COLUMN title_priority INTEGER NOT NULL DEFAULT 0");
   }
 };
 

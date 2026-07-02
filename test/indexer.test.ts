@@ -163,6 +163,46 @@ describe("runIndex", () => {
     expect(row.title).toBe("Custom title");
   });
 
+  test("a later lower-priority title event never clobbers a custom title (#41)", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      { type: "custom-title", customTitle: "Custom title", sessionId: "S" },
+    ]);
+    runIndex(db);
+    // Claude Code appends a summary event later; the incremental run only sees it.
+    appendRaw(path, `${JSON.stringify({ type: "summary", summary: "auto", sessionId: "S" })}\n`);
+    runIndex(db);
+    const row = db
+      .query("SELECT title, title_priority FROM sessions WHERE session_id='S'")
+      .get() as {
+      title: string;
+      title_priority: number;
+    };
+    expect(row.title).toBe("Custom title");
+    expect(row.title_priority).toBe(3);
+  });
+
+  test("a later higher- or equal-priority title event still replaces the title", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      { type: "ai-title", aiTitle: "AI v1", sessionId: "S" },
+    ]);
+    runIndex(db);
+    appendRaw(path, `${JSON.stringify({ type: "ai-title", aiTitle: "AI v2", sessionId: "S" })}\n`);
+    runIndex(db);
+    let row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("AI v2"); // equal priority: the newer title wins
+    appendRaw(
+      path,
+      `${JSON.stringify({ type: "custom-title", customTitle: "Mine", sessionId: "S" })}\n`,
+    );
+    runIndex(db);
+    row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as { title: string };
+    expect(row.title).toBe("Mine"); // higher priority wins
+  });
+
   test("a standalone session is its own root", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db);
