@@ -230,6 +230,28 @@ describe("runIndex", () => {
     expect(resume.root_session_id).toBe("ORIG");
   });
 
+  test("a NULL-ts or sidechain message cannot shadow the resume link (#44)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      // A tolerated missing-ts message: sorts first in naive ASC ordering.
+      userMsg("RESUME", "noise-null-ts", "no ts", { timestamp: undefined, parentUuid: null }),
+      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    // A sidechain turn folded into RESUME, timestamped before its first main turn.
+    writeSubagent(env.projects, "-repo", "RESUME", "agent-x", [
+      userMsg("RESUME", "sa1", "sub", { isSidechain: true, timestamp: ts(1), parentUuid: null }),
+    ]);
+    runIndex(db);
+    const resume = db
+      .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
+      .get() as { parent_session_id: string | null; root_session_id: string };
+    expect(resume.parent_session_id).toBe("ORIG");
+    expect(resume.root_session_id).toBe("ORIG");
+  });
+
   test("subagent transcripts fold into the parent session", () => {
     writeSession(env.projects, "-repo", "PARENT", [userMsg("PARENT", "u1", "do a task")]);
     writeSubagent(env.projects, "-repo", "PARENT", "agent-xyz", [

@@ -294,13 +294,19 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 // Build logical threads across resumes. A resume's first message has a parentUuid
 // owned by an earlier session; chaining those parents up gives each thread's root.
 export const relinkThreads = (db: Database): void => {
-  // Earliest message per session (ts then id), with its parentUuid.
+  // Earliest main-chain message per session (ts then id), with its parentUuid.
+  // Sidechain rows are excluded: the resume link lives on the first main-chain
+  // turn, and a folded subagent turn can never carry it (a pure-subagent stub then
+  // has no candidate row, which is correct: it has no parent link to find). NULL
+  // timestamps are ordered last, not first (SQLite sorts NULL first in ASC), so a
+  // tolerated missing-ts message cannot shadow the real first turn.
   const firsts = db
     .query(
       `SELECT session_id, parent_uuid FROM (
          SELECT session_id, parent_uuid,
-                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY ts, id) AS rn
+                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY (ts IS NULL), ts, id) AS rn
          FROM messages
+         WHERE is_sidechain = 0
        ) WHERE rn = 1`,
     )
     .all() as { session_id: string; parent_uuid: string | null }[];
