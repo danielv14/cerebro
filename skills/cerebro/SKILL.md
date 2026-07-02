@@ -50,17 +50,17 @@ Dry run (--full): would re-read all 210 file(s).
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
 ```
 
-### `cerebro search <query> [--limit N]`
-Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20.
+### `cerebro search <query> [--limit N] [--project P] [--since D] [--all]`
+Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20. Som standard visas **bästa träffen per tråd** (så att en pratig tråd inte fyller alla platser); `--all` ger varje matchande meddelande. `--project P` filtrerar på substring i projektsökvägen, `--since 2026-01-31` på tidsstämpel.
 
 ```
 $ cerebro search "rate limiter" --limit 2
-5e6f7a8b  2026-02-10 09:14  assistant  api-server  Fix flaky auth test
-    … added a token-bucket [rate] [limiter] to the auth middleware, 100 req/min per …
 5e6f7a8b  2026-02-10 09:31  user       api-server  Fix flaky auth test
     … the [rate] [limiter] should return 429 with a Retry-After header when the …
+9c0d1e2f  2026-02-08 14:02  assistant  web-shop  Refactor checkout flow
+    … checkout calls the [rate] [limiter] middleware before the payment step …
 
-2 hit(s). Open one with: cerebro show <id>
+2 hit(s), best per thread (--all for every message). Open one with: cerebro show <id>
 ```
 
 ### `cerebro sessions [--project P] [--limit N]`

@@ -166,8 +166,26 @@ describe("searchListing", () => {
     expect(lines).toEqual([
       "01234567  2026-07-15 10:00  user       cerebro",
       "    a matched snippet",
-      "\n1 hit(s). Open one with: cerebro show <id>",
+      "\n1 hit(s), best per thread (--all for every message). Open one with: cerebro show <id>",
     ]);
+  });
+
+  test("--all restores the plain per-message footer", () => {
+    const lines = searchListing(
+      [
+        {
+          id: 1,
+          session_id: "0123456789abcdef",
+          ts: "2026-07-15T08:00:00Z",
+          role: "user",
+          project_path: "/Users/foo/cerebro",
+          title: null,
+          snippet: "a matched snippet",
+        },
+      ],
+      { all: true },
+    );
+    expect(lines[2]).toBe("\n1 hit(s). Open one with: cerebro show <id>");
   });
 
   test("truncates the snippet at 160 columns", () => {

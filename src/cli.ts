@@ -50,7 +50,9 @@ const HELP = `cerebro - permanent verbatim archive + search over Claude Code ses
 
 Usage:
   cerebro index [--full] [--rebuild] [--dry-run]   Index all sessions incrementally
-  cerebro search <query> [--limit N]     Full-text search (ranked, snippet-first)
+  cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+                                         Full-text search (ranked, best hit per thread;
+                                         --all for every matching message)
   cerebro sessions [--project P] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
   cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
@@ -80,7 +82,9 @@ Options:
                   messages whose source file is deleted are kept untouched)
   --dry-run       index: report what would be indexed, write nothing
   --limit <n>     Max rows to return
-  --project <p>   Filter sessions by project path substring
+  --project <p>   sessions/search: filter by project path substring
+  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
+  --all           search: every matching message instead of the best hit per thread
   --cwd <path>    recent: directory to scope by (default: current dir)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
@@ -190,6 +194,8 @@ export const runCli = (
           project: { type: "string" },
           cwd: { type: "string" },
           days: { type: "string" },
+          since: { type: "string" },
+          all: { type: "boolean", default: false },
           context: { type: "boolean", default: false },
           stdin: { type: "boolean", default: false },
           ids: { type: "boolean", default: false },
@@ -249,12 +255,20 @@ export const runCli = (
           fail("search: missing <query>");
           break;
         }
-        const hits = search(db, query, limit ?? 20);
+        if (values.since && !/^\d{4}-\d{2}-\d{2}/.test(values.since)) {
+          fail(`--since must be an ISO date like 2026-01-31 (got "${values.since}")`);
+          break;
+        }
+        const hits = search(db, query, limit ?? 20, {
+          project: values.project,
+          since: values.since,
+          all: values.all,
+        });
         if (hits.length === 0) {
           io.log("No matches.");
           break;
         }
-        for (const line of searchListing(hits)) io.log(line);
+        for (const line of searchListing(hits, { all: values.all })) io.log(line);
         break;
       }
 

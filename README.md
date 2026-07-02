@@ -31,7 +31,9 @@ ln -sf /path/to/cerebro/skills/cerebro ~/.claude/skills/cerebro
 
 ```sh
 cerebro index [--full] [--rebuild] [--dry-run]   # incremental index (--full re-reads all; --rebuild also re-flattens stored text; --dry-run writes nothing)
-cerebro search <query> [--limit N]          # ranked full-text search, snippet-first
+cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+                                            # ranked full-text search, snippet-first
+                                            #   (best hit per thread; --all for every message)
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt

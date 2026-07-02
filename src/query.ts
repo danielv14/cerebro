@@ -12,22 +12,63 @@ export interface SearchHit {
   snippet: string;
 }
 
+export interface SearchOpts {
+  // Substring filter on the thread's project path (same semantics as sessions --project).
+  project?: string;
+  // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
+  // because stored timestamps are ISO-8601).
+  since?: string;
+  // true = every matching message (the historic behavior); false/absent = the best
+  // hit per thread, so one chatty thread cannot occupy every result slot.
+  all?: boolean;
+}
+
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
-// syntax, fall back to a sanitized phrase query of the bare tokens.
-export const search = (db: Database, query: string, limit = 20): SearchHit[] => {
+// syntax, fall back to a sanitized phrase query of the bare tokens. By default the
+// results are deduplicated to the best (lowest-bm25) hit per thread root; --all
+// disables that.
+export const search = (
+  db: Database,
+  query: string,
+  limit = 20,
+  opts: SearchOpts = {},
+): SearchHit[] => {
+  const filters: string[] = [];
+  const filterParams: string[] = [];
+  if (opts.project) {
+    filters.push("AND s.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
+    filterParams.push(escapeLike(opts.project));
+  }
+  if (opts.since) {
+    filters.push("AND m.ts >= ?");
+    filterParams.push(opts.since);
+  }
+
+  // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
+  // which rules out a window-function dedup in SQL. Instead: over-fetch the ranked
+  // hits (bm25 order) and keep the first (= best) per thread root in JS, mirroring
+  // how relevantThreads dedups its raw tier.
+  const fetchLimit = opts.all ? limit : Math.max(200, limit * 10);
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
+           s.root_session_id AS root,
            snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
     FROM messages_fts
     JOIN messages m  ON m.id = messages_fts.rowid
     JOIN sessions s  ON s.session_id = m.session_id
     WHERE messages_fts MATCH ?
+    ${filters.join("\n    ")}
     ORDER BY bm25(messages_fts)
     LIMIT ?`;
   const stmt = db.query(sql);
+
+  type RawHit = SearchHit & { root: string | null };
+  const run = (match: string): RawHit[] => stmt.all(match, ...filterParams, fetchLimit) as RawHit[];
+
+  let raw: RawHit[];
   try {
-    return stmt.all(query, limit) as SearchHit[];
+    raw = run(query);
   } catch {
     const sanitized = query
       .split(/\s+/)
@@ -35,8 +76,22 @@ export const search = (db: Database, query: string, limit = 20): SearchHit[] => 
       .map((token) => `"${token.replace(/"/g, '""')}"`)
       .join(" ");
     if (!sanitized) return [];
-    return stmt.all(sanitized, limit) as SearchHit[];
+    raw = run(sanitized);
   }
+
+  const strip = ({ root: _root, ...hit }: RawHit): SearchHit => hit;
+  if (opts.all) return raw.map(strip);
+
+  const seen = new Set<string>();
+  const deduped: SearchHit[] = [];
+  for (const hit of raw) {
+    const key = hit.root ?? hit.session_id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(strip(hit));
+    if (deduped.length >= limit) break;
+  }
+  return deduped;
 };
 
 // Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.

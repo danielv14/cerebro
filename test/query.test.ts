@@ -102,6 +102,37 @@ describe("query (populated archive)", () => {
     expect(hits.map((h) => h.session_id)).toEqual(["TOP", "MID"]);
   });
 
+  test("search returns the best hit per thread by default, --all returns every message (#53)", () => {
+    writeSession(env.projects, "-repo", "CHATTY", [
+      userMsg("CHATTY", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
+      assistantMsg("CHATTY", "a1", "limiter limiter", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("CHATTY", "u2", "more about the limiter", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "u3", `limiter ${"filler ".repeat(50)}`, { timestamp: ts(10) }),
+    ]);
+    runIndex(db);
+    // Default: one (best) hit per thread, so OTHER is not buried by CHATTY.
+    const deduped = search(db, "limiter", 10);
+    expect(deduped.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+    // --all: every matching message.
+    const all = search(db, "limiter", 10, { all: true });
+    expect(all.length).toBe(4);
+  });
+
+  test("search --project and --since scope the hits (#53)", () => {
+    writeSession(env.projects, "-repo-a", "A", [
+      userMsg("A", "u1", "limiter in alpha", { cwd: "/home/user/alpha", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-b", "B", [
+      userMsg("B", "u2", "limiter in beta", { cwd: "/home/user/beta", timestamp: ts(100) }),
+    ]);
+    runIndex(db);
+    expect(search(db, "limiter", 10, { project: "alpha" }).map((h) => h.session_id)).toEqual(["A"]);
+    expect(search(db, "limiter", 10, { since: ts(50) }).map((h) => h.session_id)).toEqual(["B"]);
+    expect(search(db, "limiter", 10).length).toBe(2);
+  });
+
   test("search recovers from a malformed FTS query via the sanitized fallback", () => {
     // A bare unbalanced quote is invalid FTS5 (`unterminated string`) and throws on
     // the verbatim MATCH. The catch re-runs the query as a sanitized phrase of the

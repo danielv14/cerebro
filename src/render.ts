@@ -167,8 +167,9 @@ export const relevantFooter = (): string =>
 
 // `search`: one header + one snippet line per hit, then the count footer. The
 // thread title (when there is one) trails the header line, truncated at 60, so a
-// hit is recognizable without opening it.
-export const searchListing = (hits: SearchHit[]): string[] => {
+// hit is recognizable without opening it. The default (deduplicated) mode says so
+// in the footer and points at --all; `all` restores the plain per-message footer.
+export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): string[] => {
   const lines: string[] = [];
   for (const hit of hits) {
     const title = hit.title ? `  ${oneLine(hit.title, 60)}` : "";
@@ -177,7 +178,11 @@ export const searchListing = (hits: SearchHit[]): string[] => {
     );
     lines.push(`    ${oneLine(hit.snippet, 160)}`);
   }
-  lines.push(`\n${hits.length} hit(s). Open one with: cerebro show <id>`);
+  lines.push(
+    opts.all
+      ? `\n${hits.length} hit(s). Open one with: cerebro show <id>`
+      : `\n${hits.length} hit(s), best per thread (--all for every message). Open one with: cerebro show <id>`,
+  );
   return lines;
 };
 
