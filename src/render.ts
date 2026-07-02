@@ -176,12 +176,15 @@ export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): 
     lines.push(
       `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}${title}`,
     );
-    lines.push(`    ${oneLine(hit.snippet, 160)}`);
+    // The ordinal is the message's position in show's numbering, so the hit can be
+    // opened in place with show <id> --range.
+    lines.push(`    #${hit.ordinal}  ${oneLine(hit.snippet, 160)}`);
   }
   lines.push(
     opts.all
-      ? `\n${hits.length} hit(s). Open one with: cerebro show <id>`
-      : `\n${hits.length} hit(s), best per thread (--all for every message). Open one with: cerebro show <id>`,
+      ? `\n${hits.length} hit(s). Open one with: cerebro show <id> (jump to a hit: --range <n>)`
+      : `\n${hits.length} hit(s), best per thread (--all for every message). ` +
+          "Open one with: cerebro show <id> (jump to a hit: --range <n>)",
   );
   return lines;
 };
@@ -263,6 +266,27 @@ export const showFull = (sessionId: string, messages: ThreadMessage[]): string[]
     lines.push(message.text);
     lines.push("");
   }
+  return lines;
+};
+
+// `show --range A..B`: a verbatim slice of the thread, numbered with the same
+// ordinals as the outline (and as search's #N markers), so a search hit can be
+// opened in place without pulling the whole transcript.
+export const showRange = (
+  sessionId: string,
+  slice: ThreadMessage[],
+  opts: { from: number; total: number },
+): string[] => {
+  const to = opts.from + slice.length - 1;
+  const lines: string[] = [
+    `Thread ${shortId(sessionId)}  showing ${opts.from}..${to} of ${opts.total} message(s)\n`,
+  ];
+  slice.forEach((message, i) => {
+    const tag = message.is_sidechain ? " · subagent" : "";
+    lines.push(`──── #${opts.from + i} ${message.role}${tag} · ${shortTime(message.ts)} ────`);
+    lines.push(message.text);
+    lines.push("");
+  });
   return lines;
 };
 

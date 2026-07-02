@@ -20,6 +20,7 @@ import {
   shortTime,
   showFull,
   showOutline,
+  showRange,
   staleIds,
   staleListing,
   statsReport,
@@ -161,12 +162,14 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: null,
         snippet: "a matched snippet",
+        ordinal: 1,
       },
     ]);
     expect(lines).toEqual([
       "01234567  2026-07-15 10:00  user       cerebro",
-      "    a matched snippet",
-      "\n1 hit(s), best per thread (--all for every message). Open one with: cerebro show <id>",
+      "    #1  a matched snippet",
+      "\n1 hit(s), best per thread (--all for every message). " +
+        "Open one with: cerebro show <id> (jump to a hit: --range <n>)",
     ]);
   });
 
@@ -181,11 +184,15 @@ describe("searchListing", () => {
           project_path: "/Users/foo/cerebro",
           title: null,
           snippet: "a matched snippet",
+          ordinal: 3,
         },
       ],
       { all: true },
     );
-    expect(lines[2]).toBe("\n1 hit(s). Open one with: cerebro show <id>");
+    expect(lines[1]).toBe("    #3  a matched snippet");
+    expect(lines[2]).toBe(
+      "\n1 hit(s). Open one with: cerebro show <id> (jump to a hit: --range <n>)",
+    );
   });
 
   test("truncates the snippet at 160 columns", () => {
@@ -198,9 +205,10 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: null,
         snippet: "s".repeat(200),
+        ordinal: 1,
       },
     ]);
-    expect(lines[1]).toBe(`    ${"s".repeat(159)}…`);
+    expect(lines[1]).toBe(`    #1  ${"s".repeat(159)}…`);
   });
 
   test("appends the thread title to the header line when present, truncated at 60", () => {
@@ -213,6 +221,7 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: "Fix flaky auth test",
         snippet: "a snippet",
+        ordinal: 1,
       },
     ]);
     expect(lines[0]).toBe("01234567  2026-07-15 10:00  assistant  cerebro  Fix flaky auth test");
@@ -225,6 +234,7 @@ describe("searchListing", () => {
         project_path: "/Users/foo/cerebro",
         title: "t".repeat(80),
         snippet: "a snippet",
+        ordinal: 1,
       },
     ]);
     expect(long[0]).toBe(`01234567  2026-07-15 10:00  user       cerebro  ${"t".repeat(59)}…`);
@@ -446,6 +456,40 @@ describe("showFull", () => {
       "",
       "──── assistant · subagent · 2026-01-15 09:00 ────",
       "general kenobi",
+      "",
+    ]);
+  });
+});
+
+describe("showRange", () => {
+  test("renders a numbered verbatim slice with the range header", () => {
+    const lines = showRange(
+      "0123456789abcdef",
+      [
+        {
+          role: "user",
+          ts: "2026-01-15T08:00:00Z",
+          text: "second message",
+          session_id: "S",
+          is_sidechain: 0,
+        },
+        {
+          role: "assistant",
+          ts: "2026-01-15T08:01:00Z",
+          text: "third message",
+          session_id: "S",
+          is_sidechain: 1,
+        },
+      ],
+      { from: 2, total: 10 },
+    );
+    expect(lines).toEqual([
+      "Thread 01234567  showing 2..3 of 10 message(s)\n",
+      "──── #2 user · 2026-01-15 09:00 ────",
+      "second message",
+      "",
+      "──── #3 assistant · subagent · 2026-01-15 09:01 ────",
+      "third message",
       "",
     ]);
   });

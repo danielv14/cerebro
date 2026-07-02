@@ -18,7 +18,7 @@ Dränk inte kontextfönstret. Följ den här trappan:
 1. **`cerebro index`** först om sökningen gäller nyligt arbete (indexet är inkrementellt och snabbt; sessioner som är öppna just nu kanske inte är fullständigt skrivna än).
 2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevans-rankat mot en prompt) eller **`cerebro sessions`** / **`cerebro recent`** för att hitta rätt tråd. Ger bara id + tidsstämpel + projekt + snippet.
 3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
-4. **`cerebro show <id> --full`** först när du behöver det ordagranna transkriptet. Hämta inte `--full` i onödan; trådar kan vara tusentals meddelanden.
+4. **`cerebro show <id> --range A..B`** för att läsa en ordagrann skiva runt en träff (`search` visar varje träffs `#N`-position). **`--full`** först när du behöver hela transkriptet; hämta det inte i onödan, trådar kan vara tusentals meddelanden.
 
 Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel.
 
@@ -56,11 +56,11 @@ Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade
 ```
 $ cerebro search "rate limiter" --limit 2
 5e6f7a8b  2026-02-10 09:31  user       api-server  Fix flaky auth test
-    … the [rate] [limiter] should return 429 with a Retry-After header when the …
+    #14  … the [rate] [limiter] should return 429 with a Retry-After header when the …
 9c0d1e2f  2026-02-08 14:02  assistant  web-shop  Refactor checkout flow
-    … checkout calls the [rate] [limiter] middleware before the payment step …
+    #52  … checkout calls the [rate] [limiter] middleware before the payment step …
 
-2 hit(s), best per thread (--all for every message). Open one with: cerebro show <id>
+2 hit(s), best per thread (--all for every message). Open one with: cerebro show <id> (jump to a hit: --range <n>)
 ```
 
 ### `cerebro sessions [--project P] [--limit N]`
@@ -115,8 +115,8 @@ To recall one: cerebro show <id> (add --full for the transcript), or cerebro sea
 
 `recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
 
-### `cerebro show <session-id> [--full]`
-Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. Subagent-turer taggas `[subagent]`.
+### `cerebro show <session-id> [--full] [--range A..B]`
+Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. `--range 12..18` (eller ett ensamt tal) ger en ordagrann skiva med samma numrering som outlinen och som `#N`-markörerna i `search`-träffar, så du kan hoppa rakt till en träff i en jättetråd utan att dra hela transkriptet. Subagent-turer taggas `[subagent]`.
 
 Outline:
 ```

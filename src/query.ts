@@ -10,6 +10,9 @@ export interface SearchHit {
   project_path: string | null;
   title: string | null;
   snippet: string;
+  // 1-based position of the message within its thread's chronological order; the
+  // same numbering `show` uses, so a hit can be jumped to with show --range.
+  ordinal: number;
 }
 
 export interface SearchOpts {
@@ -50,10 +53,23 @@ export const search = (
   // hits (bm25 order) and keep the first (= best) per thread root in JS, mirroring
   // how relevantThreads dedups its raw tier.
   const fetchLimit = opts.all ? limit : Math.max(200, limit * 10);
+  // `ordinal` replicates threadMessages' ORDER BY (ts, id) counting -- including
+  // SQLite's NULLs-first -- so the number matches show's outline numbering and a
+  // hit can be opened in place with show --range.
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
            s.root_session_id AS root,
-           snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
+           snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet,
+           (SELECT COUNT(*) FROM messages m2
+            WHERE m2.session_id IN (
+              SELECT session_id FROM sessions WHERE root_session_id = s.root_session_id
+            )
+            AND (
+              (m2.ts IS NULL AND m.ts IS NOT NULL)
+              OR (m2.ts IS NULL AND m.ts IS NULL AND m2.id <= m.id)
+              OR (m2.ts IS NOT NULL AND m.ts IS NOT NULL
+                  AND (m2.ts < m.ts OR (m2.ts = m.ts AND m2.id <= m.id)))
+            )) AS ordinal
     FROM messages_fts
     JOIN messages m  ON m.id = messages_fts.rowid
     JOIN sessions s  ON s.session_id = m.session_id

@@ -159,6 +159,35 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("show --range prints a numbered verbatim slice (#58)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "first", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "second", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("SESS", "u2", "third", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--range", "2..3"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("showing 2..3 of 3 message(s)");
+    expect(out).toContain("#2 assistant");
+    expect(out).toContain("second");
+    expect(out).not.toContain("first");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("show --range rejects malformed and out-of-bounds ranges", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "only one")]);
+    const bad = makeIO();
+    runCli(["show", "SESS", "--range", "3..2"], bad.io, seeded());
+    expect(bad.errs.join("\n")).toContain("--range must be N or A..B");
+    expect(bad.exitCode).toBe(1);
+
+    const oob = makeIO();
+    runCli(["show", "SESS", "--range", "5"], oob.io, seeded());
+    expect(oob.errs.join("\n")).toContain("starts at 5 but the thread has 1 message(s)");
+    expect(oob.exitCode).toBe(1);
+  });
+
   test("search with no hits prints the empty-state line", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "work", { timestamp: ts(0) }),

@@ -133,6 +133,18 @@ describe("query (populated archive)", () => {
     expect(search(db, "limiter", 10).length).toBe(2);
   });
 
+  test("search hits carry the thread ordinal matching show's numbering (#58)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "opening prompt", { timestamp: ts(0) }),
+      assistantMsg("S", "a1", "the limiter answer", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("S", "u2", "closing note", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 10);
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.ordinal).toBe(2); // second message in the thread's chronology
+  });
+
   test("search recovers from a malformed FTS query via the sanitized fallback", () => {
     // A bare unbalanced quote is invalid FTS5 (`unterminated string`) and throws on
     // the verbatim MATCH. The catch re-runs the query as a sanitized phrase of the

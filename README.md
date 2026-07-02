@@ -37,7 +37,7 @@ cerebro search <query> [--limit N] [--project P] [--since D] [--all]
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
-cerebro show <session-id> [--full]          # outline (default) or full transcript
+cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
 ```

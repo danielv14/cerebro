@@ -38,6 +38,7 @@ import {
   sessionsListing,
   showFull,
   showOutline,
+  showRange,
   staleIds,
   staleListing,
   statsReport,
@@ -56,7 +57,9 @@ Usage:
   cerebro sessions [--project P] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
   cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
-  cerebro show <session-id> [--full]     Show a thread (outline, or full transcript)
+  cerebro show <session-id> [--full] [--range A..B]
+                                         Show a thread (outline, full transcript, or
+                                         a verbatim slice in outline numbering)
   cerebro stats                          Archive counts
   cerebro digest <action>                Curated session summaries (see below)
 
@@ -85,6 +88,7 @@ Options:
   --project <p>   sessions/search: filter by project path substring
   --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
   --all           search: every matching message instead of the best hit per thread
+  --range <a..b>  show: only messages a through b (the outline / search #N numbering)
   --cwd <path>    recent: directory to scope by (default: current dir)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
@@ -201,6 +205,7 @@ export const runCli = (
           ids: { type: "boolean", default: false },
           model: { type: "string" },
           bytes: { type: "string" },
+          range: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -350,6 +355,29 @@ export const runCli = (
         const sessionId = resolveOrFail(db, positionals[1], "show", fail);
         if (!sessionId) break;
         const messages = threadMessages(db, sessionId);
+        if (values.range !== undefined) {
+          // --range A..B (or a single N): a verbatim slice in outline numbering,
+          // the jump target for search's #N ordinals.
+          const match = values.range.match(/^(\d+)(?:\.\.(\d+))?$/);
+          const from = match ? Number(match[1]) : 0;
+          const to = match?.[2] ? Number(match[2]) : from;
+          if (!match || from < 1 || to < from) {
+            fail(`--range must be N or A..B with 1 <= A <= B (got "${values.range}")`);
+            break;
+          }
+          if (from > messages.length) {
+            fail(`--range starts at ${from} but the thread has ${messages.length} message(s)`);
+            break;
+          }
+          const slice = messages.slice(from - 1, Math.min(to, messages.length));
+          for (const line of showRange(sessionId, slice, {
+            from,
+            total: messages.length,
+          })) {
+            io.log(line);
+          }
+          break;
+        }
         const lines = values.full
           ? showFull(sessionId, messages)
           : showOutline(sessionId, messages);
