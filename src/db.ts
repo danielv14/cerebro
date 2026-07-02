@@ -2,8 +2,16 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { dirname } from "node:path";
 
-const SCHEMA = `
-PRAGMA journal_mode = WAL;
+// Bump whenever SCHEMA or migrate() changes. openDb stamps it into PRAGMA
+// user_version and skips the whole DDL block when the stored version matches, so
+// the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
+// schema work. An old database (or a fresh one, user_version 0) runs the DDL +
+// migrations once and is stamped.
+export const SCHEMA_VERSION = 2;
+
+// Per-connection pragmas: these do not persist in the database file, so they run
+// on every open, outside the version-gated DDL.
+const CONNECTION_PRAGMAS = `
 -- Wait up to 5s for a lock instead of failing instantly. cerebro is opened
 -- concurrently by short-lived processes (the index/digest hooks, manual reads,
 -- and a draining batch) against one WAL file; with the default timeout of 0 a
@@ -11,6 +19,10 @@ PRAGMA journal_mode = WAL;
 -- SQLITE_BUSY. A timeout rides out those sub-second windows.
 PRAGMA busy_timeout = 5000;
 PRAGMA foreign_keys = ON;
+`;
+
+const SCHEMA = `
+PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS index_state (
   source_file   TEXT PRIMARY KEY,
@@ -171,7 +183,14 @@ const migrate = (db: Database): void => {
 export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
-  db.exec(SCHEMA);
-  migrate(db);
+  db.exec(CONNECTION_PRAGMAS);
+  const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
+  if (user_version !== SCHEMA_VERSION) {
+    // The DDL is idempotent (IF NOT EXISTS everywhere), so two processes racing
+    // through a first open are safe; busy_timeout above rides out lock windows.
+    db.exec(SCHEMA);
+    migrate(db);
+    db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  }
   return db;
 };
