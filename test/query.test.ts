@@ -313,6 +313,39 @@ describe("query (populated archive)", () => {
     expect(() => resolveSession(db, "abc")).toThrow(/[Aa]mbiguous/); // matches both
   });
 
+  test("resolveSession treats LIKE wildcards in a prefix literally (#48)", () => {
+    writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
+    runIndex(db);
+    // `_` would match any character unescaped; `%` would match everything.
+    expect(resolveSession(db, "abc_2345")).toBeNull();
+    expect(resolveSession(db, "%")).toBeNull();
+  });
+
+  test("--project filter treats LIKE wildcards literally (#48)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi", { cwd: "/home/user/myXapp" }),
+    ]);
+    runIndex(db);
+    // Unescaped, `my_app` would match `myXapp` via the `_` wildcard.
+    expect(listThreads(db, { project: "my_app" }).length).toBe(0);
+    expect(listThreads(db, { project: "myXapp" }).length).toBe(1);
+  });
+
+  test("stats excludes subagent-only stubs from deleted sources (#45)", () => {
+    // A parent stub created purely from a subagent file: source_file is NULL,
+    // body_available becomes 0, but nothing was ever deleted.
+    writeSubagent(env.projects, "-repo", "STUB", "agent-1", [
+      userMsg("STUB", "sa1", "sub work", { isSidechain: true }),
+    ]);
+    const path = writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hi")]);
+    runIndex(db);
+    expect(stats(db).deletedSources).toBe(0);
+    // A genuinely deleted source still counts.
+    fs.rmSync(path);
+    runIndex(db);
+    expect(stats(db).deletedSources).toBe(1);
+  });
+
   test("stats counts threads, sessions, messages, and deleted sources", () => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),

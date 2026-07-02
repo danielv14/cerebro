@@ -39,6 +39,11 @@ export const search = (db: Database, query: string, limit = 20): SearchHit[] => 
   }
 };
 
+// Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
+// Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
+export const escapeLike = (fragment: string): string =>
+  fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
 export interface ThreadRow {
   id: string;
   last_ts: string | null;
@@ -61,8 +66,8 @@ export const listThreads = (
   const params: (string | number)[] = [];
   let where = "";
   if (opts.project) {
-    where = "WHERE project_path LIKE '%' || ? || '%'";
-    params.push(opts.project);
+    where = "WHERE project_path LIKE '%' || ? || '%' ESCAPE '\\'";
+    params.push(escapeLike(opts.project));
   }
   params.push(opts.limit ?? 30);
 
@@ -265,8 +270,8 @@ export const resolveSession = (db: Database, idOrPrefix: string): string | null 
   if (exact) return exact.session_id;
 
   const matches = db
-    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' LIMIT 10")
-    .all(idOrPrefix) as { session_id: string }[];
+    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' ESCAPE '\\' LIMIT 10")
+    .all(escapeLike(idOrPrefix)) as { session_id: string }[];
 
   if (matches.length === 0) return null;
   if (matches.length > 1) {
@@ -291,6 +296,11 @@ export const stats = (db: Database): Stats => {
     threads: countThreads(db),
     sessions: one("SELECT COUNT(*) AS c FROM sessions"),
     messages: one("SELECT COUNT(*) AS c FROM messages"),
-    deletedSources: one("SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0"),
+    // "Deleted" means the source was on disk and is now gone. A NULL source_file is
+    // a subagent-only parent stub whose top-level transcript was never seen; it is
+    // body-unavailable but nothing was deleted, so it must not inflate this count.
+    deletedSources: one(
+      "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
+    ),
   };
 };
