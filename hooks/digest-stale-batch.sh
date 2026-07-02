@@ -73,12 +73,15 @@ while IFS= read -r sid; do
   tmp="$(mktemp)"; out="$(mktemp)"
 
   "$CEREBRO" digest input "$sid" > "$tmp"
-  model="$("$CEREBRO" digest model "$sid")"
+  # Tier on the transcript we just rendered (digest model --bytes) instead of
+  # having `digest model <id>` render the whole thread a second time.
+  bytes="$(wc -c < "$tmp" | tr -d ' ')"
+  model="$("$CEREBRO" digest model --bytes "$bytes")"
   if [ -z "$model" ]; then
     log "$sid: could not resolve a model — skipped"
     rm -f "$tmp" "$out"; continue
   fi
-  log "$sid: $(wc -c < "$tmp" | tr -d ' ') chars -> $model"
+  log "$sid: $bytes bytes -> $model"
 
   # Mirror summarize-on-clear.sh: --no-session-persistence so this one-shot is not
   # written into ~/.claude/projects and re-indexed as a bogus session. Only write

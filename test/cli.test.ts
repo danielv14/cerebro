@@ -226,6 +226,39 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(1);
   });
 
+  test("digest model --bytes tiers on the given size without a session id (#47)", () => {
+    const keys = [
+      "CEREBRO_DIGEST_MODEL",
+      "CEREBRO_DIGEST_MODEL_LARGE",
+      "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
+    ];
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    try {
+      const small = makeIO();
+      runCli(["digest", "model", "--bytes", "100"], small.io, () => memDb());
+      expect(small.logs.join("\n")).toBe("claude-haiku-4-5");
+      expect(small.exitCode).toBe(0);
+
+      const large = makeIO();
+      runCli(["digest", "model", "--bytes", "5000000"], large.io, () => memDb());
+      expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
+      expect(large.exitCode).toBe(0);
+    } finally {
+      keys.forEach((k, i) => {
+        if (saved[i] === undefined) delete process.env[k];
+        else process.env[k] = saved[i]!;
+      });
+    }
+  });
+
+  test("digest model --bytes rejects a non-numeric size", () => {
+    const cap = makeIO();
+    runCli(["digest", "model", "--bytes", "lots"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("--bytes must be a non-negative integer");
+    expect(cap.exitCode).toBe(1);
+  });
+
   test("digest show prints a stored summary", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "work", { timestamp: ts(0) }),

@@ -110,7 +110,9 @@ context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token
 is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
 it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
 default 200k window and a giant thread still fails with "Prompt is too long". cerebro
-owns the tiering: the hook asks `cerebro digest model <id>`, which decides by the rendered
+owns the tiering: the hook asks `cerebro digest model` (passing `--bytes <n>`, the size of
+the `digest input` it already rendered, so the transcript is not rendered twice; `digest
+model <id>` renders and measures for manual use), which decides by the rendered
 transcript's byte size (`cerebro digest input` is the size-bounded transcript; see the
 `digest` section), and `cerebro digest input` water-fill-caps anything large enough to
 risk overflowing even a 1M context. The threshold is derived from a token budget, not the
@@ -227,7 +229,9 @@ cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (nev
                                             #   --ids: one full id per line, for scripts
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id>                   # print the model the size tiering would pick
+cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
+                                            #   (--bytes: tier an already-measured size
+                                            #    without re-rendering the transcript)
 cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary

@@ -62,9 +62,13 @@ nohup bash -c '
     tmp="$(mktemp)"
     out="$(mktemp)"
     "$cerebro_bin" digest input "$sid" > "$tmp"
-    model="$("$cerebro_bin" digest model "$sid")"
+    # Tier on the size of the transcript we just rendered (digest model --bytes),
+    # instead of asking `digest model <id>` to render the whole thread a second
+    # time just to measure it.
+    bytes="$(wc -c < "$tmp" | tr -d " ")"
+    model="$("$cerebro_bin" digest model --bytes "$bytes")"
     [ -n "$model" ] || { echo "[digest] $sid: could not resolve a model — skipped"; rm -f "$tmp" "$out"; exit 0; }
-    echo "[digest] $sid: $(wc -c < "$tmp" | tr -d " ") chars -> $model"
+    echo "[digest] $sid: $bytes bytes -> $model"
     # --no-session-persistence: this headless summarization is a one-shot, never
     # resumed, and persisting it would write a transcript into ~/.claude/projects that
     # the indexer then picks up as a bogus session (its first turn is the digest

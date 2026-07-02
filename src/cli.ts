@@ -62,7 +62,7 @@ Digest actions:
   cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
   cerebro digest prompt                       Print the summarization prompt
   cerebro digest input <id>                   Print the size-bounded transcript to summarize
-  cerebro digest model <id>                   Print the model the size tiering would pick
+  cerebro digest model <id> | --bytes N       Print the model the size tiering would pick
   cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
@@ -87,6 +87,8 @@ Options:
   --stdin         relevant: read the prompt from a hook's JSON payload on stdin
   --ids           digest stale: print one full session id per line (for scripts)
   --model <name>  digest write: record which model produced the summary
+  --bytes <n>     digest model: tier by an already-measured transcript byte count
+                  (skips re-rendering the transcript; used by the hooks)
   -h, --help      Show this help
 
 Env:
@@ -192,6 +194,7 @@ export const runCli = (
           stdin: { type: "boolean", default: false },
           ids: { type: "boolean", default: false },
           model: { type: "string" },
+          bytes: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
         },
       });
@@ -357,6 +360,19 @@ export const runCli = (
           }
 
           case "model": {
+            // --bytes N tiers on an already-measured size: the hooks render the
+            // transcript once with `digest input`, `wc -c` it for logging anyway,
+            // and pass that here, so the transcript is not rendered a second time
+            // just to be measured.
+            if (values.bytes !== undefined) {
+              const bytes = Number(values.bytes);
+              if (!Number.isInteger(bytes) || bytes < 0) {
+                fail(`--bytes must be a non-negative integer (got "${values.bytes}")`);
+                break;
+              }
+              io.log(pickDigestModel(bytes));
+              break;
+            }
             const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);
             if (!sessionId) break;
             // The model the summarize hook would pick for this thread, by the byte
