@@ -10,6 +10,7 @@ import {
   DIGEST_PROMPT_VERSION,
   getSummary,
   pickDigestModel,
+  rejectSummaryReason,
   searchSummaries,
   staleThreads,
   writeSummary,
@@ -398,6 +399,13 @@ export const runCli = (
             }
             if (!text) {
               fail("digest write: no summary text on stdin");
+              break;
+            }
+            // Refuse to store output that cannot be a summary (an error message, a
+            // fragment). The thread stays stale, so the reconciler retries it.
+            const reason = rejectSummaryReason(text);
+            if (reason) {
+              fail(`digest write: rejected: ${reason}`);
               break;
             }
             const root = writeSummary(db, sessionId, text, values.model ?? null);
