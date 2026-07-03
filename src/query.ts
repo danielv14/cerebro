@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-import { countThreads, threadOpeningPrompt } from "./thread.ts";
+import { countThreads, messageOrdinal, threadOpeningPrompt } from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -10,24 +10,78 @@ export interface SearchHit {
   project_path: string | null;
   title: string | null;
   snippet: string;
+  // 1-based position of the message within its thread's chronological order; the
+  // same numbering `show` uses, so a hit can be jumped to with show --range.
+  ordinal: number;
+}
+
+export interface SearchOpts {
+  // Substring filter on the thread's project path (same semantics as sessions --project).
+  project?: string;
+  // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
+  // because stored timestamps are ISO-8601).
+  since?: string;
+  // true = every matching message (the historic behavior); false/absent = the best
+  // hit per thread, so one chatty thread cannot occupy every result slot.
+  all?: boolean;
 }
 
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
-// syntax, fall back to a sanitized phrase query of the bare tokens.
-export const search = (db: Database, query: string, limit = 20): SearchHit[] => {
+// syntax, fall back to a sanitized phrase query of the bare tokens. By default the
+// results are deduplicated to the best (lowest-bm25) hit per thread root; --all
+// disables that.
+export const search = (
+  db: Database,
+  query: string,
+  limit = 20,
+  opts: SearchOpts = {},
+): SearchHit[] => {
+  const filters: string[] = [];
+  const filterParams: string[] = [];
+  if (opts.project) {
+    filters.push("AND s.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
+    filterParams.push(escapeLike(opts.project));
+  }
+  if (opts.since) {
+    filters.push("AND m.ts >= ?");
+    filterParams.push(opts.since);
+  }
+
+  // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
+  // which rules out a window-function dedup in SQL. Instead the ranked hits are
+  // fetched in pages and the first (= best) hit per thread root is kept in JS,
+  // mirroring how relevantThreads dedups its raw tier. Paging (not a single capped
+  // over-fetch) matters: one chatty thread can own hundreds of the top bm25 rows,
+  // and a fixed window would silently starve every thread ranked below it. The
+  // ordinal is deliberately NOT computed here: it would run a thread-wide COUNT for
+  // every matched row the sorter sees; instead messageOrdinal (thread.ts, the owner
+  // of thread ordering) runs once per *kept* hit below.
+  const pageSize = opts.all ? limit : Math.max(200, limit * 10);
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
+           s.root_session_id AS root,
            snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
     FROM messages_fts
     JOIN messages m  ON m.id = messages_fts.rowid
     JOIN sessions s  ON s.session_id = m.session_id
     WHERE messages_fts MATCH ?
+    ${filters.join("\n    ")}
     ORDER BY bm25(messages_fts)
-    LIMIT ?`;
+    LIMIT ? OFFSET ?`;
   const stmt = db.query(sql);
+
+  interface RawHit extends Omit<SearchHit, "ordinal"> {
+    root: string | null;
+  }
+  const runPage = (match: string, offset: number): RawHit[] =>
+    stmt.all(match, ...filterParams, pageSize, offset) as RawHit[];
+
+  // Resolve the effective MATCH query on the first page; later pages reuse it.
+  let match = query;
+  let page: RawHit[];
   try {
-    return stmt.all(query, limit) as SearchHit[];
+    page = runPage(match, 0);
   } catch {
     const sanitized = query
       .split(/\s+/)
@@ -35,9 +89,40 @@ export const search = (db: Database, query: string, limit = 20): SearchHit[] => 
       .map((token) => `"${token.replace(/"/g, '""')}"`)
       .join(" ");
     if (!sanitized) return [];
-    return stmt.all(sanitized, limit) as SearchHit[];
+    match = sanitized;
+    page = runPage(match, 0);
   }
+
+  const kept: RawHit[] = [];
+  if (opts.all) {
+    kept.push(...page);
+  } else {
+    const seen = new Set<string>();
+    let offset = 0;
+    for (;;) {
+      for (const hit of page) {
+        const key = hit.root ?? hit.session_id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        kept.push(hit);
+        if (kept.length >= limit) break;
+      }
+      if (kept.length >= limit || page.length < pageSize) break;
+      offset += pageSize;
+      page = runPage(match, offset);
+    }
+  }
+
+  return kept.map(({ root, ...hit }) => ({
+    ...hit,
+    ordinal: messageOrdinal(db, root ?? hit.session_id, hit.ts, hit.id),
+  }));
 };
+
+// Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
+// Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
+export const escapeLike = (fragment: string): string =>
+  fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 export interface ThreadRow {
   id: string;
@@ -61,8 +146,8 @@ export const listThreads = (
   const params: (string | number)[] = [];
   let where = "";
   if (opts.project) {
-    where = "WHERE project_path LIKE '%' || ? || '%'";
-    params.push(opts.project);
+    where = "WHERE project_path LIKE '%' || ? || '%' ESCAPE '\\'";
+    params.push(escapeLike(opts.project));
   }
   params.push(opts.limit ?? 30);
 
@@ -121,9 +206,29 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
+// Recency weighting for `relevant`. bm25 is negative (lower = more relevant);
+// multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0,
+// ranking it worse, so an equal text match prefers the recent thread. Half-life 90
+// days; a thread with no known activity timestamp is treated as a year old.
+// `search` and `digest search` stay pure bm25 on purpose: an explicit search should
+// be deterministic text relevance, the per-prompt injection should favor fresh work.
+const RELEVANCE_HALF_LIFE_DAYS = 90;
+const UNKNOWN_AGE_DAYS = 365;
+export const decayedRank = (bm25: number, lastTs: string | null, nowMs: number): number => {
+  const parsed = lastTs ? Date.parse(lastTs) : Number.NaN;
+  const ageDays = Number.isFinite(parsed)
+    ? Math.max(0, (nowMs - parsed) / 86_400_000)
+    : UNKNOWN_AGE_DAYS;
+  return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS);
+};
+
 export interface SummaryRootHit {
   root: string;
   snippet: string;
+  // bm25 of the summary match plus the thread's latest activity, so `relevant` can
+  // recency-weight the tier. `digest search` ignores both.
+  score: number;
+  last_ts: string | null;
 }
 
 // The curated-summary FTS search, ranked by bm25, for an already-tokenized MATCH
@@ -142,7 +247,10 @@ export const searchSummaryRoots = (
   db
     .query(
       `SELECT s.root_session_id AS root,
-              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet
+              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
+              bm25(summaries_fts) AS score,
+              (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
+                AS last_ts
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
        WHERE summaries_fts MATCH ?
@@ -180,9 +288,17 @@ export interface RelevantThread {
 // matches for threads that have no summary yet (so the hook keeps working during
 // backfill and for un-summarized recent sessions). bm25 scores are not comparable
 // across the two FTS indexes, so we rank within each and prefer the summary tier
-// wholesale rather than merging scores. Each thread is enriched with title +
-// opening prompt so it is recognizable in injected context.
-export const relevantThreads = (db: Database, prompt: string, limit = 3): RelevantThread[] => {
+// wholesale rather than merging scores. Within each tier the bm25 score is
+// recency-decayed (decayedRank): the injection hook asks "what recent work relates
+// to this prompt", so a two-year-old thread must not outrank last week's on an
+// equal text match. Each thread is enriched with title + opening prompt so it is
+// recognizable in injected context. `now` is injectable for tests.
+export const relevantThreads = (
+  db: Database,
+  prompt: string,
+  limit = 3,
+  now = Date.now(),
+): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
 
@@ -190,9 +306,11 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
   // summary tier always outranks the raw tier for the same thread.
   const chosen = new Map<string, { snippet: string; fromSummary: boolean }>();
 
-  // Tier 1: curated summaries, ranked by bm25.
+  // Tier 1: curated summaries. Over-fetch by bm25, then re-rank with recency decay.
   try {
-    const summaryHits = searchSummaryRoots(db, match, limit, 10);
+    const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10)
+      .map((hit) => ({ ...hit, rank: decayedRank(hit.score, hit.last_ts, now) }))
+      .sort((a, b) => a.rank - b.rank);
     for (const hit of summaryHits) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
@@ -207,6 +325,7 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
       root: string | null;
       snippet: string;
       score: number;
+      last_ts: string | null;
     }
     let hits: Hit[] = [];
     try {
@@ -214,7 +333,9 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
         .query(
           `SELECT s.root_session_id AS root,
                   snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
-                  bm25(messages_fts) AS score
+                  bm25(messages_fts) AS score,
+                  (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
+                    AS last_ts
            FROM messages_fts
            JOIN messages m ON m.id = messages_fts.rowid
            JOIN sessions s ON s.session_id = m.session_id
@@ -227,14 +348,15 @@ export const relevantThreads = (db: Database, prompt: string, limit = 3): Releva
       hits = [];
     }
 
-    // Best (lowest bm25) raw hit per thread root, then fill remaining slots.
-    const byRoot = new Map<string, Hit>();
+    // Best (lowest decayed rank) raw hit per thread root, then fill remaining slots.
+    const byRoot = new Map<string, Hit & { rank: number }>();
     for (const hit of hits) {
       if (!hit.root) continue;
+      const ranked = { ...hit, rank: decayedRank(hit.score, hit.last_ts, now) };
       const existing = byRoot.get(hit.root);
-      if (!existing || hit.score < existing.score) byRoot.set(hit.root, hit);
+      if (!existing || ranked.rank < existing.rank) byRoot.set(hit.root, ranked);
     }
-    for (const hit of [...byRoot.values()].sort((a, b) => a.score - b.score)) {
+    for (const hit of [...byRoot.values()].sort((a, b) => a.rank - b.rank)) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root!)) {
         chosen.set(hit.root!, { snippet: hit.snippet, fromSummary: false });
@@ -265,8 +387,8 @@ export const resolveSession = (db: Database, idOrPrefix: string): string | null 
   if (exact) return exact.session_id;
 
   const matches = db
-    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' LIMIT 10")
-    .all(idOrPrefix) as { session_id: string }[];
+    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' ESCAPE '\\' LIMIT 10")
+    .all(escapeLike(idOrPrefix)) as { session_id: string }[];
 
   if (matches.length === 0) return null;
   if (matches.length > 1) {
@@ -283,14 +405,43 @@ export interface Stats {
   sessions: number;
   messages: number;
   deletedSources: number;
+  // Oldest and newest message timestamps: how far back the archive reaches.
+  firstTs: string | null;
+  lastTs: string | null;
+  // Digest coverage: summaries are tier 1 of `relevant`, so this is recall quality.
+  summarizedThreads: number;
+  // Threads per project, largest first (top 5).
+  topProjects: { project_path: string; threads: number }[];
 }
 
 export const stats = (db: Database): Stats => {
   const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
+  // Span from the small sessions table, not a full scan of messages (ts is
+  // unindexed there): first_ts/last_ts are recomputed from messages on every
+  // session touch, so the aggregates are equivalent.
+  const span = db.query("SELECT MIN(first_ts) AS mn, MAX(last_ts) AS mx FROM sessions").get() as {
+    mn: string | null;
+    mx: string | null;
+  };
   return {
     threads: countThreads(db),
     sessions: one("SELECT COUNT(*) AS c FROM sessions"),
     messages: one("SELECT COUNT(*) AS c FROM messages"),
-    deletedSources: one("SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0"),
+    // "Deleted" means the source was on disk and is now gone. A NULL source_file is
+    // a subagent-only parent stub whose top-level transcript was never seen; it is
+    // body-unavailable but nothing was deleted, so it must not inflate this count.
+    deletedSources: one(
+      "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
+    ),
+    firstTs: span.mn,
+    lastTs: span.mx,
+    summarizedThreads: one("SELECT COUNT(*) AS c FROM summaries"),
+    topProjects: db
+      .query(
+        `SELECT project_path, COUNT(*) AS threads FROM threads
+         WHERE project_path IS NOT NULL
+         GROUP BY project_path ORDER BY threads DESC, project_path LIMIT 5`,
+      )
+      .all() as { project_path: string; threads: number }[],
   };
 };

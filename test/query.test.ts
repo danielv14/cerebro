@@ -5,6 +5,7 @@ import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
+  decayedRank,
   listThreads,
   recentThreads,
   relevantThreads,
@@ -100,6 +101,67 @@ describe("query (populated archive)", () => {
     const hits = search(db, "limiter", 2);
     // Three documents match, but limit=2 truncates to the two best by bm25.
     expect(hits.map((h) => h.session_id)).toEqual(["TOP", "MID"]);
+  });
+
+  test("search returns the best hit per thread by default, --all returns every message (#53)", () => {
+    writeSession(env.projects, "-repo", "CHATTY", [
+      userMsg("CHATTY", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
+      assistantMsg("CHATTY", "a1", "limiter limiter", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("CHATTY", "u2", "more about the limiter", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "u3", `limiter ${"filler ".repeat(50)}`, { timestamp: ts(10) }),
+    ]);
+    runIndex(db);
+    // Default: one (best) hit per thread, so OTHER is not buried by CHATTY.
+    const deduped = search(db, "limiter", 10);
+    expect(deduped.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+    // --all: every matching message.
+    const all = search(db, "limiter", 10, { all: true });
+    expect(all.length).toBe(4);
+  });
+
+  test("search --project and --since scope the hits (#53)", () => {
+    writeSession(env.projects, "-repo-a", "A", [
+      userMsg("A", "u1", "limiter in alpha", { cwd: "/home/user/alpha", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-b", "B", [
+      userMsg("B", "u2", "limiter in beta", { cwd: "/home/user/beta", timestamp: ts(100) }),
+    ]);
+    runIndex(db);
+    expect(search(db, "limiter", 10, { project: "alpha" }).map((h) => h.session_id)).toEqual(["A"]);
+    expect(search(db, "limiter", 10, { since: ts(50) }).map((h) => h.session_id)).toEqual(["B"]);
+    expect(search(db, "limiter", 10).length).toBe(2);
+  });
+
+  test("deduped search paginates past a chatty thread that fills the first fetch page", () => {
+    // 210 matching messages in one thread outrank the other thread's single match.
+    // A fixed 200-row window would starve OTHER; pagination must surface it.
+    const chatty = Array.from({ length: 210 }, (_, i) =>
+      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
+        timestamp: ts(i),
+        parentUuid: i === 0 ? null : `c${i - 1}`,
+      }),
+    );
+    writeSession(env.projects, "-repo", "CHATTY", chatty);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 5);
+    expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+  });
+
+  test("search hits carry the thread ordinal matching show's numbering (#58)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "opening prompt", { timestamp: ts(0) }),
+      assistantMsg("S", "a1", "the limiter answer", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("S", "u2", "closing note", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 10);
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.ordinal).toBe(2); // second message in the thread's chronology
   });
 
   test("search recovers from a malformed FTS query via the sanitized fallback", () => {
@@ -295,6 +357,33 @@ describe("query (populated archive)", () => {
     expect(byId.get("RAW")!.fromSummary).toBe(false);
   });
 
+  test("decayedRank shrinks a hit's bm25 magnitude with age (#52)", () => {
+    const now = Date.parse("2026-07-01T00:00:00Z");
+    const fresh = decayedRank(-10, "2026-07-01T00:00:00Z", now);
+    const halfLife = decayedRank(-10, "2026-04-02T00:00:00Z", now); // ~90 days old
+    const unknown = decayedRank(-10, null, now);
+    expect(fresh).toBeCloseTo(-10);
+    expect(halfLife).toBeCloseTo(-5, 0);
+    expect(fresh).toBeLessThan(halfLife); // fresher = more negative = ranked first
+    expect(halfLife).toBeLessThan(unknown); // unknown activity ranks worst
+  });
+
+  test("relevantThreads prefers a recent thread over an old one at similar text relevance (#52)", () => {
+    // OLD matches slightly more densely, but its last activity is half a year before
+    // NEW's. Recency decay must flip the order for the injection use case.
+    writeSession(env.projects, "-repo", "OLD", [
+      userMsg("OLD", "u1", "the limiter limiter design", { timestamp: ts(0) }),
+    ]);
+    const halfYear = 180 * 86_400;
+    writeSession(env.projects, "-repo", "NEW", [
+      userMsg("NEW", "u2", "notes about the limiter approach", { timestamp: ts(halfYear) }),
+    ]);
+    runIndex(db);
+    const now = Date.parse(ts(halfYear));
+    const hits = relevantThreads(db, "limiter", 2, now);
+    expect(hits.map((h) => h.id)).toEqual(["NEW", "OLD"]);
+  });
+
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "database migration work")]);
     runIndex(db);
@@ -311,6 +400,39 @@ describe("query (populated archive)", () => {
     expect(resolveSession(db, "abc12345")).toBe("abc12345-aaaa"); // unique prefix
     expect(resolveSession(db, "zzz")).toBeNull(); // no match
     expect(() => resolveSession(db, "abc")).toThrow(/[Aa]mbiguous/); // matches both
+  });
+
+  test("resolveSession treats LIKE wildcards in a prefix literally (#48)", () => {
+    writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
+    runIndex(db);
+    // `_` would match any character unescaped; `%` would match everything.
+    expect(resolveSession(db, "abc_2345")).toBeNull();
+    expect(resolveSession(db, "%")).toBeNull();
+  });
+
+  test("--project filter treats LIKE wildcards literally (#48)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi", { cwd: "/home/user/myXapp" }),
+    ]);
+    runIndex(db);
+    // Unescaped, `my_app` would match `myXapp` via the `_` wildcard.
+    expect(listThreads(db, { project: "my_app" }).length).toBe(0);
+    expect(listThreads(db, { project: "myXapp" }).length).toBe(1);
+  });
+
+  test("stats excludes subagent-only stubs from deleted sources (#45)", () => {
+    // A parent stub created purely from a subagent file: source_file is NULL,
+    // body_available becomes 0, but nothing was ever deleted.
+    writeSubagent(env.projects, "-repo", "STUB", "agent-1", [
+      userMsg("STUB", "sa1", "sub work", { isSidechain: true }),
+    ]);
+    const path = writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hi")]);
+    runIndex(db);
+    expect(stats(db).deletedSources).toBe(0);
+    // A genuinely deleted source still counts.
+    fs.rmSync(path);
+    runIndex(db);
+    expect(stats(db).deletedSources).toBe(1);
   });
 
   test("stats counts threads, sessions, messages, and deleted sources", () => {

@@ -159,6 +159,35 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  test("show --range prints a numbered verbatim slice (#58)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "first", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "second", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("SESS", "u2", "third", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--range", "2..3"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("showing 2..3 of 3 message(s)");
+    expect(out).toContain("#2 assistant");
+    expect(out).toContain("second");
+    expect(out).not.toContain("first");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("show --range rejects malformed and out-of-bounds ranges", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "only one")]);
+    const bad = makeIO();
+    runCli(["show", "SESS", "--range", "3..2"], bad.io, seeded());
+    expect(bad.errs.join("\n")).toContain("--range must be N or A..B");
+    expect(bad.exitCode).toBe(1);
+
+    const oob = makeIO();
+    runCli(["show", "SESS", "--range", "5"], oob.io, seeded());
+    expect(oob.errs.join("\n")).toContain("starts at 5 but the thread has 1 message(s)");
+    expect(oob.exitCode).toBe(1);
+  });
+
   test("search with no hits prints the empty-state line", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
@@ -179,6 +208,119 @@ describe("runCli", () => {
     const out = cap.logs.join("\n");
     expect(out).toContain("Threads:");
     expect(out).toContain("Messages:");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("--json emits parseable rows for search, sessions, and stats (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "a limiter question", { timestamp: ts(0) }),
+    ]);
+
+    const searchCap = makeIO();
+    runCli(["search", "limiter", "--json"], searchCap.io, seeded());
+    const hits = JSON.parse(searchCap.logs.join("\n"));
+    expect(hits.length).toBe(1);
+    expect(hits[0].session_id).toBe("SESS");
+    expect(hits[0].ordinal).toBe(1);
+
+    const sessionsCap = makeIO();
+    runCli(["sessions", "--json"], sessionsCap.io, seeded());
+    expect(JSON.parse(sessionsCap.logs.join("\n"))[0].id).toBe("SESS");
+
+    const statsCap = makeIO();
+    runCli(["stats", "--json"], statsCap.io, seeded());
+    const s = JSON.parse(statsCap.logs.join("\n"));
+    expect(s.messages).toBe(1);
+    expect(s.staleThreads).toBe(1);
+  });
+
+  test("--json emits an empty array on no matches instead of prose (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "hello")]);
+    const cap = makeIO();
+    runCli(["search", "zzyzx", "--json"], cap.io, seeded());
+    expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("show --json returns the thread's messages (#54)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "hello there", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "general kenobi", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--json"], cap.io, seeded());
+    const payload = JSON.parse(cap.logs.join("\n"));
+    expect(payload.id).toBe("SESS");
+    expect(payload.total).toBe(2);
+    expect(payload.messages[1].text).toBe("general kenobi");
+  });
+
+  test("show --range combined with --json returns the slice, not the whole thread", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "first", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "second", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("SESS", "u2", "third", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const cap = makeIO();
+    runCli(["show", "SESS", "--range", "2..3", "--json"], cap.io, seeded());
+    const payload = JSON.parse(cap.logs.join("\n"));
+    expect(payload.total).toBe(3);
+    expect(payload.from).toBe(2);
+    expect(payload.messages.map((m: { text: string }) => m.text)).toEqual(["second", "third"]);
+    // Range validation still applies in JSON mode.
+    const bad = makeIO();
+    runCli(["show", "SESS", "--range", "9", "--json"], bad.io, seeded());
+    expect(bad.errs.join("\n")).toContain("starts at 9");
+    expect(bad.exitCode).toBe(1);
+  });
+
+  test("search --since rejects invalid calendar dates and trailing garbage", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    for (const since of ["2026-31-01", "2026-01-31foo", "2026-02-30"]) {
+      const cap = makeIO();
+      runCli(["search", "limiter", "--since", since], cap.io, seeded());
+      expect(cap.errs.join("\n")).toContain("--since must be a valid ISO date");
+      expect(cap.exitCode).toBe(1);
+    }
+  });
+
+  test("a failing database open reports cleanly instead of throwing", () => {
+    const cap = makeIO();
+    runCli(["stats"], cap.io, () => {
+      throw new Error("disk io error");
+    });
+    expect(cap.errs.join("\n")).toContain("could not open database");
+    expect(cap.errs.join("\n")).toContain("disk io error");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("backup dispatch writes a snapshot and validates --keep", () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const join = require("node:path").join;
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "cerebro-cli-backup-"));
+    try {
+      const dbPath = join(dir, "archive.sqlite");
+      const ok = makeIO();
+      runCli(["backup", "--db", dbPath], ok.io);
+      expect(ok.logs.join("\n")).toContain("Backup written:");
+      expect(fs.readdirSync(join(dir, "backups")).length).toBe(1);
+      expect(ok.exitCode).toBe(0);
+
+      const bad = makeIO();
+      runCli(["backup", "--db", dbPath, "--keep", "0"], bad.io);
+      expect(bad.errs.join("\n")).toContain("--keep must be a positive integer");
+      expect(bad.exitCode).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("maintain runs the housekeeping and reports it (#56)", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "work")]);
+    const cap = makeIO();
+    runCli(["maintain"], cap.io, seeded());
+    expect(cap.logs.join("\n")).toContain("Maintenance done");
     expect(cap.exitCode).toBe(0);
   });
 
@@ -223,6 +365,39 @@ describe("runCli", () => {
     const cap = makeIO();
     runCli(["digest", "model"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("digest model: missing <session-id>");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("digest model --bytes tiers on the given size without a session id (#47)", () => {
+    const keys = [
+      "CEREBRO_DIGEST_MODEL",
+      "CEREBRO_DIGEST_MODEL_LARGE",
+      "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
+    ];
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    try {
+      const small = makeIO();
+      runCli(["digest", "model", "--bytes", "100"], small.io, () => memDb());
+      expect(small.logs.join("\n")).toBe("claude-haiku-4-5");
+      expect(small.exitCode).toBe(0);
+
+      const large = makeIO();
+      runCli(["digest", "model", "--bytes", "5000000"], large.io, () => memDb());
+      expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
+      expect(large.exitCode).toBe(0);
+    } finally {
+      keys.forEach((k, i) => {
+        if (saved[i] === undefined) delete process.env[k];
+        else process.env[k] = saved[i]!;
+      });
+    }
+  });
+
+  test("digest model --bytes rejects a non-numeric size", () => {
+    const cap = makeIO();
+    runCli(["digest", "model", "--bytes", "lots"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("--bytes must be a non-negative integer");
     expect(cap.exitCode).toBe(1);
   });
 

@@ -2,8 +2,18 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { dirname } from "node:path";
 
-const SCHEMA = `
-PRAGMA journal_mode = WAL;
+// Bump whenever SCHEMA or migrate() changes. openDb stamps it into PRAGMA
+// user_version and skips the whole DDL block when the stored version matches, so
+// the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
+// schema work. An old database (or a fresh one, user_version 0) runs the DDL +
+// migrations once and is stamped.
+export const SCHEMA_VERSION = 3;
+
+// Per-connection pragmas: these run on every open, outside the version-gated DDL.
+// busy_timeout / foreign_keys do not persist in the file; journal_mode does, but it
+// cannot be changed inside a transaction, so it lives here (a no-op re-apply on an
+// already-WAL database) rather than in the transactional migration block below.
+const CONNECTION_PRAGMAS = `
 -- Wait up to 5s for a lock instead of failing instantly. cerebro is opened
 -- concurrently by short-lived processes (the index/digest hooks, manual reads,
 -- and a draining batch) against one WAL file; with the default timeout of 0 a
@@ -11,12 +21,19 @@ PRAGMA journal_mode = WAL;
 -- SQLITE_BUSY. A timeout rides out those sub-second windows.
 PRAGMA busy_timeout = 5000;
 PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+`;
 
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS index_state (
   source_file   TEXT PRIMARY KEY,
   bytes_indexed INTEGER NOT NULL DEFAULT 0,
   mtime_ms      REAL    NOT NULL DEFAULT 0,
-  indexed_at    TEXT
+  indexed_at    TEXT,
+  -- 1 = detected as cerebro's own digest summarization transcript. The file is
+  -- permanently excluded from indexing, even if it grows after detection (the
+  -- detection itself only inspects a read that starts at byte 0).
+  is_digest     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -29,6 +46,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   git_branch        TEXT,
   source_file       TEXT,
   title             TEXT,
+  -- Priority of the stored title (custom-title 3 > ai-title 2 > summary 1, 0 = none).
+  -- Persisted so an incremental run that only sees a lower-priority title event can
+  -- never clobber a higher-priority title indexed earlier.
+  title_priority    INTEGER NOT NULL DEFAULT 0,
   first_ts          TEXT,
   last_ts           TEXT,
   msg_count         INTEGER NOT NULL DEFAULT 0,
@@ -42,6 +63,10 @@ CREATE TABLE IF NOT EXISTS messages (
   uuid         TEXT UNIQUE NOT NULL,
   session_id   TEXT NOT NULL,
   parent_uuid  TEXT,
+  -- Legacy, always NULL and no longer written. Kept (never dropped) on purpose:
+  -- the deployed hook binary is a frozen snapshot whose INSERT names this column;
+  -- dropping it would make every automated index run fail silently until the next
+  -- 'bun run deploy'. Harmless to carry.
   line_no      INTEGER,
   ts           TEXT,
   role         TEXT,
@@ -63,6 +88,13 @@ END;
 CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text)
     VALUES ('delete', old.id, old.text);
+END;
+-- Messages are normally insert-only, but 'index --rebuild' re-flattens stored text
+-- in place via an upsert; this keeps the FTS index in sync with those updates.
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text)
+    VALUES ('delete', old.id, old.text);
+  INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
 END;
 
 -- One LLM-written summary per logical thread (keyed by root_session_id), the
@@ -141,12 +173,45 @@ const migrate = (db: Database): void => {
   if (!columns.some((c) => c.name === "is_sidechain")) {
     db.run("ALTER TABLE messages ADD COLUMN is_sidechain INTEGER NOT NULL DEFAULT 0");
   }
+  const sessionColumns = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!sessionColumns.some((c) => c.name === "title_priority")) {
+    // Pre-migration titles get priority 0: the next title event of any priority may
+    // replace them once, after which the real priority is tracked.
+    db.run("ALTER TABLE sessions ADD COLUMN title_priority INTEGER NOT NULL DEFAULT 0");
+  }
+  const stateColumns = db.query("PRAGMA table_info(index_state)").all() as { name: string }[];
+  if (!stateColumns.some((c) => c.name === "is_digest")) {
+    db.run("ALTER TABLE index_state ADD COLUMN is_digest INTEGER NOT NULL DEFAULT 0");
+  }
 };
 
 export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
-  db.exec(SCHEMA);
-  migrate(db);
+  db.exec(CONNECTION_PRAGMAS);
+  const version = (): number =>
+    (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+
+  if (version() !== SCHEMA_VERSION) {
+    // The DDL itself is idempotent (IF NOT EXISTS everywhere; each statement takes
+    // the write lock, which busy_timeout serializes), so it can run unwrapped. The
+    // migrations are NOT: they are check-then-ALTER, and two processes racing the
+    // first open after an upgrade (a prompt hook plus an index hook) could both
+    // pass the column-existence check and the loser's ALTER would throw. BEGIN
+    // IMMEDIATE takes the write lock up front and the version is re-checked under
+    // it, so the loser sees the winner's stamp and skips.
+    db.exec(SCHEMA);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (version() !== SCHEMA_VERSION) {
+        migrate(db);
+        db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   return db;
 };

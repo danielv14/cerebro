@@ -163,6 +163,46 @@ describe("runIndex", () => {
     expect(row.title).toBe("Custom title");
   });
 
+  test("a later lower-priority title event never clobbers a custom title (#41)", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      { type: "custom-title", customTitle: "Custom title", sessionId: "S" },
+    ]);
+    runIndex(db);
+    // Claude Code appends a summary event later; the incremental run only sees it.
+    appendRaw(path, `${JSON.stringify({ type: "summary", summary: "auto", sessionId: "S" })}\n`);
+    runIndex(db);
+    const row = db
+      .query("SELECT title, title_priority FROM sessions WHERE session_id='S'")
+      .get() as {
+      title: string;
+      title_priority: number;
+    };
+    expect(row.title).toBe("Custom title");
+    expect(row.title_priority).toBe(3);
+  });
+
+  test("a later higher- or equal-priority title event still replaces the title", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      { type: "ai-title", aiTitle: "AI v1", sessionId: "S" },
+    ]);
+    runIndex(db);
+    appendRaw(path, `${JSON.stringify({ type: "ai-title", aiTitle: "AI v2", sessionId: "S" })}\n`);
+    runIndex(db);
+    let row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("AI v2"); // equal priority: the newer title wins
+    appendRaw(
+      path,
+      `${JSON.stringify({ type: "custom-title", customTitle: "Mine", sessionId: "S" })}\n`,
+    );
+    runIndex(db);
+    row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as { title: string };
+    expect(row.title).toBe("Mine"); // higher priority wins
+  });
+
   test("a standalone session is its own root", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db);
@@ -186,6 +226,31 @@ describe("runIndex", () => {
     const resume = db
       .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
       .get() as { parent_session_id: string; root_session_id: string };
+    expect(resume.parent_session_id).toBe("ORIG");
+    expect(resume.root_session_id).toBe("ORIG");
+  });
+
+  test("relink picks the true first main-chain turn: NULL ts and sidechain rows cannot shadow it (#44)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      // The true first turn carries the resume link but has a tolerated missing ts:
+      // ordering by id (file order) still picks it, where either ts-based ordering
+      // would be shadowed (NULLs-first picks noise, NULLs-last skips this one).
+      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: undefined }),
+      userMsg("RESUME", "u3", "later", { parentUuid: "u2", timestamp: ts(2) }),
+    ]);
+    // A sidechain turn folded into RESUME: excluded outright by the is_sidechain
+    // filter, so it can never carry or shadow the link regardless of ts or id.
+    writeSubagent(env.projects, "-repo", "RESUME", "agent-x", [
+      userMsg("RESUME", "sa1", "sub", { isSidechain: true, timestamp: ts(1), parentUuid: null }),
+    ]);
+    runIndex(db);
+    const resume = db
+      .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
+      .get() as { parent_session_id: string | null; root_session_id: string };
     expect(resume.parent_session_id).toBe("ORIG");
     expect(resume.root_session_id).toBe("ORIG");
   });
@@ -238,6 +303,55 @@ describe("runIndex", () => {
     expect(countMessages(db)).toBe(before);
   });
 
+  test("--rebuild re-flattens stored text of on-disk messages and syncs FTS (#43)", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "the real searchable text")]);
+    runIndex(db);
+    // Simulate an old flattening generation: stored text differs from a fresh parse.
+    db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
+    db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
+    runIndex(db, false, true);
+    const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
+    expect(row.text).toBe("the real searchable text");
+    // The update trigger kept the FTS index in sync with the refreshed text.
+    const hit = db
+      .query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'searchable'")
+      .get();
+    expect(hit).not.toBeNull();
+  });
+
+  test("--rebuild keeps messages whose source file is deleted (#43)", () => {
+    const path = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "ug", "precious")]);
+    writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "uk", "still here")]);
+    runIndex(db);
+    require("node:fs").rmSync(path);
+    const result = runIndex(db, false, true);
+    expect(result.newMessages).toBe(0);
+    // The deleted session's only copy survives the rebuild.
+    const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
+    expect(row.text).toBe("precious");
+    const avail = db.query("SELECT body_available FROM sessions WHERE session_id='GONE'").get() as {
+      body_available: number;
+    };
+    expect(avail.body_available).toBe(0);
+  });
+
+  test("--rebuild never re-attributes a shared message to the resume (#43)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+    ]);
+    // The resume file carries a copy of the original's message (same uuid).
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u1", "start", { timestamp: ts(0) }),
+      userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    runIndex(db, false, true);
+    const row = db.query("SELECT session_id FROM messages WHERE uuid='u1'").get() as {
+      session_id: string;
+    };
+    expect(row.session_id).toBe("ORIG");
+  });
+
   test("mid-write final line is deferred, then indexed once complete", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "complete")]);
     const a1 = JSON.stringify(assistantMsg("S", "a1", "later", { parentUuid: "u1" }));
@@ -282,6 +396,30 @@ describe("runIndex", () => {
     });
     // Cursor was recorded, so a second run does not re-scan and re-skip it.
     expect(runIndex(db).filesIndexed).toBe(0);
+  });
+
+  test("a digest transcript that grows after detection stays excluded (#42)", () => {
+    // The digest run is still writing while the first index detects it. The later
+    // lines must not leak into the archive on the next incremental run.
+    const path = writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
+    runIndex(db);
+    appendRaw(
+      path,
+      `${JSON.stringify(assistantMsg("DIG", "d2", "the summary", { parentUuid: "d1" }))}\n`,
+    );
+    // Real run: nothing indexed, no session row appears.
+    expect(runIndex(db).newMessages).toBe(0);
+    expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
+      c: 0,
+    });
+    // Dry run agrees: the grown digest file is not a candidate.
+    appendRaw(path, `${JSON.stringify(assistantMsg("DIG", "d3", "more", { parentUuid: "d2" }))}\n`);
+    const plan = dryRunIndex(db);
+    expect(plan.candidateMessages).toBe(0);
+    expect(plan.filesToRead).toBe(0);
   });
 
   test("a session that merely contains the digest prompt later is still indexed", () => {
