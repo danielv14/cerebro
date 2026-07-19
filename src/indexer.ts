@@ -306,16 +306,11 @@ const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
   db.run("DROP TABLE _present");
 };
 
-const chunk = <T>(items: T[], size: number): T[][] => {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-};
-
 // Build logical threads across resumes. A resume's first message has a parentUuid
 // owned by an earlier session; chaining those parents up gives each thread's root.
 export const relinkThreads = (db: Database): void => {
-  // Earliest main-chain message per session, with its parentUuid. Sidechain rows
+  // Pass 1: direct parent session, in one query. The inner subquery finds the
+  // earliest main-chain message per session, with its parentUuid. Sidechain rows
   // are excluded: the resume link lives on the first main-chain turn, and a folded
   // subagent turn can never carry it (a pure-subagent stub then has no candidate
   // row, which is correct: it has no parent link to find). Ordering is by id, not
@@ -324,35 +319,26 @@ export const relinkThreads = (db: Database): void => {
   // higher ids, re-reads dedup onto the original rows), so the lowest id is the
   // true first turn regardless of missing or unordered timestamps — either ts-based
   // ordering can be shadowed by a tolerated NULL ts.
-  const firsts = db
+  //
+  // The join resolves which session owns the referenced parentUuid (uuid is UNIQUE,
+  // so at most one owner per first-message); a NULL parent_uuid simply never joins,
+  // and the <> guard drops in-session parents, so only cross-session resume links
+  // survive.
+  const links = db
     .query(
-      `SELECT session_id, parent_uuid FROM (
+      `SELECT f.session_id AS session, m.session_id AS parent
+       FROM (
          SELECT session_id, parent_uuid,
                 ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id) AS rn
          FROM messages
          WHERE is_sidechain = 0
-       ) WHERE rn = 1`,
+       ) f
+       JOIN messages m ON m.uuid = f.parent_uuid
+       WHERE f.rn = 1 AND m.session_id <> f.session_id`,
     )
-    .all() as { session_id: string; parent_uuid: string | null }[];
+    .all() as { session: string; parent: string }[];
 
-  // Resolve which session owns each referenced parentUuid.
-  const parentUuids = [...new Set(firsts.map((f) => f.parent_uuid).filter(Boolean) as string[])];
-  const ownerOf = new Map<string, string>();
-  for (const group of chunk(parentUuids, 500)) {
-    const placeholders = group.map(() => "?").join(",");
-    const rows = db
-      .query(`SELECT uuid, session_id FROM messages WHERE uuid IN (${placeholders})`)
-      .all(...group) as { uuid: string; session_id: string }[];
-    for (const row of rows) ownerOf.set(row.uuid, row.session_id);
-  }
-
-  // Pass 1: direct parent session.
-  const parentSession = new Map<string, string>();
-  for (const first of firsts) {
-    if (!first.parent_uuid) continue;
-    const owner = ownerOf.get(first.parent_uuid);
-    if (owner && owner !== first.session_id) parentSession.set(first.session_id, owner);
-  }
+  const parentSession = new Map<string, string>(links.map((l) => [l.session, l.parent]));
 
   // Pass 2: walk to the root, guarding against cycles.
   const rootOf = (session: string): string => {
