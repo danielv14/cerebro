@@ -4,6 +4,7 @@ import { openDb } from "../src/db.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   countThreads,
+  messageOrdinal,
   rootOf,
   threadLastTs,
   threadMessages,
@@ -126,6 +127,44 @@ describe("thread (identity + membership)", () => {
 
     test("is null for an unknown thread root", () => {
       expect(threadLastTs(db, "does-not-exist")).toBeNull();
+    });
+  });
+
+  describe("messageOrdinal", () => {
+    test("matches the position in threadMessages' (ts, id) order across the whole thread", () => {
+      seedThread();
+      // Same ordering threadMessages uses; the ordinal of the i-th row must be i+1.
+      const rows = db
+        .query(
+          `SELECT id FROM messages
+           WHERE session_id IN (SELECT session_id FROM sessions WHERE root_session_id = 'ORIG')
+           ORDER BY ts, id`,
+        )
+        .all() as { id: number }[];
+      rows.forEach((row, i) => {
+        expect(messageOrdinal(db, "ORIG", row.id)).toBe(i + 1);
+      });
+    });
+
+    test("a NULL-ts message sorts first, before every timestamped turn", () => {
+      // Pins the NULLs-first ASC semantics the ordinal shares with threadMessages:
+      // a tolerated missing timestamp must not push the message to the end.
+      writeSession(env.projects, "-repo", "S", [
+        userMsg("S", "u1", "first with ts", { timestamp: ts(0) }),
+        userMsg("S", "u2", "no timestamp", { timestamp: null }),
+        assistantMsg("S", "a1", "answer", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      runIndex(db);
+      const idOf = (text: string): number =>
+        (db.query("SELECT id FROM messages WHERE text = ?").get(text) as { id: number }).id;
+      expect(messageOrdinal(db, "S", idOf("no timestamp"))).toBe(1);
+      expect(messageOrdinal(db, "S", idOf("first with ts"))).toBe(2);
+      expect(messageOrdinal(db, "S", idOf("answer"))).toBe(3);
+    });
+
+    test("returns 0 for an id that is not in the thread", () => {
+      seedThread();
+      expect(messageOrdinal(db, "ORIG", 999_999)).toBe(0);
     });
   });
 

@@ -68,30 +68,23 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
   return row?.text ?? null;
 };
 
-// The 1-based position of a message within its thread's chronological order: the
-// COUNT form of threadMessages' ORDER BY (ts, id) under SQLite's NULLs-first ASC
-// semantics (a NULL ts sorts before every non-NULL ts). Owned here, next to
-// threadMessages, so search's #N ordinals and show's outline/--range numbering
-// share one definition and cannot drift.
-export const messageOrdinal = (
-  db: Database,
-  root: string,
-  ts: string | null,
-  id: number,
-): number => {
+// The 1-based position of a message within its thread's chronological order.
+// ROW_NUMBER over the exact ORDER BY (ts, id) that threadMessages sorts with (ASC,
+// so a NULL ts sorts first), making "ordinal = position in threadMessages' order"
+// structurally true rather than re-derived. Owned here, next to threadMessages, so
+// search's #N ordinals and show's outline/--range numbering share one definition
+// and cannot drift. The id always comes from a message in the thread (search's FTS
+// join guarantees it); the 0 fallback is defensive only.
+export const messageOrdinal = (db: Database, root: string, id: number): number => {
   const row = db
     .query(
-      `SELECT COUNT(*) AS c FROM messages m2
-       WHERE m2.${THREAD_MEMBERSHIP}
-         AND (
-           (m2.ts IS NULL AND ? IS NOT NULL)
-           OR (m2.ts IS NULL AND ? IS NULL AND m2.id <= ?)
-           OR (m2.ts IS NOT NULL AND ? IS NOT NULL
-               AND (m2.ts < ? OR (m2.ts = ? AND m2.id <= ?)))
-         )`,
+      `SELECT rn FROM (
+         SELECT id, ROW_NUMBER() OVER (ORDER BY ts, id) AS rn
+         FROM messages WHERE ${THREAD_MEMBERSHIP}
+       ) WHERE id = ?`,
     )
-    .get(root, ts, ts, id, ts, ts, ts, id) as { c: number };
-  return row.c;
+    .get(root, id) as { rn: number } | null;
+  return row?.rn ?? 0;
 };
 
 // The thread's most recent activity: MAX(last_ts) across the root and all its
