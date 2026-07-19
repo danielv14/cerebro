@@ -12,7 +12,7 @@ import {
   searchSummaries,
   staleThreads,
   writeSummary,
-} from "../digest.ts";
+} from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
 import { type CommandContext, resolveOrFail } from "./context.ts";

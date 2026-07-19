@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { countStaleThreads } from "../digest.ts";
+import { countStaleThreads } from "../digest/index.ts";
 import { type Stats, stats } from "../query.ts";
 import { humanBytes, projectName, shortDate } from "../render.ts";
 import type { CommandContext } from "./context.ts";

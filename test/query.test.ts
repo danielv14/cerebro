@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest.ts";
+import { writeSummary } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   decayedRank,

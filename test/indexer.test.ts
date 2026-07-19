@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { DIGEST_PROMPT } from "../src/digest.ts";
+import { DIGEST_PROMPT } from "../src/digest/index.ts";
 import { dryRunIndex, planFileRead, runIndex, splitBuffer } from "../src/indexer.ts";
 import type { SessionFile } from "../src/paths.ts";
 import {
