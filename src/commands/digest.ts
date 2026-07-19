@@ -6,20 +6,79 @@ import {
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
+  type StaleThread,
+  type StoredSummary,
+  type SummaryHit,
   searchSummaries,
   staleThreads,
   writeSummary,
 } from "../digest.ts";
-import {
-  digestShow,
-  noSummaryHint,
-  staleIds,
-  staleListing,
-  summarySaved,
-  summarySearchListing,
-} from "../render.ts";
+import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
 import { type CommandContext, resolveOrFail } from "./context.ts";
+
+// `digest stale` (human): one row per stale thread with the staleness reason, the
+// title on its own line, then the how-to-summarize footer. `promptVersion` is passed
+// in so this stays free of the staleness query's versioning.
+export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
+  const lines: string[] = [];
+  for (const row of rows) {
+    const reason =
+      row.summary_version == null
+        ? "never summarized"
+        : row.summary_version < opts.promptVersion
+          ? `prompt v${row.summary_version} < v${opts.promptVersion}`
+          : "new activity since summary";
+    lines.push(
+      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
+    );
+    lines.push(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
+  }
+  lines.push(
+    `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
+      `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
+  );
+  return lines;
+};
+
+// `digest stale --ids`: machine mode for the batch hook. One full session id per
+// line, nothing else, so a caller never scrapes the human listing format.
+export const staleIds = (rows: StaleThread[]): string[] => rows.map((row) => row.id);
+
+// `digest search`: one header + one snippet line per summary hit, then the count
+// footer pointing at both the thread and its stored summary.
+export const summarySearchListing = (hits: SummaryHit[]): string[] => {
+  const lines: string[] = [];
+  for (const hit of hits) {
+    lines.push(
+      `${shortId(hit.id)}  ${shortTime(hit.last_ts)}  ${projectName(hit.project_path)}  ${oneLine(hit.title ?? "(untitled)", 70)}`,
+    );
+    lines.push(`    ${oneLine(hit.snippet, 160)}`);
+  }
+  lines.push(
+    `\n${hits.length} summary hit(s). Open one: cerebro show <id>  |  full summary: cerebro digest show <id>`,
+  );
+  return lines;
+};
+
+// `digest show`: the summary header (root id, time, model, prompt version) then the
+// stored summary body.
+export const digestShow = (summary: StoredSummary): string[] => {
+  const model = summary.model ? `, ${summary.model}` : "";
+  return [
+    `Summary for thread ${shortId(summary.root_session_id)}  ` +
+      `(${shortTime(summary.summarized_at)}${model}, prompt v${summary.prompt_version})\n`,
+    summary.summary,
+  ];
+};
+
+// `digest show` empty state: no summary stored yet for this thread.
+export const noSummaryHint = (sessionId: string): string =>
+  `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`;
+
+// `digest write` confirmation: which thread the summary was saved to and its size.
+export const summarySaved = (root: string, chars: number): string =>
+  `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
 // The `digest` command: dispatch over its action sub-commands
 // (stale | prompt | input | model | write | search | show).
