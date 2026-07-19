@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
+import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { searchSummaryRoots, threadMeta, toMatchQuery } from "./query.ts";
 import { rootOf, threadLastTs } from "./thread.ts";
+
+// Re-exported so the digest module's public surface is unchanged; the constant
+// itself lives in digest-signature.ts (a leaf) so the indexer can import it
+// without depending on this layer.
+export { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 
 // The summarization contract lives here, in the CLI, not in the hook that invokes
 // the model. cerebro owns the prompt and the storage format together (they are two
@@ -12,16 +18,6 @@ import { rootOf, threadLastTs } from "./thread.ts";
 // Bump DIGEST_PROMPT_VERSION whenever the prompt changes in a way that should
 // invalidate existing summaries (staleThreads then re-surfaces them).
 export const DIGEST_PROMPT_VERSION = 1;
-
-// The opening sentence of DIGEST_PROMPT, factored out so the indexer can recognize
-// cerebro's own headless `claude -p` summarization runs. Those runs are recorded by
-// Claude Code as ordinary sessions under ~/.claude/projects, and their first user
-// message is this prompt verbatim; the indexer matches on this prefix to refuse to
-// index them (see isDigestRunTranscript in indexer.ts). Keep it as the literal start
-// of DIGEST_PROMPT: if you reword the opening, historical digest transcripts on disk
-// stop being detected on a `--full` re-read.
-export const DIGEST_PROMPT_SIGNATURE =
-  "You are summarizing a single Claude Code session for a personal, full-text-searchable archive.";
 
 export const DIGEST_PROMPT = `${DIGEST_PROMPT_SIGNATURE} The summary is read later both by a human skimming past work and by an AI agent hunting for related sessions, so it must be dense, factual, and easy to match on concrete terms.
 

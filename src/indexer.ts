@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { DIGEST_PROMPT_SIGNATURE } from "./digest.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
