@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   buildDigestInput,
   DIGEST_PROMPT,
@@ -15,7 +14,7 @@ import {
 } from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
-import { type CommandContext, resolveOrFail } from "./context.ts";
+import { type CommandContext, readStdin, resolveOrFail } from "./context.ts";
 
 // `digest stale` (human): one row per stale thread with the staleness reason, the
 // title on its own line, then the how-to-summarize footer. `promptVersion` is passed
@@ -151,12 +150,7 @@ export const digestCommand = (ctx: CommandContext): void => {
     case "write": {
       const sessionId = resolveOrFail(db, positionals[2], "digest write", fail);
       if (!sessionId) break;
-      let text = "";
-      try {
-        text = readFileSync(0, "utf8").trim();
-      } catch {
-        text = "";
-      }
+      const text = readStdin().trim();
       if (!text) {
         fail("digest write: no summary text on stdin");
         break;

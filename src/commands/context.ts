@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { resolveSession } from "../query.ts";
 
@@ -64,6 +65,18 @@ export interface CommandContext {
   fail: (message: string) => void;
   emitJson: (payload: unknown) => void;
 }
+
+// Read all of stdin, degrading to "" when there is no stdin (a closed or absent
+// fd 0 throws from readFileSync). The two stdin-consuming commands (relevant
+// --stdin, digest write) share this so the degrade-never-throw contract is
+// written once.
+export const readStdin = (): string => {
+  try {
+    return readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+};
 
 // Resolve a positional session-id argument (an id or a unique prefix) to a full
 // session id, reporting the right error and setting exit 1 when it is missing or

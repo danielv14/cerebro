@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import * as v from "valibot";
 import { type RelevantThread, relevantThreads } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
-import type { CommandContext } from "./context.ts";
+import { type CommandContext, readStdin } from "./context.ts";
 
 // Line 1 of a `relevant` thread row: id, date, project, title. Distinct from the
 // `recent` / `sessions` rows.
@@ -84,15 +83,10 @@ export const relevantCommand = ({
   // sends { prompt, cwd, ... } on stdin), so the hook needs no jq or wrapper.
   let prompt = positionals.slice(1).join(" ");
   if (values.stdin) {
-    // The fd-0 read is the only impure step; the parsing/validation is in the
-    // pure parseHookPayload. A failed read (no stdin) degrades to "" too.
-    let raw = "";
-    try {
-      raw = readFileSync(0, "utf8");
-    } catch {
-      raw = "";
-    }
-    prompt = parseHookPayload(raw).prompt;
+    // The fd-0 read (readStdin, shared with digest write) is the only impure step;
+    // the parsing/validation is in the pure parseHookPayload. A failed read (no
+    // stdin) degrades to "" too.
+    prompt = parseHookPayload(readStdin()).prompt;
   }
   if (!prompt) {
     if (!values.context) {
