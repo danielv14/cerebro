@@ -617,7 +617,7 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
       if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) return;
 
       // In full mode every file re-reads from 0; the run does not categorize files
-      // as new/grown/truncated, so skip those counters (preserving prior behaviour).
+      // as new/grown/truncated, so skip those counters.
       if (!full) {
         if (plan.status === "new") result.newFiles++;
         else if (plan.status === "truncated") result.truncatedFiles++;

@@ -40,9 +40,8 @@ const BYTES_PER_TOKEN = 3;
 // prepends its own system prompt and tool definitions, and needs room to emit the
 // summary. A measured overflow had a ~136k-token transcript arrive as a ~213k-token
 // request, i.e. ~77k tokens of fixed non-transcript overhead. Reserve a slice above
-// that so a transcript that fits on size also fits the real request. The original
-// tiering ignored this and treated the whole window as transcript budget, so a
-// thread that fit on chars still failed with "Prompt is too long".
+// that so a transcript that fits on size also fits the real request; without the
+// reserve a thread that fits on chars still fails with "Prompt is too long".
 const RESERVED_CONTEXT_TOKENS = 90_000;
 
 // Context windows of the two tiers: small is Haiku's 200k, large is a 1M-context

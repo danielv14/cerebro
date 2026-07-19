@@ -54,10 +54,9 @@ const HookPayloadSchema = v.object({ prompt: v.optional(v.string()) });
 
 // Validate that hook stdin payload, pure over the already-read raw string so it is
 // unit-testable without fd-0 plumbing. Degrades to an empty prompt on any JSON-parse
-// or validation failure (malformed JSON, missing prompt, non-string prompt), exactly
-// as the previous inline cast did, so a broken payload never injects context or
-// spams the prompt. This is cerebro's second untrusted I/O boundary (the first is the
-// session JSONL in jsonl.ts).
+// or validation failure (malformed JSON, missing prompt, non-string prompt), so a
+// broken payload never injects context or spams the prompt. This is cerebro's second
+// untrusted I/O boundary (the first is the session JSONL in jsonl.ts).
 export const parseHookPayload = (raw: string): { prompt: string } => {
   try {
     // HookPayloadSchema validates prompt as optional(string), so on success it is

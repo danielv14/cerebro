@@ -18,8 +18,8 @@ const THREAD_MEMBERSHIP =
 
 // Resolve any session id (a root, a resume, or a subagent's parent) to its thread
 // root. Falls back to the given id when the session row is absent or
-// root_session_id is NULL (a not-yet-relinked session), preserving the historical
-// `?? sessionId` behavior. The single home of root resolution.
+// root_session_id is NULL (a not-yet-relinked session). The single home of root
+// resolution.
 export const rootOf = (db: Database, sessionId: string): string => {
   const row = db
     .query("SELECT root_session_id FROM sessions WHERE session_id = ?")

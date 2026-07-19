@@ -10,9 +10,9 @@
 export const shortId = (id: string): string => id.slice(0, 8);
 
 // Stored timestamps are verbatim UTC (ISO-8601 with a trailing Z) from the JSONL.
-// Display them in Swedish wall-clock time. sv-SE formats as "2026-06-18 22:12",
-// matching the previous "YYYY-MM-DD HH:mm" shape with the offset applied, and
-// handles DST (CET/CEST) per date.
+// Display them in Swedish wall-clock time. sv-SE gives the "YYYY-MM-DD HH:mm"
+// shape the listings pin, with the offset applied and DST (CET/CEST) handled
+// per date.
 const DISPLAY_TZ = "Europe/Stockholm";
 
 export const shortTime = (ts: string | null | undefined): string => {
