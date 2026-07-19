@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { parseArgs } from "node:util";
 import { resolveSession } from "../query.ts";
 
 // Output sink for the CLI. Routing every line through this (instead of calling
@@ -12,32 +13,42 @@ export interface CliIO {
   setExitCode: (code: number) => void;
 }
 
-// The parsed option values runCli hands to a command handler: the explicit shape
-// of what parseArgs infers from the option table in cli.ts. The assignment in
-// runCli is what keeps the two in sync (typecheck fails if the option table and
-// this interface drift apart).
-export interface CliValues {
-  db?: string;
-  full: boolean;
-  rebuild: boolean;
-  "dry-run": boolean;
-  limit?: string;
-  project?: string;
-  cwd?: string;
-  days?: string;
-  since?: string;
-  all: boolean;
-  context: boolean;
-  stdin: boolean;
-  ids: boolean;
-  model?: string;
-  bytes?: string;
-  range?: string;
-  to?: string;
-  keep?: string;
-  json: boolean;
-  help: boolean;
-}
+// The single source of truth for the CLI's options. parseArgs infers the precise
+// values shape from this literal, and CliValues is derived from it, so a new flag
+// is automatically visible to every command handler; a hand-kept mirror interface
+// could silently miss one (structural subtyping accepts extra fields). Throws on an
+// unknown option; runCli turns that into a clean message + exit 1.
+export const parseCliArgs = (args: string[]) =>
+  parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      db: { type: "string" },
+      full: { type: "boolean", default: false },
+      rebuild: { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+      limit: { type: "string" },
+      project: { type: "string" },
+      cwd: { type: "string" },
+      days: { type: "string" },
+      since: { type: "string" },
+      all: { type: "boolean", default: false },
+      context: { type: "boolean", default: false },
+      stdin: { type: "boolean", default: false },
+      ids: { type: "boolean", default: false },
+      model: { type: "string" },
+      bytes: { type: "string" },
+      range: { type: "string" },
+      to: { type: "string" },
+      keep: { type: "string" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+// The parsed option values runCli hands to a command handler, derived from the
+// option table above.
+export type CliValues = ReturnType<typeof parseCliArgs>["values"];
 
 // Everything a command handler needs from runCli: the open database, the output
 // sink, the parsed flags/positionals, and the shared reporting helpers. Command
