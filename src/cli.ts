@@ -4,36 +4,19 @@ import { readFileSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import * as v from "valibot";
 import { runBackup } from "./backup.ts";
+import { type CliIO, type CommandContext, resolveOrFail } from "./commands/context.ts";
+import { runDigest } from "./commands/digest.ts";
 import { openDb } from "./db.ts";
-import {
-  buildDigestInput,
-  countStaleThreads,
-  DIGEST_PROMPT,
-  DIGEST_PROMPT_VERSION,
-  getSummary,
-  pickDigestModel,
-  rejectSummaryReason,
-  searchSummaries,
-  staleThreads,
-  writeSummary,
-} from "./digest.ts";
+import { countStaleThreads } from "./digest.ts";
 import { gitInfo } from "./git.ts";
+import { HELP } from "./help.ts";
 import { dryRunIndex, runIndex } from "./indexer.ts";
 import { defaultDbPath } from "./paths.ts";
-import {
-  listThreads,
-  recentThreads,
-  relevantThreads,
-  resolveSession,
-  search,
-  stats,
-} from "./query.ts";
+import { listThreads, recentThreads, relevantThreads, search, stats } from "./query.ts";
 import {
   backupReport,
-  digestShow,
   dryRunReport,
   indexResult,
-  noSummaryHint,
   rebuildResult,
   recentBlock,
   relevantBlock,
@@ -42,89 +25,11 @@ import {
   showFull,
   showOutline,
   showRange,
-  staleIds,
-  staleListing,
   statsReport,
-  summarySaved,
-  summarySearchListing,
 } from "./render.ts";
 import { threadMessages, threadOpeningPrompt } from "./thread.ts";
 
-const HELP = `cerebro - permanent verbatim archive + search over Claude Code sessions
-
-Usage:
-  cerebro index [--full] [--rebuild] [--dry-run]   Index all sessions incrementally
-  cerebro search <query> [--limit N] [--project P] [--since D] [--all]
-                                         Full-text search (ranked, best hit per thread;
-                                         --all for every matching message)
-  cerebro sessions [--project P] [--limit N]   List threads, newest first
-  cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
-  cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
-  cerebro show <session-id> [--full] [--range A..B]
-                                         Show a thread (outline, full transcript, or
-                                         a verbatim slice in outline numbering)
-  cerebro stats                          Archive counts
-  cerebro backup [--to <path>] [--keep N]
-                                         Snapshot the database (VACUUM INTO); default
-                                         target <db-dir>/backups/archive-<ts>.sqlite
-  cerebro maintain                       Optimize the FTS indexes, refresh planner
-                                         stats, and truncate the WAL
-  cerebro digest <action>                Curated session summaries (see below)
-
-Digest actions:
-  cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
-  cerebro digest prompt                       Print the summarization prompt
-  cerebro digest input <id>                   Print the size-bounded transcript to summarize
-  cerebro digest model <id> | --bytes N       Print the model the size tiering would pick
-  cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
-  cerebro digest search <query> [--limit N]   Full-text search the summaries
-  cerebro digest show <id>                    Print a thread's stored summary
-
-  cerebro is pure storage and never calls an LLM. A hook or skill produces the
-  summary and writes it back, e.g.:
-    cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
-
-Options:
-  --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
-  --full          index: ignore cursors and re-read everything (dedup skips known
-                  messages, so stored text is never touched); show: print full text
-  --rebuild       index: like --full, but also re-flatten the stored text of every
-                  message still on disk (needed after a flattening/parser change;
-                  messages whose source file is deleted are kept untouched)
-  --dry-run       index: report what would be indexed, write nothing
-  --limit <n>     Max rows to return
-  --project <p>   sessions/search: filter by project path substring
-  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
-  --all           search: every matching message instead of the best hit per thread
-  --range <a..b>  show: only messages a through b (the outline / search #N numbering)
-  --to <path>     backup: explicit target file (default: timestamped in backups/)
-  --keep <n>      backup: prune oldest default-named backups beyond n
-  --cwd <path>    recent: directory to scope by (default: current dir)
-  --days <n>      recent: only threads active within the last n days (default 14)
-  --context       recent/relevant: emit an agent-facing context block (for a hook)
-  --stdin         relevant: read the prompt from a hook's JSON payload on stdin
-  --ids           digest stale: print one full session id per line (for scripts)
-  --model <name>  digest write: record which model produced the summary
-  --bytes <n>     digest model: tier by an already-measured transcript byte count
-                  (skips re-rendering the transcript; used by the hooks)
-  --json          search/sessions/recent/relevant/show/stats/digest stale|search|show:
-                  emit the rows as JSON instead of the human listing
-  -h, --help      Show this help
-
-Env:
-  CEREBRO_DB           Override the database path
-  CEREBRO_CLAUDE_DIR   Override the ~/.claude directory`;
-
-// Output sink for the CLI. Routing every line through this (instead of calling
-// console / process directly inside the dispatch) is what makes runCli testable:
-// a test passes a capturing sink and asserts on the lines and exit code without
-// spawning the binary or mutating the global process.exitCode.
-export interface CliIO {
-  log: (line: string) => void; // a normal output line (stdout + newline)
-  error: (line: string) => void; // an error line (stderr + newline)
-  write: (text: string) => void; // raw stdout, no trailing newline (digest input)
-  setExitCode: (code: number) => void;
-}
+export type { CliIO } from "./commands/context.ts";
 
 const realIO: CliIO = {
   log: (line) => process.stdout.write(`${line}\n`),
@@ -133,30 +38,6 @@ const realIO: CliIO = {
   setExitCode: (code) => {
     process.exitCode = code;
   },
-};
-
-// Resolve a positional session-id argument (an id or a unique prefix) to a full
-// session id, reporting the right error and setting exit 1 when it is missing or
-// matches nothing. Returns null in those cases so the caller can stop. The five
-// id-taking commands (show, digest input/model/write/show) share this instead of
-// each re-checking the argument. An ambiguous prefix still throws from
-// resolveSession and is caught by runCli's outer handler, as before.
-const resolveOrFail = (
-  db: Database,
-  idArg: string | undefined,
-  label: string,
-  fail: (message: string) => void,
-): string | null => {
-  if (!idArg) {
-    fail(`${label}: missing <session-id>`);
-    return null;
-  }
-  const sessionId = resolveSession(db, idArg);
-  if (!sessionId) {
-    fail(`No session matching "${idArg}".`);
-    return null;
-  }
-  return sessionId;
 };
 
 // The accepted shape of the JSON a UserPromptSubmit hook pipes to `relevant
@@ -263,6 +144,10 @@ export const runCli = (
     fail(`could not open database at ${dbPath}: ${(error as Error).message}`);
     return;
   }
+
+  // The context handed to the extracted command handlers under src/commands/:
+  // everything a handler needs, so handlers never import from cli.ts.
+  const ctx: CommandContext = { db, io, values, positionals, dbPath, limit, fail, emitJson };
 
   try {
     switch (command) {
@@ -456,136 +341,7 @@ export const runCli = (
       }
 
       case "digest": {
-        const action = positionals[1];
-        switch (action) {
-          case "prompt":
-            io.log(DIGEST_PROMPT);
-            break;
-
-          case "input": {
-            const sessionId = resolveOrFail(db, positionals[2], "digest input", fail);
-            if (!sessionId) break;
-            // The size-bounded transcript fed to `claude -p`. Written raw to stdout
-            // (no trailing newline of our own) so it pipes straight into the model.
-            io.write(buildDigestInput(threadMessages(db, sessionId)));
-            break;
-          }
-
-          case "model": {
-            // --bytes N tiers on an already-measured size: the hooks render the
-            // transcript once with `digest input`, `wc -c` it for logging anyway,
-            // and pass that here, so the transcript is not rendered a second time
-            // just to be measured.
-            if (values.bytes !== undefined) {
-              const bytes = Number(values.bytes);
-              if (!Number.isInteger(bytes) || bytes < 0) {
-                fail(`--bytes must be a non-negative integer (got "${values.bytes}")`);
-                break;
-              }
-              io.log(pickDigestModel(bytes));
-              break;
-            }
-            const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);
-            if (!sessionId) break;
-            // The model the summarize hook would pick for this thread, by the byte
-            // size of its rendered transcript (matching the hook's `wc -c`). cerebro
-            // owns the tiering so the hook no longer hardcodes the threshold.
-            const input = buildDigestInput(threadMessages(db, sessionId));
-            io.log(pickDigestModel(Buffer.byteLength(input, "utf8")));
-            break;
-          }
-
-          case "stale": {
-            const rows = staleThreads(db, limit ?? 50);
-            if (values.json) {
-              emitJson(rows);
-              break;
-            }
-            // --ids: machine-readable mode for scripts (the digest-stale batch hook).
-            // One full session id per line, nothing else (no header, titles, or help
-            // footer), so a caller never has to scrape the human listing format. Empty
-            // output means nothing is stale. Full ids, not shortId, so the caller skips
-            // the prefix round-trip.
-            if (values.ids) {
-              for (const line of staleIds(rows)) io.log(line);
-              break;
-            }
-            if (rows.length === 0) {
-              io.log("All threads are summarized and up to date.");
-              break;
-            }
-            for (const line of staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })) {
-              io.log(line);
-            }
-            break;
-          }
-
-          case "write": {
-            const sessionId = resolveOrFail(db, positionals[2], "digest write", fail);
-            if (!sessionId) break;
-            let text = "";
-            try {
-              text = readFileSync(0, "utf8").trim();
-            } catch {
-              text = "";
-            }
-            if (!text) {
-              fail("digest write: no summary text on stdin");
-              break;
-            }
-            // Refuse to store output that cannot be a summary (an error message, a
-            // fragment). The thread stays stale, so the reconciler retries it.
-            const reason = rejectSummaryReason(text);
-            if (reason) {
-              fail(`digest write: rejected: ${reason}`);
-              break;
-            }
-            const root = writeSummary(db, sessionId, text, values.model ?? null);
-            io.log(summarySaved(root, text.length));
-            break;
-          }
-
-          case "search": {
-            const query = positionals.slice(2).join(" ");
-            if (!query) {
-              fail("digest search: missing <query>");
-              break;
-            }
-            const hits = searchSummaries(db, query, limit ?? 10);
-            if (values.json) {
-              emitJson(hits);
-              break;
-            }
-            if (hits.length === 0) {
-              io.log("No matching summaries.");
-              break;
-            }
-            for (const line of summarySearchListing(hits)) io.log(line);
-            break;
-          }
-
-          case "show": {
-            const sessionId = resolveOrFail(db, positionals[2], "digest show", fail);
-            if (!sessionId) break;
-            const summary = getSummary(db, sessionId);
-            if (values.json) {
-              emitJson(summary);
-              break;
-            }
-            if (!summary) {
-              io.log(noSummaryHint(sessionId));
-              break;
-            }
-            for (const line of digestShow(summary)) io.log(line);
-            break;
-          }
-
-          default:
-            fail(
-              `digest: unknown action "${action ?? ""}". ` +
-                "Use: stale | prompt | input <id> | model <id> | write <id> | search <query> | show <id>",
-            );
-        }
+        runDigest(ctx);
         break;
       }
 
