@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { searchSummaryRoots, threadMeta, toMatchQuery } from "../query.ts";
+import { type SummaryRootHit, searchSummaryRoots, threadMeta, toMatchQuery } from "../query.ts";
 import { rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
@@ -91,7 +91,7 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
   const match = toMatchQuery(query);
   if (!match) return [];
 
-  let rows: { root: string; snippet: string }[];
+  let rows: SummaryRootHit[];
   try {
     rows = searchSummaryRoots(db, match, limit, 12);
   } catch {
