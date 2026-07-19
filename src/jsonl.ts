@@ -1,8 +1,8 @@
 // Parsing + classification of raw JSONL event lines.
 //
 // This is one of cerebro's two untrusted I/O boundaries (the other is the hook
-// stdin payload in cli.ts): the session JSONL is produced by Claude Code, a tool we
-// do not control and whose format evolves. The accepted shapes are declared once as
+// stdin payload in src/commands/relevant.ts): the session JSONL is produced by
+// Claude Code, a tool we do not control and whose format evolves. The accepted shapes are declared once as
 // Valibot schemas and validated with safeParse, never a throwing parse, so the
 // parser stays deliberately tolerant: an unknown event type classifies to `skip`,
 // missing optional fields default to null, and an unrecognized content block is
@@ -32,9 +32,8 @@ export type Classified =
 // unknown `type`, a non-object, or a missing required field fails safeParse and
 // classify returns `skip`.
 //
-// For the message variant only `type`, `uuid`, and `message` are load-bearing (the
-// same fields the old `if (!o.uuid || !o.message)` guard required). The optional
-// scalars stay permissive (`unknown`, coerced in the mapping below) instead of typed,
+// For the message variant only `type`, `uuid`, and `message` are load-bearing. The
+// optional scalars stay permissive (`unknown`, coerced in the mapping below) instead of typed,
 // so a future Claude Code change to one of those field *types* defaults that field
 // and still archives the turn, rather than failing the whole variant and dropping the
 // message. That is the "tolerant to an evolving log" contract this boundary exists to
@@ -157,7 +156,7 @@ export const flattenContent = (content: unknown): string => {
 
 // Coerce a permissive optional field to the Classified contract: a string passes
 // through, anything else (missing, null, or a wrong type from an evolving log)
-// defaults to null. This is the historic `?? null` made type-honest.
+// defaults to null.
 const asStringOrNull = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 

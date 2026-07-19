@@ -21,8 +21,8 @@ export interface SearchOpts {
   // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
   // because stored timestamps are ISO-8601).
   since?: string;
-  // true = every matching message (the historic behavior); false/absent = the best
-  // hit per thread, so one chatty thread cannot occupy every result slot.
+  // true = every matching message; false/absent = the best hit per thread, so one
+  // chatty thread cannot occupy every result slot.
   all?: boolean;
 }
 

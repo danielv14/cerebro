@@ -41,7 +41,8 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
 };
 
 // `digest stale --ids`: machine mode for the batch hook. One full session id per
-// line, nothing else, so a caller never scrapes the human listing format.
+// line, nothing else (no header, titles, or footer), so a caller never scrapes the
+// human listing format; full ids, not shortId, so it skips the prefix round-trip.
 export const staleIds = (rows: StaleThread[]): string[] => rows.map((row) => row.id);
 
 // `digest search`: one header + one snippet line per summary hit, then the count
@@ -116,7 +117,7 @@ export const digestCommand = (ctx: CommandContext): void => {
       if (!sessionId) break;
       // The model the summarize hook would pick for this thread, by the byte
       // size of its rendered transcript (matching the hook's `wc -c`). cerebro
-      // owns the tiering so the hook no longer hardcodes the threshold.
+      // owns the tiering; the hook asks instead of hardcoding the threshold.
       const input = buildDigestInput(threadMessages(db, sessionId));
       io.log(pickDigestModel(Buffer.byteLength(input, "utf8")));
       break;
@@ -128,11 +129,8 @@ export const digestCommand = (ctx: CommandContext): void => {
         emitJson(rows);
         break;
       }
-      // --ids: machine-readable mode for scripts (the digest-stale batch hook).
-      // One full session id per line, nothing else (no header, titles, or help
-      // footer), so a caller never has to scrape the human listing format. Empty
-      // output means nothing is stale. Full ids, not shortId, so the caller skips
-      // the prefix round-trip.
+      // --ids: the machine mode (see staleIds above). Empty output means nothing
+      // is stale.
       if (values.ids) {
         for (const line of staleIds(rows)) io.log(line);
         break;
