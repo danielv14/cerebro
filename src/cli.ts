@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
-import { parseArgs } from "node:util";
 import { backupCommand } from "./commands/backup.ts";
-import type { CliIO, CommandContext } from "./commands/context.ts";
+import { type CliIO, type CommandContext, parseCliArgs } from "./commands/context.ts";
 import { digestCommand } from "./commands/digest.ts";
 import { indexCommand } from "./commands/index-cmd.ts";
 import { maintainCommand } from "./commands/maintain.ts";
@@ -61,42 +60,16 @@ export const runCli = (
   // widths; empty results emit an empty array/object rather than prose.
   const emitJson = (payload: unknown): void => io.log(JSON.stringify(payload, null, 2));
 
-  // parseArgs throws on unknown options; turn that into a clean message + exit 1
-  // instead of a raw stack trace. The IIFE preserves parseArgs's inferred types.
-  const parsed = (() => {
-    try {
-      return parseArgs({
-        args,
-        allowPositionals: true,
-        options: {
-          db: { type: "string" },
-          full: { type: "boolean", default: false },
-          rebuild: { type: "boolean", default: false },
-          "dry-run": { type: "boolean", default: false },
-          limit: { type: "string" },
-          project: { type: "string" },
-          cwd: { type: "string" },
-          days: { type: "string" },
-          since: { type: "string" },
-          all: { type: "boolean", default: false },
-          context: { type: "boolean", default: false },
-          stdin: { type: "boolean", default: false },
-          ids: { type: "boolean", default: false },
-          model: { type: "string" },
-          bytes: { type: "string" },
-          range: { type: "string" },
-          to: { type: "string" },
-          keep: { type: "string" },
-          json: { type: "boolean", default: false },
-          help: { type: "boolean", short: "h", default: false },
-        },
-      });
-    } catch (error) {
-      fail((error as Error).message);
-      return null;
-    }
-  })();
-  if (!parsed) return;
+  // parseCliArgs (commands/context.ts, the owner of the option table) throws on
+  // unknown options; turn that into a clean message + exit 1 instead of a raw
+  // stack trace.
+  let parsed: ReturnType<typeof parseCliArgs>;
+  try {
+    parsed = parseCliArgs(args);
+  } catch (error) {
+    fail((error as Error).message);
+    return;
+  }
   const { values, positionals } = parsed;
 
   const command = positionals[0];
