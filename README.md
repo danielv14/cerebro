@@ -360,18 +360,26 @@ CI runs `biome ci` on every PR alongside typecheck, tests, and a compile build.
 
 ```
 src/
-  cli.ts       parseArgs + command dispatch + output
-  db.ts        openDb() + schema/migrations
-  paths.ts     session-file discovery (top-level + subagents)
-  jsonl.ts     parseLine() + classify() + flattenContent()
-  git.ts       gitInfo(cwd) with cache
-  indexer.ts   runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
-  thread.ts    rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
-  query.ts     search(), listThreads(), recentThreads(), relevantThreads(), ...
-  digest.ts    DIGEST_PROMPT + staleThreads(), writeSummary(), searchSummaries(), ...
-  backup.ts    runBackup() (VACUUM INTO snapshots + pruning)
+  cli.ts        parseArgs + the command dispatch table + db lifetime
+  help.ts       the HELP text
+  commands/     one module per command (handler + its output formatting)
+    context.ts  CliIO / CliValues / CommandContext seam + resolveOrFail
+  db.ts         openDb() + schema/migrations
+  paths.ts      session-file discovery (top-level + subagents)
+  jsonl.ts      parseLine() + classify() + flattenContent()
+  git.ts        gitInfo(cwd) with cache
+  indexer.ts    runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
+  thread.ts     rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
+  query.ts      search(), listThreads(), recentThreads(), relevantThreads(), ...
+  render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
+  digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads()
+                (stale.ts), writeSummary() + searchSummaries() (store.ts)
+  digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
+                digest-transcript skipping on it)
+  backup.ts     runBackup() (VACUUM INTO snapshots + pruning)
 test/
-  *.test.ts    bun test suite + fixtures.ts (temp claude dir + sessions)
+  *.test.ts     bun test suite + fixtures.ts (temp claude dir + sessions);
+                per-command formatting tests under test/commands/
 ```
 
 Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
