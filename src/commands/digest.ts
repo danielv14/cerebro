@@ -23,7 +23,7 @@ import { type CommandContext, resolveOrFail } from "./context.ts";
 
 // The `digest` command: dispatch over its action sub-commands
 // (stale | prompt | input | model | write | search | show).
-export const runDigest = (ctx: CommandContext): void => {
+export const digestCommand = (ctx: CommandContext): void => {
   const { db, io, values, positionals, limit, fail, emitJson } = ctx;
   const action = positionals[1];
   switch (action) {
