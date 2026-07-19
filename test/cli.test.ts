@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type CliIO, parseHookPayload, runCli } from "../src/cli.ts";
+import { type CliIO, runCli } from "../src/cli.ts";
+import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest.ts";
 import { runIndex } from "../src/indexer.ts";
