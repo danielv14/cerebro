@@ -5,6 +5,7 @@ import {
   buildDigestInput,
   countStaleThreads,
   DIGEST_PROMPT,
+  DIGEST_PROMPT_SIGNATURE,
   DIGEST_PROMPT_VERSION,
   digestModelConfig,
   getSummary,
@@ -37,6 +38,13 @@ describe("DIGEST_PROMPT", () => {
   test("instructs a deterministic marker for empty/non-substantive sessions", () => {
     expect(DIGEST_PROMPT).toContain("(No substantive session content.)");
     expect(DIGEST_PROMPT.toLowerCase()).toContain("do not ask for a transcript");
+  });
+
+  test("opens with the exact signature the indexer keys digest-transcript skipping on", () => {
+    // The signature is a persisted contract: transcripts already on disk begin with
+    // these bytes, and isDigestRunTranscript matches on the prefix. This guards the
+    // template-literal composition after the constant moved to its own leaf module.
+    expect(DIGEST_PROMPT.startsWith(DIGEST_PROMPT_SIGNATURE)).toBe(true);
   });
 });
 
