@@ -115,7 +115,7 @@ export const search = (
 
   return kept.map(({ root, ...hit }) => ({
     ...hit,
-    ordinal: messageOrdinal(db, root ?? hit.session_id, hit.ts, hit.id),
+    ordinal: messageOrdinal(db, root ?? hit.session_id, hit.id),
   }));
 };
 
