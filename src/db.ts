@@ -167,22 +167,24 @@ CREATE VIEW IF NOT EXISTS threads AS
   GROUP BY r.root_session_id;
 `;
 
+// Add a column iff it does not exist. Idempotent by construction; each migration
+// below is one call instead of a repeated table_info/check/ALTER block. Table and
+// column names are fixed literals the codebase owns (never user input), so the
+// interpolation is safe.
+const addColumnIfMissing = (db: Database, table: string, column: string, ddl: string): void => {
+  const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((c) => c.name === column)) {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+};
+
 // Idempotent migrations for databases created by an earlier schema version.
 const migrate = (db: Database): void => {
-  const columns = db.query("PRAGMA table_info(messages)").all() as { name: string }[];
-  if (!columns.some((c) => c.name === "is_sidechain")) {
-    db.run("ALTER TABLE messages ADD COLUMN is_sidechain INTEGER NOT NULL DEFAULT 0");
-  }
-  const sessionColumns = db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
-  if (!sessionColumns.some((c) => c.name === "title_priority")) {
-    // Pre-migration titles get priority 0: the next title event of any priority may
-    // replace them once, after which the real priority is tracked.
-    db.run("ALTER TABLE sessions ADD COLUMN title_priority INTEGER NOT NULL DEFAULT 0");
-  }
-  const stateColumns = db.query("PRAGMA table_info(index_state)").all() as { name: string }[];
-  if (!stateColumns.some((c) => c.name === "is_digest")) {
-    db.run("ALTER TABLE index_state ADD COLUMN is_digest INTEGER NOT NULL DEFAULT 0");
-  }
+  addColumnIfMissing(db, "messages", "is_sidechain", "is_sidechain INTEGER NOT NULL DEFAULT 0");
+  // Pre-migration titles get priority 0: the next title event of any priority may
+  // replace them once, after which the real priority is tracked.
+  addColumnIfMissing(db, "sessions", "title_priority", "title_priority INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "index_state", "is_digest", "is_digest INTEGER NOT NULL DEFAULT 0");
 };
 
 export const openDb = (path: string): Database => {
