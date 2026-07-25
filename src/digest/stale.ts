@@ -16,6 +16,9 @@ export interface StaleThread {
 // left-joined to summaries aliased `su`) so the listing and the count can never
 // drift on what "needs a (re)summary" means. A fixed literal the codebase owns;
 // the prompt version stays a bound parameter.
+//
+// t.msgs > 0 is redundant since the view took over excluding empty threads (#83);
+// kept as a local statement of intent ("nothing to summarize"), harmless either way.
 const STALE_FROM_WHERE = `
   FROM threads t
   LEFT JOIN summaries su ON su.root_session_id = t.id

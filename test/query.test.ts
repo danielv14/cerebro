@@ -14,6 +14,7 @@ import {
   stats,
   toMatchQuery,
 } from "../src/query.ts";
+import { countThreads, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -290,6 +291,47 @@ describe("query (populated archive)", () => {
     // Span covers the whole thread.
     expect(thread.first_ts).toBe(ts(0));
     expect(thread.last_ts).toBe(ts(4));
+  });
+
+  test("a session with no turns keeps its sessions row but is not a thread (#83)", () => {
+    writeSession(env.projects, "-repo", "REAL", [
+      userMsg("REAL", "u1", "real work", { timestamp: ts(0) }),
+    ]);
+    // A session opened and closed right away: a title event, no user/assistant turns.
+    writeSession(env.projects, "-repo", "EMPTY", [
+      { type: "summary", summary: "Title only, no turns", sessionId: "EMPTY" },
+    ]);
+    runIndex(db);
+
+    // The sidecar row stays (it outlives Claude Code's own cleanup, so it is the only
+    // record the session ever existed), with msg_count 0.
+    expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 2 });
+    // But it is not a thread, and the listing and the count agree on that.
+    expect(listThreads(db, {}).map((t) => t.id)).toEqual(["REAL"]);
+    expect(countThreads(db)).toBe(1);
+    expect(stats(db).threads).toBe(1);
+    // Still reachable by id: show resolves it and renders an empty thread.
+    expect(resolveSession(db, "EMPTY")).toBe("EMPTY");
+    expect(threadMessages(db, "EMPTY")).toEqual([]);
+  });
+
+  test("zero-message threads stay out of recentThreads and the stats project rollup (#83)", () => {
+    writeSession(env.projects, "-repo-x", "REAL", [
+      userMsg("REAL", "u1", "real work", { cwd: "/repo-x", timestamp: ts(0) }),
+    ]);
+    runIndex(db);
+    // A zero-message session that does carry a project_path (a title-only file has no
+    // cwd to harvest one from, so it is written directly) would otherwise inflate both
+    // the recent listing and the per-project thread counts.
+    db.run(
+      `INSERT INTO sessions (session_id, root_session_id, project_path, cwd, msg_count, first_ts, last_ts)
+       VALUES ('EMPTY', 'EMPTY', '/repo-x', '/repo-x', 0, ?, ?)`,
+      [ts(1), ts(1)],
+    );
+
+    const recent = recentThreads(db, { cwd: "/repo-x", since: ts(-100000), limit: 5 });
+    expect(recent.map((t) => t.id)).toEqual(["REAL"]);
+    expect(stats(db).topProjects).toEqual([{ project_path: "/repo-x", threads: 1 }]);
   });
 
   test("recentThreads scopes by project_path and respects the recency cutoff", () => {

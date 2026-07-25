@@ -26,6 +26,15 @@ describe("showOutline", () => {
       "\nFull transcript: cerebro show <id> --full",
     ]);
   });
+
+  test("renders a thread with no messages as the header plus footer (#83)", () => {
+    // A session with no indexed turns is hidden from the thread listings but still
+    // resolves by id, so the outline must render empty rather than error.
+    expect(showOutline("0123456789abcdef", [])).toEqual([
+      "Thread 01234567  0 message(s)\n",
+      "\nFull transcript: cerebro show <id> --full",
+    ]);
+  });
 });
 
 describe("showFull", () => {

@@ -64,7 +64,7 @@ $ cerebro search "rate limiter" --limit 2
 ```
 
 ### `cerebro sessions [--project P] [--limit N]`
-Listar trådar, senast aktiva först. `--project P` filtrerar på substring i projektets sökväg. Visar `+N resume(s)` för trådar som återupptagits och `[body deleted]` om källfilen är raderad men arkivet finns kvar. Default limit 30.
+Listar trådar, senast aktiva först. `--project P` filtrerar på substring i projektets sökväg. Visar `+N resume(s)` för trådar som återupptagits och `[body deleted]` om källfilen är raderad men arkivet finns kvar. Default limit 30. Trådar utan indexerade turns (en session som öppnats och stängts direkt) listas inte, och räknas inte i `stats`, men går fortfarande att öppna med `cerebro show <id>`.
 
 ```
 $ cerebro sessions --limit 4

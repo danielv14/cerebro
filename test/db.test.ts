@@ -54,6 +54,35 @@ describe("openDb schema versioning", () => {
     reopened.close();
   });
 
+  test("an old-version database gets the current threads view definition (#83)", () => {
+    // CREATE VIEW IF NOT EXISTS does not replace an existing view, so the DDL drops
+    // the view first. Without that, an old database would keep serving its stale
+    // rollup (here: a pre-#83 one with no HAVING) forever. Simulate one, reset the
+    // stamp, and reopen.
+    const db = openDb(path);
+    db.run("DROP VIEW threads");
+    db.run(
+      `CREATE VIEW threads AS
+         SELECT r.root_session_id AS id, MAX(r.last_ts) AS last_ts, MIN(r.first_ts) AS first_ts,
+                SUM(r.msg_count) AS msgs, COUNT(*) AS sessions_in_thread,
+                MAX(r.project_path) AS project_path, MAX(r.git_root) AS git_root,
+                MAX(r.title) AS title, MIN(r.body_available) AS body_available
+         FROM sessions r
+         GROUP BY r.root_session_id`,
+    );
+    db.run("INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('E', 'E', 0)");
+    // The old definition rolls the zero-message session up into a thread.
+    expect(db.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 1 });
+    db.run("PRAGMA user_version = 0");
+    db.close();
+
+    const reopened = openDb(path);
+    // The replaced view excludes it, and the session row itself is untouched.
+    expect(reopened.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 0 });
+    expect(reopened.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 1 });
+    reopened.close();
+  });
+
   test("messages keeps the legacy line_no column for the deployed hook binary", () => {
     // The compiled hook binary is a frozen snapshot whose INSERT names line_no;
     // dropping (or omitting) the column would make every automated index run fail
