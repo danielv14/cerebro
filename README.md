@@ -154,8 +154,11 @@ on its own. `digest-stale-batch.sh` is the reconciler that closes that gap: it i
 then summarizes up to `CEREBRO_DIGEST_BATCH_CAP` (default 8) stale threads per run,
 newest first, reusing the same `claude -p` pipeline and size tiering as the `/clear`
 hook. A `mkdir` lock keeps two runs from overlapping, and failures are left for the next
-run. Cap the per-run count so a large backlog drains over several runs instead of one
-token burst; raise the cap (or run it by hand) to drain faster:
+run. Draining the backlog is a performance measure as much as tidiness: every thread
+that gains a summary is one more prompt that `relevant` can answer from the cheap
+summary tier instead of the raw-transcript scan (see "Curated summaries"). Cap the
+per-run count so a large backlog drains over several runs instead of one token burst;
+raise the cap (or run it by hand) to drain faster:
 
 ```sh
 CEREBRO_DIGEST_BATCH_CAP=400 ~/.claude/cerebro/digest-stale-batch.sh   # one-shot full drain
@@ -221,6 +224,13 @@ so the model pulls detail on demand with `show` / `search`. `--context` emits an
 agent-facing block (silent when nothing matches); `--stdin` reads the prompt from a
 hook's JSON payload.
 
+The two tiers differ in cost, so summary coverage is what keeps this fast: an
+unsummarized archive falls through to the raw tier and pays its full-index scan on
+every prompt (386 ms on a 300 000-message archive with no summaries, see "Curated
+summaries"). Keep the backlog drained with the scheduled reconciler
+(`digest-stale-batch.sh`, see "Drain the backlog") and most prompts never reach the raw
+tier at all.
+
 A `UserPromptSubmit` hook injects matching past threads on each prompt, so the model
 picks up earlier work when your prompt overlaps it:
 
@@ -244,6 +254,20 @@ summary per thread, stored in a `summaries` table (same database) with its own F
 index. Summaries are dense and topical, so searching them surfaces "what did I work
 on around X" far better than raw-transcript bm25, and they are cheap for a Claude
 session to read when relating past work.
+
+Coverage buys latency too, not just recall. `relevant` only runs its raw-transcript
+tier when the summary tier came up short of `--limit`, and the raw tier is one broad
+OR-of-tokens scan over the message FTS index (one row per message) where the summary
+tier scans one row per thread. So a summarized archive short-circuits the expensive
+half of the code path that runs on **every prompt**. Measured with the compiled binary
+against a synthetic archive of 300 000 messages (1200 sessions, 148 MB) and zero
+summaries, the worst case where all traffic falls through to the raw tier:
+
+```
+cerebro relevant "<prose prompt>" --limit 5    386 ms
+```
+
+That is in front of the user on each prompt, and it shrinks as coverage rises.
 
 cerebro stays pure storage and **never calls an LLM**. It owns the prompt and the
 storage format (one versioned contract), and accepts a summary the model produced:
