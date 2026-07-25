@@ -177,8 +177,11 @@ describe("thread (identity + membership)", () => {
 
     test("counts each distinct root, and is zero for an empty archive", () => {
       expect(countThreads(db)).toBe(0);
-      writeSession(env.projects, "-repo", "A", [userMsg("A", "u1", "a", { timestamp: ts(0) })]);
-      writeSession(env.projects, "-repo", "B", [userMsg("B", "u1", "b", { timestamp: ts(1) })]);
+      // Distinct message UUIDs: dedup is keyed on the UUID alone (invariant #4), so
+      // reusing one across the two files would drop B's only message and leave it a
+      // zero-message session, which the threads view no longer counts (#83).
+      writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
+      writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "b", { timestamp: ts(1) })]);
       runIndex(db);
       expect(countThreads(db)).toBe(2);
     });

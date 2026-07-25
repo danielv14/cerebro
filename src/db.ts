@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 // the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
 // schema work. An old database (or a fresh one, user_version 0) runs the DDL +
 // migrations once and is stamped.
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // Per-connection pragmas: these run on every open, outside the version-gated DDL.
 // busy_timeout / foreign_keys do not persist in the file; journal_mode does, but it
@@ -143,6 +143,20 @@ END;
 -- the GROUP BY would drop resume/subagent rows whose project_path is NULL or differs,
 -- undercounting msgs and sessions_in_thread. body_available is MIN so a thread is
 -- only body-available if every folded session still has its source on disk.
+--
+-- HAVING SUM(msg_count) > 0 is what makes "a thread" mean the same thing to every
+-- reader (#83). A session opened and closed right away still gets a sessions row
+-- (the sidecar metadata that outlives Claude Code's own cleanup) with msg_count 0;
+-- rolled up it was an empty thread showing as '0 msgs' / '(untitled)' in sessions,
+-- recent, and the stats thread count, while 'digest stale' already excluded it.
+-- Excluding it here rather than per listing keeps countThreads and topProjects from
+-- disagreeing with the listings. Nothing is deleted: the sessions rows stay, so
+-- 'show' on such a session still resolves and the deleted-source stats (which
+-- read sessions) are unaffected.
+--
+-- Replacing this definition needs a SCHEMA_VERSION bump AND the DROP below: on an
+-- existing database CREATE VIEW IF NOT EXISTS silently keeps the old view.
+DROP VIEW IF EXISTS threads;
 CREATE VIEW IF NOT EXISTS threads AS
   SELECT
     r.root_session_id AS id,
@@ -164,7 +178,8 @@ CREATE VIEW IF NOT EXISTS threads AS
     ) AS title,
     MIN(r.body_available) AS body_available
   FROM sessions r
-  GROUP BY r.root_session_id;
+  GROUP BY r.root_session_id
+  HAVING SUM(r.msg_count) > 0;
 `;
 
 // Add a column iff it does not exist. Idempotent by construction; each migration
@@ -195,8 +210,9 @@ export const openDb = (path: string): Database => {
     (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
 
   if (version() !== SCHEMA_VERSION) {
-    // The DDL itself is idempotent (IF NOT EXISTS everywhere; each statement takes
-    // the write lock, which busy_timeout serializes), so it can run unwrapped. The
+    // The DDL itself is idempotent (IF NOT EXISTS everywhere, plus the threads view's
+    // DROP IF EXISTS + CREATE pair; each statement takes the write lock, which
+    // busy_timeout serializes), so it can run unwrapped. The
     // migrations are NOT: they are check-then-ALTER, and two processes racing the
     // first open after an upgrade (a prompt hook plus an index hook) could both
     // pass the column-existence check and the loser's ALTER would throw. BEGIN

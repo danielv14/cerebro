@@ -321,7 +321,10 @@ optional fast path on top, never the source of truth.
   archive after its `.jsonl` is gone (`body_available = 0`).
 - **Threads across resumes.** A resume's first message points (via `parentUuid`)
   at a message owned by an earlier session; chaining those links rebuilds the
-  logical thread root. `sessions` lists roots; resumes fold in.
+  logical thread root. `sessions` lists roots; resumes fold in. A thread with no
+  indexed turns (a session opened and closed right away) is not a thread: the rollup
+  hides it from `sessions`, `recent`, and the `stats` counts, while its metadata row
+  stays, so `show <id>` on it still resolves.
 - **Subagents fold into the parent.** Transcripts under
   `<session>/subagents/agent-*.jsonl` are attributed to their parent session, so
   sidechain turns appear inline in `show`, tagged `[subagent]`.
