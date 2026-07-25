@@ -134,9 +134,10 @@ describe("query (populated archive)", () => {
     expect(search(db, "limiter", 10).length).toBe(2);
   });
 
-  test("deduped search paginates past a chatty thread that fills the first fetch page", () => {
+  test("deduped search looks past a chatty thread that dominates the ranked hits", () => {
     // 210 matching messages in one thread outrank the other thread's single match.
-    // A fixed 200-row window would starve OTHER; pagination must surface it.
+    // A 200-row window would starve OTHER; the 2000-row over-fetch surfaces it in one
+    // fetch, without growing.
     const chatty = Array.from({ length: 210 }, (_, i) =>
       userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
         timestamp: ts(i),
@@ -149,6 +150,24 @@ describe("query (populated archive)", () => {
     ]);
     runIndex(db);
     const hits = search(db, "limiter", 5);
+    expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+  });
+
+  test("deduped search grows the over-fetch window when the first one is exhausted (#81)", () => {
+    // A chatty thread wider than the initial 2000-row window owns every row of the
+    // first fetch, so the deeper re-fetch (window *= 4) is the only way OTHER surfaces.
+    const chatty = Array.from({ length: 2100 }, (_, i) =>
+      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
+        timestamp: ts(i),
+        parentUuid: i === 0 ? null : `c${i - 1}`,
+      }),
+    );
+    writeSession(env.projects, "-repo", "CHATTY", chatty);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
+    ]);
+    runIndex(db);
+    const hits = search(db, "limiter", 2);
     expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
   });
 
