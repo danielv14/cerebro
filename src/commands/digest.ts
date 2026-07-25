@@ -14,7 +14,7 @@ import {
 } from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
-import { type CommandContext, readStdin, resolveOrFail } from "./context.ts";
+import { type CommandContext, numberOption, readStdin, resolveOrFail } from "./context.ts";
 
 // `digest stale` (human): one row per stale thread with the staleness reason, the
 // title on its own line, then the how-to-summarize footer. `promptVersion` is passed
@@ -104,13 +104,15 @@ export const digestCommand = (ctx: CommandContext): void => {
       // transcript once with `digest input`, `wc -c` it for logging anyway,
       // and pass that here, so the transcript is not rendered a second time
       // just to be measured.
-      if (values.bytes !== undefined) {
-        const bytes = Number(values.bytes);
-        if (!Number.isInteger(bytes) || bytes < 0) {
-          fail(`--bytes must be a non-negative integer (got "${values.bytes}")`);
-          break;
-        }
-        io.log(pickDigestModel(bytes));
+      const bytes = numberOption(
+        values.bytes,
+        "bytes",
+        { integer: true, min: 0, label: "a non-negative integer" },
+        fail,
+      );
+      if (!bytes.ok) break;
+      if (bytes.value !== undefined) {
+        io.log(pickDigestModel(bytes.value));
         break;
       }
       const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
 import { backupCommand } from "./commands/backup.ts";
-import { type CliIO, type CommandContext, parseCliArgs } from "./commands/context.ts";
+import { type CliIO, type CommandContext, numberOption, parseCliArgs } from "./commands/context.ts";
 import { digestCommand } from "./commands/digest.ts";
 import { indexCommand } from "./commands/index-cmd.ts";
 import { maintainCommand } from "./commands/maintain.ts";
@@ -81,14 +81,14 @@ export const runCli = (
 
   // --limit is shared by most commands, so it is validated once here and handed to
   // the handlers pre-parsed through the context.
-  let limit: number | undefined;
-  if (values.limit !== undefined) {
-    limit = Number(values.limit);
-    if (!Number.isInteger(limit) || limit < 1) {
-      fail(`--limit must be a positive integer (got "${values.limit}")`);
-      return;
-    }
-  }
+  const parsedLimit = numberOption(
+    values.limit,
+    "limit",
+    { integer: true, min: 1, label: "a positive integer" },
+    fail,
+  );
+  if (!parsedLimit.ok) return;
+  const limit = parsedLimit.value;
 
   const dbPath = values.db || defaultDbPath();
   // Opening can fail (permissions, corrupt file, a lost migration race): report it
