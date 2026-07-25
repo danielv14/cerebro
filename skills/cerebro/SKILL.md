@@ -173,6 +173,8 @@ Ett kurerat lager ovanpå rådatan: en LLM-skriven sammanfattning per tråd, lag
 
 **När du ombeds hitta mönster eller relaterat arbete:** börja med `cerebro digest search <query>` (täta sammanfattningar) och fördjupa sedan med `cerebro show <id>`. Faller den tillbaka för tunt, komplettera med `cerebro search` mot rådatan.
 
+**Täckning är en latensfråga, inte bara en kvalitetsfråga.** `relevant` kör bara sin rådata-tier när summerings-tiern inte fyllde `--limit`, och rådata-tiern är en bred scan över meddelande-FTS-indexet (en rad per meddelande) där summerings-tiern läser en rad per tråd. Summeringar kortsluter alltså den dyra halvan av den kodväg som körs vid **varje prompt**: mätt med den kompilerade binären mot ett syntetiskt arkiv med 300 000 meddelanden (1200 sessioner, 148 MB) och noll summeringar tog `cerebro relevant "<prosa-prompt>" --limit 5` 386 ms, och det krymper när täckningen stiger. Är arkivet osummerat är `cerebro digest stale` värd att köra, inte bara för recall.
+
 **Summeringen pekar på rådatan, oftast räcker den.** Varje summering är nycklad på trådens id, och varje `digest`-rad inleds med det id:t. Det är referensen tillbaka till rådatan: i de allra flesta fall är summeringen good enough för att svara, och du behöver inte öppna transkriptet. Hämta rådatan **bara vid behov**, i den här ordningen:
 - `cerebro show <id>` for en outline (en rad per meddelande) om du behöver se förloppet.
 - `cerebro show <id> --full` for det ordagranna transkriptet när du behöver exakta formuleringar, kod eller kommandon.
