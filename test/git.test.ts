@@ -6,7 +6,7 @@ import { gitInfo } from "../src/git.ts";
 
 // git.ts was the last source module with no test. Its positive path (a real repo
 // resolving to its root + origin remote) populates the git_root that `recent` scopes
-// by, and invariant #8 requires it to tolerate a missing directory by returning
+// by, and invariant #9 requires it to tolerate a missing directory by returning
 // nulls rather than throwing (it runs for every top-level session inside the
 // per-file index transaction). These drive the real `git` over throwaway dirs; each
 // case uses a distinct cwd so the module-level cache does not bleed between cases.
@@ -62,7 +62,7 @@ describe("gitInfo", () => {
     expect(gitInfo(dir)).toEqual({ root: null, remote: null });
   });
 
-  test("a missing directory resolves to nulls without throwing (invariant #8)", () => {
+  test("a missing directory resolves to nulls without throwing (invariant #9)", () => {
     const missing = join(tmpdir(), "cerebro-git-does-not-exist-zzz");
     expect(() => gitInfo(missing)).not.toThrow();
     expect(gitInfo(missing)).toEqual({ root: null, remote: null });

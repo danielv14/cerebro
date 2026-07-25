@@ -92,12 +92,23 @@ These are load-bearing. Violating one silently corrupts the archive.
    session (the enclosing `<uuid>` directory), so sidechains fold into the parent.
    `touchParentSession` refreshes the parent aggregate without clobbering its
    identity fields.
-7. **Use `cwd` from the line for the true path, never the decoded directory name.**
+7. **`upsertSession` and `touchParentSession` stay two functions.** They write the
+   same columns and look like duplication, but they differ in which operand wins
+   each per-column `COALESCE`: a top-level file is the authority for its session
+   (`COALESCE(excluded.x, sessions.x)`), while a subagent file must never clobber
+   the parent (`COALESCE(sessions.x, excluded.x)`, with the fields it cannot know
+   passed NULL). On top of that only `upsertSession` carries the title-priority
+   `CASE` (a later `summary` must not overwrite a `custom-title`), while
+   `touchParentSession` freezes `title_priority`. Merging them behind a
+   `prefer: "incoming" | "existing"` flag is a decided non-goal: it hides the one
+   thing that differs, and a wrong merge silently mis-attributes sessions
+   (invariant #6).
+8. **Use `cwd` from the line for the true path, never the decoded directory name.**
    The dash-encoding of project dirs is lossy when paths contain hyphens.
-8. **git resolution must tolerate a missing directory** -> null, not a crash
+9. **git resolution must tolerate a missing directory** -> null, not a crash
    (`git.ts` already does; keep it cached per cwd).
-9. **`bun:sqlite` `.changes` is inflated by the FTS trigger** (one insert reports
-   ~7). Never trust its magnitude; measure `COUNT(*)` deltas for reporting.
+10. **`bun:sqlite` `.changes` is inflated by the FTS trigger** (one insert reports
+    ~7). Never trust its magnitude; measure `COUNT(*)` deltas for reporting.
 
 ## Data source
 
