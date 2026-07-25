@@ -316,6 +316,11 @@ const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
 
 // Build logical threads across resumes. A resume's first message has a parentUuid
 // owned by an earlier session; chaining those parents up gives each thread's root.
+// Cost is linear in archive size (a window scan over messages plus an UPDATE of
+// every sessions row), which is why runIndex only calls it when a file was read.
+// The accepted consequence: a run that crashed after ingest but before this call
+// leaves stale links that a later no-op run no longer repairs. The repair path is
+// `cerebro index --full`, which always reads files and so always relinks.
 export const relinkThreads = (db: Database): void => {
   // Pass 1: direct parent session, in one query. The inner subquery finds the
   // earliest main-chain message per session, with its parentUuid. Sidechain rows
@@ -380,6 +385,9 @@ export interface IndexResult {
   newMessages: number;
   filesScanned: number;
   filesIndexed: number;
+  // Whether relinkThreads ran. Not reported to the user; it exists so the
+  // no-op gate in runIndex is directly observable.
+  relinked: boolean;
 }
 
 type FileStatus = "new" | "grown" | "truncated" | "unchanged";
@@ -515,6 +523,9 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 // place (see ingestLines): the only way a flattenContent change reaches old rows,
 // since plain dedup ignores re-reads. It never deletes anything, so messages whose
 // source Claude Code already removed are untouched.
+// A run that indexes nothing is O(files discovered), not O(archive): the relink
+// pass is skipped (see below), which is what keeps the synchronous /clear hook
+// cheap on a large archive.
 export const runIndex = (db: Database, full = false, rebuild = false): IndexResult => {
   const readAll = full || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
@@ -563,11 +574,20 @@ export const runIndex = (db: Database, full = false, rebuild = false): IndexResu
     },
   );
 
+  // Unconditional: a source file can vanish from disk without anything being
+  // indexed, and that is exactly what flips body_available to 0.
   markDeletedBodies(db, files);
-  relinkThreads(db);
+  // A run that read no file inserted no message, so no new cross-session parent
+  // link can exist and root_session_id cannot have changed. Skipping the relink
+  // keeps a no-op index O(files discovered) instead of O(archive). The gate is on
+  // filesIndexed, not on the message delta: a file can be read and contribute only
+  // title events, and a future change to what counts as indexable must not
+  // silently disable relinking.
+  const relinked = filesIndexed > 0;
+  if (relinked) relinkThreads(db);
 
   const after = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
-  return { newMessages: after - before, filesScanned: files.length, filesIndexed };
+  return { newMessages: after - before, filesScanned: files.length, filesIndexed, relinked };
 };
 
 const countMessages = (lines: string[]): number => {

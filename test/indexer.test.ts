@@ -230,6 +230,45 @@ describe("runIndex", () => {
     expect(resume.root_session_id).toBe("ORIG");
   });
 
+  test("a no-op run skips the relink but keeps existing thread links (#82)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    expect(runIndex(db).relinked).toBe(true);
+
+    const second = runIndex(db); // nothing changed on disk
+    expect(second.filesIndexed).toBe(0);
+    expect(second.relinked).toBe(false);
+    const resume = db
+      .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
+      .get() as { parent_session_id: string; root_session_id: string };
+    expect(resume.parent_session_id).toBe("ORIG");
+    expect(resume.root_session_id).toBe("ORIG");
+  });
+
+  test("a resume written after the first run is still relinked on the next run (#82)", () => {
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    runIndex(db);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const second = runIndex(db);
+    expect(second.filesIndexed).toBe(1);
+    expect(second.relinked).toBe(true);
+    const resume = db
+      .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
+      .get() as { parent_session_id: string; root_session_id: string };
+    expect(resume.parent_session_id).toBe("ORIG");
+    expect(resume.root_session_id).toBe("ORIG");
+  });
+
   test("relink picks the true first main-chain turn: NULL ts and sidechain rows cannot shadow it (#44)", () => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
