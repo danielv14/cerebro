@@ -1,6 +1,6 @@
 import { runBackup } from "../backup.ts";
 import { humanBytes } from "../render.ts";
-import type { CommandContext } from "./context.ts";
+import { type CommandContext, numberOption } from "./context.ts";
 
 // `backup` output: where the snapshot landed, its size, and anything pruned.
 export const backupReport = (result: {
@@ -16,15 +16,14 @@ export const backupReport = (result: {
 // The `backup` command: snapshot the database via VACUUM INTO, optionally pruning
 // old default-named snapshots with --keep.
 export const backupCommand = ({ db, io, values, dbPath, fail }: CommandContext): void => {
-  let keep: number | undefined;
-  if (values.keep !== undefined) {
-    keep = Number(values.keep);
-    if (!Number.isInteger(keep) || keep < 1) {
-      fail(`--keep must be a positive integer (got "${values.keep}")`);
-      return;
-    }
-  }
-  for (const line of backupReport(runBackup(db, dbPath, { to: values.to, keep }))) {
+  const keep = numberOption(
+    values.keep,
+    "keep",
+    { integer: true, min: 1, label: "a positive integer" },
+    fail,
+  );
+  if (!keep.ok) return;
+  for (const line of backupReport(runBackup(db, dbPath, { to: values.to, keep: keep.value }))) {
     io.log(line);
   }
 };

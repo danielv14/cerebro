@@ -78,6 +78,32 @@ export const readStdin = (): string => {
   }
 };
 
+// Parse and validate a numeric CLI option. One place for the Number() + predicate
+// + fail() block every numeric flag needs, so the rules are stated as data instead
+// of being retyped per option. `value` is undefined when the option is absent, so
+// the caller applies its own default; `{ ok: false }` means the message has already
+// been reported and the caller must stop. `label` is the noun phrase in the error
+// text, so each option keeps the exact wording its tests pin.
+export const numberOption = (
+  raw: string | undefined,
+  name: string,
+  opts: { integer?: boolean; min: number; minExclusive?: boolean; label: string },
+  fail: (message: string) => void,
+): { ok: true; value: number | undefined } | { ok: false } => {
+  if (raw === undefined) return { ok: true, value: undefined };
+  const value = Number(raw);
+  // Fractions are meaningful for some options (--days multiplies into a
+  // millisecond cutoff, so 1.5 is a day and a half), so integrality is opt-in
+  // rather than the rule; those options only need a finite number.
+  const wellFormed = opts.integer ? Number.isInteger(value) : Number.isFinite(value);
+  const aboveMin = opts.minExclusive ? value > opts.min : value >= opts.min;
+  if (!wellFormed || !aboveMin) {
+    fail(`--${name} must be ${opts.label} (got "${raw}")`);
+    return { ok: false };
+  }
+  return { ok: true, value };
+};
+
 // Resolve a positional session-id argument (an id or a unique prefix) to a full
 // session id, reporting the right error and setting exit 1 when it is missing or
 // matches nothing. Returns null in those cases so the caller can stop. Shared by

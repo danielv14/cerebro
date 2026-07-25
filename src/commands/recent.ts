@@ -2,7 +2,7 @@ import { gitInfo } from "../git.ts";
 import { recentThreads, type ThreadRow } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { threadOpeningPrompt } from "../thread.ts";
-import type { CommandContext } from "./context.ts";
+import { type CommandContext, numberOption } from "./context.ts";
 
 // Line 1 of a `recent` thread row. `showMsgs: false` (the --context branch) drops
 // the "N msgs" column; otherwise the count is right-padded to width 4. The title is
@@ -62,11 +62,16 @@ export const recentBlock = (
 // cwd is inside a repo, else by exact project path), for session-start context.
 export const recentCommand = ({ db, io, values, limit, fail, emitJson }: CommandContext): void => {
   const cwd = values.cwd || process.cwd();
-  const days = values.days ? Number(values.days) : 14;
-  if (!Number.isFinite(days) || days <= 0) {
-    fail(`--days must be a positive number (got "${values.days}")`);
-    return;
-  }
+  // Fractional days are allowed: this multiplies into a millisecond cutoff, so
+  // --days 1.5 is a meaningful window (unlike a row limit).
+  const parsedDays = numberOption(
+    values.days,
+    "days",
+    { min: 0, minExclusive: true, label: "a positive number" },
+    fail,
+  );
+  if (!parsedDays.ok) return;
+  const days = parsedDays.value ?? 14;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const repoRoot = gitInfo(cwd).root;
   const threads = recentThreads(db, { repoRoot, cwd, since, limit: limit ?? 5 });
