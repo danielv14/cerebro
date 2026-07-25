@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { gitInfo } from "../git.ts";
 import { type RelevantThread, relevantThreads } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { type CommandContext, readStdin } from "./context.ts";
@@ -48,23 +49,29 @@ export const relevantBlock = (threads: RelevantThread[], opts: { context: boolea
 };
 
 // The accepted shape of the JSON a UserPromptSubmit hook pipes to `relevant
-// --stdin` (the hook sends { prompt, cwd, ... }). Only `prompt` is read; extra keys
-// are ignored.
-const HookPayloadSchema = v.object({ prompt: v.optional(v.string()) });
+// --stdin` (the hook sends { prompt, cwd, ... }). `prompt` is what gets searched and
+// `cwd` is the repo the prompt was typed in (a ranking boost, see relevantThreads);
+// extra keys are ignored.
+const HookPayloadSchema = v.object({
+  prompt: v.optional(v.string()),
+  cwd: v.optional(v.string()),
+});
 
 // Validate that hook stdin payload, pure over the already-read raw string so it is
-// unit-testable without fd-0 plumbing. Degrades to an empty prompt on any JSON-parse
-// or validation failure (malformed JSON, missing prompt, non-string prompt), so a
-// broken payload never injects context or spams the prompt. This is cerebro's second
-// untrusted I/O boundary (the first is the session JSONL in jsonl.ts).
-export const parseHookPayload = (raw: string): { prompt: string } => {
+// unit-testable without fd-0 plumbing. Degrades to an empty prompt and no cwd on any
+// JSON-parse or validation failure (malformed JSON, missing prompt, non-string
+// prompt), so a broken payload never injects context or spams the prompt, and a
+// payload without a usable cwd ranks globally. This is cerebro's second untrusted I/O
+// boundary (the first is the session JSONL in jsonl.ts).
+export const parseHookPayload = (raw: string): { prompt: string; cwd: string | null } => {
   try {
-    // HookPayloadSchema validates prompt as optional(string), so on success it is
-    // string | undefined (never null); ?? "" covers the missing case.
+    // HookPayloadSchema validates both fields as optional(string), so on success they
+    // are string | undefined (never null); the fallbacks cover the missing cases.
     const parsed = v.safeParse(HookPayloadSchema, JSON.parse(raw));
-    return { prompt: parsed.success ? (parsed.output.prompt ?? "") : "" };
+    if (!parsed.success) return { prompt: "", cwd: null };
+    return { prompt: parsed.output.prompt ?? "", cwd: parsed.output.cwd || null };
   } catch {
-    return { prompt: "" };
+    return { prompt: "", cwd: null };
   }
 };
 
@@ -81,11 +88,18 @@ export const relevantCommand = ({
   // --stdin reads the prompt from a hook's JSON payload (UserPromptSubmit
   // sends { prompt, cwd, ... } on stdin), so the hook needs no jq or wrapper.
   let prompt = positionals.slice(1).join(" ");
+  // The directory the prompt was typed in, used only to boost same-repo threads.
+  // An explicit --cwd wins over the payload's (manual use and tests); with neither,
+  // ranking stays global. Deliberately NOT defaulted to process.cwd(): a manual
+  // `relevant "..."` must rank exactly as it did before.
+  let cwd = values.cwd || null;
   if (values.stdin) {
     // The fd-0 read (readStdin, shared with digest write) is the only impure step;
     // the parsing/validation is in the pure parseHookPayload. A failed read (no
     // stdin) degrades to "" too.
-    prompt = parseHookPayload(readStdin()).prompt;
+    const payload = parseHookPayload(readStdin());
+    prompt = payload.prompt;
+    cwd = values.cwd || payload.cwd;
   }
   if (!prompt) {
     if (!values.context) {
@@ -94,7 +108,12 @@ export const relevantCommand = ({
     }
     return;
   }
-  const threads = relevantThreads(db, prompt, limit ?? 3);
+  // Same repo resolution as `recent`: the git root when the cwd is inside a repo,
+  // else the exact path. gitInfo tolerates a null cwd (and a deleted directory).
+  const threads = relevantThreads(db, prompt, limit ?? 3, Date.now(), {
+    repoRoot: gitInfo(cwd).root,
+    cwd,
+  });
   if (values.json) {
     emitJson(threads);
     return;
