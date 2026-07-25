@@ -26,6 +26,15 @@ export interface SearchOpts {
   all?: boolean;
 }
 
+// Over-fetch window for the deduped search: `max(2000, limit * 50)` rows in one
+// query, quadrupled for at most 3 further rounds when the window ran out before
+// `limit` distinct thread roots were found. 2000 rows covers any realistic archive in
+// one fetch; the ceiling (2000 * 4^3 = 128 000 rows) bounds the worst case.
+const SEARCH_WINDOW_MIN = 2000;
+const SEARCH_WINDOW_FACTOR = 50;
+const SEARCH_WINDOW_GROWTH = 4;
+const SEARCH_WINDOW_ROUNDS = 3;
+
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
 // syntax, fall back to a sanitized phrase query of the bare tokens. By default the
@@ -50,14 +59,17 @@ export const search = (
 
   // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
   // which rules out a window-function dedup in SQL. Instead the ranked hits are
-  // fetched in pages and the first (= best) hit per thread root is kept in JS,
-  // mirroring how relevantThreads dedups its raw tier. Paging (not a single capped
-  // over-fetch) matters: one chatty thread can own hundreds of the top bm25 rows,
-  // and a fixed window would silently starve every thread ranked below it. The
-  // ordinal is deliberately NOT computed here: it would run a thread-wide COUNT for
-  // every matched row the sorter sees; instead messageOrdinal (thread.ts, the owner
-  // of thread ordering) runs once per *kept* hit below.
-  const pageSize = opts.all ? limit : Math.max(200, limit * 10);
+  // over-fetched in one deep query and the first (= best) hit per thread root is kept
+  // in JS, mirroring how relevantThreads dedups its raw tier. One deep fetch rather
+  // than LIMIT/OFFSET paging: `ORDER BY bm25(...) LIMIT n` uses a bounded top-N
+  // sorter, so a deeper n is nearly free, while every extra page re-ranks the whole
+  // match set and pays that cost again (#81). A fixed window alone is not enough
+  // either: one chatty thread can own every row in it and starve the threads ranked
+  // below, so when the window is exhausted before `limit` distinct roots are found it
+  // grows geometrically and the dedup is redone from the top. The ordinal is
+  // deliberately NOT computed here: it would run a thread-wide COUNT for every
+  // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
+  // thread ordering) runs once per *kept* hit below.
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
            s.root_session_id AS root,
@@ -68,20 +80,21 @@ export const search = (
     WHERE messages_fts MATCH ?
     ${filters.join("\n    ")}
     ORDER BY bm25(messages_fts)
-    LIMIT ? OFFSET ?`;
+    LIMIT ?`;
   const stmt = db.query(sql);
 
   interface RawHit extends Omit<SearchHit, "ordinal"> {
     root: string | null;
   }
-  const runPage = (match: string, offset: number): RawHit[] =>
-    stmt.all(match, ...filterParams, pageSize, offset) as RawHit[];
+  const fetchWindow = (match: string, windowSize: number): RawHit[] =>
+    stmt.all(match, ...filterParams, windowSize) as RawHit[];
 
-  // Resolve the effective MATCH query on the first page; later pages reuse it.
+  // Resolve the effective MATCH query on the first fetch; deeper fetches reuse it.
   let match = query;
-  let page: RawHit[];
+  let windowSize = opts.all ? limit : Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR);
+  let rows: RawHit[];
   try {
-    page = runPage(match, 0);
+    rows = fetchWindow(match, windowSize);
   } catch {
     const sanitized = query
       .split(/\s+/)
@@ -90,26 +103,37 @@ export const search = (
       .join(" ");
     if (!sanitized) return [];
     match = sanitized;
-    page = runPage(match, 0);
+    rows = fetchWindow(match, windowSize);
   }
 
-  const kept: RawHit[] = [];
-  if (opts.all) {
-    kept.push(...page);
-  } else {
+  const bestPerRoot = (hits: RawHit[]): RawHit[] => {
     const seen = new Set<string>();
-    let offset = 0;
-    for (;;) {
-      for (const hit of page) {
-        const key = hit.root ?? hit.session_id;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        kept.push(hit);
-        if (kept.length >= limit) break;
-      }
-      if (kept.length >= limit || page.length < pageSize) break;
-      offset += pageSize;
-      page = runPage(match, offset);
+    const best: RawHit[] = [];
+    for (const hit of hits) {
+      const key = hit.root ?? hit.session_id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      best.push(hit);
+      if (best.length >= limit) break;
+    }
+    return best;
+  };
+
+  let kept: RawHit[];
+  if (opts.all) {
+    kept = rows;
+  } else {
+    kept = bestPerRoot(rows);
+    // Grow only when the window was genuinely exhausted: fewer distinct roots than
+    // asked for AND a full window came back, so deeper rows can still exist.
+    for (
+      let round = 0;
+      round < SEARCH_WINDOW_ROUNDS && kept.length < limit && rows.length >= windowSize;
+      round++
+    ) {
+      windowSize *= SEARCH_WINDOW_GROWTH;
+      rows = fetchWindow(match, windowSize);
+      kept = bestPerRoot(rows);
     }
   }
 
