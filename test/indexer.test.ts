@@ -277,6 +277,46 @@ describe("runIndex", () => {
     expect(sidechain).toBe(2);
   });
 
+  test("a subagent file never clobbers the parent's identity fields (invariant #7)", () => {
+    writeSession(env.projects, "-repo", "PARENT", [
+      userMsg("PARENT", "u1", "do a task"),
+      { type: "custom-title", customTitle: "Parent title", sessionId: "PARENT" },
+    ]);
+    runIndex(db);
+    // The subagent transcript shows up later, carrying a different cwd and branch.
+    // The parent's top-level file is unchanged, so this run only touches the parent
+    // row via touchParentSession: it must refresh the aggregate and nothing else.
+    writeSubagent(env.projects, "-repo", "PARENT", "agent-xyz", [
+      userMsg("PARENT", "sa1", "subagent prompt", {
+        isSidechain: true,
+        cwd: "/elsewhere",
+        gitBranch: "other-branch",
+      }),
+    ]);
+    runIndex(db);
+    const row = db
+      .query(
+        `SELECT project_path, cwd, git_branch, source_file, title, title_priority, msg_count
+         FROM sessions WHERE session_id='PARENT'`,
+      )
+      .get() as {
+      project_path: string;
+      cwd: string;
+      git_branch: string;
+      source_file: string;
+      title: string;
+      title_priority: number;
+      msg_count: number;
+    };
+    expect(row.project_path).toBe("/repo");
+    expect(row.cwd).toBe("/repo");
+    expect(row.git_branch).toBe("main");
+    expect(row.source_file).toEndWith("PARENT.jsonl");
+    expect(row.title).toBe("Parent title");
+    expect(row.title_priority).toBe(3);
+    expect(row.msg_count).toBe(2); // the aggregate did refresh
+  });
+
   test("truncated/rotated file is re-read from the start", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "one"),

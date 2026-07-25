@@ -178,6 +178,10 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 // title_priority decides: the incoming title wins only when it is non-NULL and its
 // priority is >= the stored one (>= so a fresh same-priority title, like a renewed
 // ai-title, still replaces the old).
+//
+// Kept separate from touchParentSession on purpose (invariant #7): the COALESCE
+// direction and this title CASE are the whole difference between the two, so do not
+// merge them into one builder behind a flag.
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -240,6 +244,10 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
 // top-level's. The fields a subagent cannot know (git_root, git_remote, source_file,
 // title) are passed NULL, so on a pure-subagent stub source_file stays NULL and the
 // row reads as body-unavailable.
+//
+// Kept separate from upsertSession on purpose (invariant #7): the reversed COALESCE
+// direction plus the frozen title_priority are the whole difference between the two,
+// so do not merge them into one builder behind a flag.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
