@@ -3,9 +3,9 @@ import { dryRunReport, indexResult } from "../../src/commands/index-cmd.ts";
 
 describe("indexResult", () => {
   test("reports new messages and files touched", () => {
-    expect(indexResult({ newMessages: 7, filesScanned: 3, filesIndexed: 2 })).toEqual([
-      "Indexed 7 new message(s) (2/3 files touched).",
-    ]);
+    expect(
+      indexResult({ newMessages: 7, filesScanned: 3, filesIndexed: 2, relinked: true }),
+    ).toEqual(["Indexed 7 new message(s) (2/3 files touched)."]);
   });
 });
 
