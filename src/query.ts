@@ -214,28 +214,66 @@ export const toMatchQuery = (text: string): string | null => {
 // be deterministic text relevance, the per-prompt injection should favor fresh work.
 const RELEVANCE_HALF_LIFE_DAYS = 90;
 const UNKNOWN_AGE_DAYS = 365;
-export const decayedRank = (bm25: number, lastTs: string | null, nowMs: number): number => {
+export const decayedRank = (
+  bm25: number,
+  lastTs: string | null,
+  nowMs: number,
+  boost = 1,
+): number => {
   const parsed = lastTs ? Date.parse(lastTs) : Number.NaN;
   const ageDays = Number.isFinite(parsed)
     ? Math.max(0, (nowMs - parsed) / 86_400_000)
     : UNKNOWN_AGE_DAYS;
-  return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS);
+  return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS) * boost;
+};
+
+// The repo a prompt was typed in, for `relevant`'s same-repo boost. Matched on the
+// thread's git_root when the cwd is inside a git repo, else on the exact
+// project_path, the same pairing recentThreads scopes by, so a thread `recent`
+// considers in-repo is the same one `relevant` boosts.
+export interface RepoScope {
+  repoRoot?: string | null;
+  cwd?: string | null;
+}
+
+// A prompt typed in repo X is far likelier to relate to past work in repo X than to
+// an equally worded thread in an unrelated project, and the UserPromptSubmit payload
+// already carries the cwd. bm25 is negative and lower is better, so the boost
+// multiplies the decayed magnitude *up*, the mirror of how decayedRank shrinks it.
+// 1.5x is worth roughly two months of recency at the 90-day half-life
+// (2 ** (-60/90) ~= 0.63 ~= 1/1.5): a same-repo thread beats a cross-repo one of
+// equal text relevance unless that one is about two months fresher. It is a boost,
+// never a filter, so a much stronger cross-repo match stays reachable, which matters
+// for shared-infrastructure work.
+const SAME_REPO_BOOST = 1.5;
+const repoBoost = (
+  hit: { git_root: string | null; project_path: string | null },
+  scope: RepoScope,
+): number => {
+  if (scope.repoRoot) return hit.git_root === scope.repoRoot ? SAME_REPO_BOOST : 1;
+  if (scope.cwd) return hit.project_path === scope.cwd ? SAME_REPO_BOOST : 1;
+  return 1;
 };
 
 export interface SummaryRootHit {
   root: string;
   snippet: string;
-  // bm25 of the summary match plus the thread's latest activity, so `relevant` can
-  // recency-weight the tier. `digest search` ignores both.
+  // bm25 of the summary match plus the thread's latest activity and repo, so
+  // `relevant` can recency-weight the tier and boost same-repo threads. `digest
+  // search` ignores all four.
   score: number;
   last_ts: string | null;
+  git_root: string | null;
+  project_path: string | null;
 }
 
 // The curated-summary FTS search, ranked by bm25, for an already-tokenized MATCH
 // query. The single owner of the summaries_fts query shape so `relevant`'s summary
 // tier and `digest search` cannot drift on the query, the join, or the snippet
 // markup. `snippetTokens` is a parameter because the two callers surface different
-// amounts of context (relevant is compact, digest search is roomier). Throws on a
+// amounts of context (relevant is compact, digest search is roomier). The thread
+// rollup (last_ts and the repo fields) is joined in from the `threads` view, left so
+// a summary whose sessions rows are gone still returns its snippet. Throws on a
 // malformed MATCH so each caller keeps its own fallback (relevant falls through to
 // raw transcripts; digest search returns empty).
 export const searchSummaryRoots = (
@@ -249,10 +287,10 @@ export const searchSummaryRoots = (
       `SELECT s.root_session_id AS root,
               snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
               bm25(summaries_fts) AS score,
-              (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
-                AS last_ts
+              t.last_ts, t.git_root, t.project_path
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
+       LEFT JOIN threads t ON t.id = s.root_session_id
        WHERE summaries_fts MATCH ?
        ORDER BY bm25(summaries_fts)
        LIMIT ?`,
@@ -291,13 +329,17 @@ export interface RelevantThread {
 // wholesale rather than merging scores. Within each tier the bm25 score is
 // recency-decayed (decayedRank): the injection hook asks "what recent work relates
 // to this prompt", so a two-year-old thread must not outrank last week's on an
-// equal text match. Each thread is enriched with title + opening prompt so it is
-// recognizable in injected context. `now` is injectable for tests.
+// equal text match, and boosted when the thread is in the repo the prompt was typed
+// in (`scope`, see repoBoost). Each thread is enriched with title + opening prompt so
+// it is recognizable in injected context. `now` is injectable for tests, and the boost
+// is a pure function of the rows, so ranking stays deterministic. An empty `scope`
+// (manual use, or a hook payload without a cwd) ranks globally, as before.
 export const relevantThreads = (
   db: Database,
   prompt: string,
   limit = 3,
   now = Date.now(),
+  scope: RepoScope = {},
 ): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
@@ -309,7 +351,10 @@ export const relevantThreads = (
   // Tier 1: curated summaries. Over-fetch by bm25, then re-rank with recency decay.
   try {
     const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10)
-      .map((hit) => ({ ...hit, rank: decayedRank(hit.score, hit.last_ts, now) }))
+      .map((hit) => ({
+        ...hit,
+        rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
+      }))
       .sort((a, b) => a.rank - b.rank);
     for (const hit of summaryHits) {
       if (chosen.size >= limit) break;
@@ -326,19 +371,24 @@ export const relevantThreads = (
       snippet: string;
       score: number;
       last_ts: string | null;
+      git_root: string | null;
+      project_path: string | null;
     }
     let hits: Hit[] = [];
     try {
+      // The thread rollup (last_ts + repo) comes from the `threads` view, not from the
+      // matched message's own session row: a resume can carry a NULL git_root, and the
+      // view is root-preferring, so the boost sees the thread's repo.
       hits = db
         .query(
           `SELECT s.root_session_id AS root,
                   snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
                   bm25(messages_fts) AS score,
-                  (SELECT MAX(last_ts) FROM sessions WHERE root_session_id = s.root_session_id)
-                    AS last_ts
+                  t.last_ts, t.git_root, t.project_path
            FROM messages_fts
            JOIN messages m ON m.id = messages_fts.rowid
            JOIN sessions s ON s.session_id = m.session_id
+           LEFT JOIN threads t ON t.id = s.root_session_id
            WHERE messages_fts MATCH ?
            ORDER BY bm25(messages_fts)
            LIMIT 80`,
@@ -352,7 +402,10 @@ export const relevantThreads = (
     const byRoot = new Map<string, Hit & { rank: number }>();
     for (const hit of hits) {
       if (!hit.root) continue;
-      const ranked = { ...hit, rank: decayedRank(hit.score, hit.last_ts, now) };
+      const ranked = {
+        ...hit,
+        rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
+      };
       const existing = byRoot.get(hit.root);
       if (!existing || ranked.rank < existing.rank) byRoot.set(hit.root, ranked);
     }

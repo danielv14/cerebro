@@ -384,6 +384,117 @@ describe("query (populated archive)", () => {
     expect(hits.map((h) => h.id)).toEqual(["NEW", "OLD"]);
   });
 
+  test("decayedRank multiplies the magnitude up for a same-repo boost (#88)", () => {
+    const now = Date.parse("2026-07-01T00:00:00Z");
+    const plain = decayedRank(-10, "2026-07-01T00:00:00Z", now);
+    const boosted = decayedRank(-10, "2026-07-01T00:00:00Z", now, 1.5);
+    expect(boosted).toBeCloseTo(plain * 1.5);
+    expect(boosted).toBeLessThan(plain); // boosted = more negative = ranked first
+  });
+
+  test("relevantThreads boosts a same-repo thread over a fresher cross-repo one (#88)", () => {
+    // Equal text match. OTHER is a month fresher, so it wins the global ranking; the
+    // same-repo boost (worth ~2 months of recency) must flip that when the prompt was
+    // typed in MINE's repo.
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo-mine", "MINE", [
+      userMsg("MINE", "u1", "notes about the limiter design", {
+        cwd: "/repo-mine",
+        timestamp: ts(0),
+      }),
+    ]);
+    writeSession(env.projects, "-repo-other", "OTHER", [
+      userMsg("OTHER", "u2", "notes about the limiter design", {
+        cwd: "/repo-other",
+        timestamp: ts(month),
+      }),
+    ]);
+    runIndex(db);
+    const now = Date.parse(ts(month));
+
+    // No scope: unchanged global behavior, recency decides.
+    expect(relevantThreads(db, "limiter", 2, now).map((h) => h.id)).toEqual(["OTHER", "MINE"]);
+    // Scoped by the cwd's exact project path (no git root, as in these fixtures).
+    expect(relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" }).map((h) => h.id)).toEqual([
+      "MINE",
+      "OTHER",
+    ]);
+    // A cwd in neither repo boosts nothing.
+    expect(
+      relevantThreads(db, "limiter", 2, now, { cwd: "/repo-elsewhere" }).map((h) => h.id),
+    ).toEqual(["OTHER", "MINE"]);
+  });
+
+  test("relevantThreads boosts on git_root when the cwd is inside a repo (#88)", () => {
+    writeSession(env.projects, "-repo-mine", "MINE", [
+      userMsg("MINE", "u1", "notes about the limiter design", {
+        cwd: "/checkout/mine",
+        timestamp: ts(0),
+      }),
+    ]);
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo-other", "OTHER", [
+      userMsg("OTHER", "u2", "notes about the limiter design", {
+        cwd: "/checkout/other",
+        timestamp: ts(month),
+      }),
+    ]);
+    runIndex(db);
+    // The fixture cwds are not real directories, so indexing resolved no git root;
+    // set the roots the way an index inside a real repo would (gitInfo itself is
+    // covered in git.test.ts).
+    db.run("UPDATE sessions SET git_root = '/checkout/mine' WHERE session_id = 'MINE'");
+    db.run("UPDATE sessions SET git_root = '/checkout/other' WHERE session_id = 'OTHER'");
+    const now = Date.parse(ts(month));
+
+    // repoRoot matches on git_root, and takes precedence over the cwd path.
+    const hits = relevantThreads(db, "limiter", 2, now, {
+      repoRoot: "/checkout/mine",
+      cwd: "/checkout/mine/packages/api",
+    });
+    expect(hits.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
+  });
+
+  test("relevantThreads boost is not a filter: cross-repo threads still surface (#88)", () => {
+    // STRONG matches densely but sits in another repo; WEAK is a buried match in the
+    // prompt's own repo. Both must come back, so shared-infrastructure work stays
+    // reachable, and the boost must not be strong enough to bury the far better match.
+    writeSession(env.projects, "-repo-other", "STRONG", [
+      userMsg("STRONG", "u1", "limiter limiter limiter", { cwd: "/repo-other", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-mine", "WEAK", [
+      userMsg("WEAK", "u2", `limiter ${"filler ".repeat(200)}`, {
+        cwd: "/repo-mine",
+        timestamp: ts(0),
+      }),
+    ]);
+    runIndex(db);
+    const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), { cwd: "/repo-mine" });
+    expect(hits.map((h) => h.id)).toEqual(["STRONG", "WEAK"]);
+  });
+
+  test("relevantThreads applies the boost in the summary tier too (#88)", () => {
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo-mine", "MINE", [
+      userMsg("MINE", "u1", "some work", { cwd: "/repo-mine", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-other", "OTHER", [
+      userMsg("OTHER", "u2", "some work", { cwd: "/repo-other", timestamp: ts(month) }),
+    ]);
+    runIndex(db);
+    // Identical summaries: only repo and age differ, and the match is summary-only.
+    writeSummary(db, "MINE", "Built the limiter middleware. Keywords: limiter");
+    writeSummary(db, "OTHER", "Built the limiter middleware. Keywords: limiter");
+    const now = Date.parse(ts(month));
+
+    const global = relevantThreads(db, "limiter", 2, now);
+    expect(global.map((h) => h.id)).toEqual(["OTHER", "MINE"]);
+    expect(global.every((h) => h.fromSummary)).toBe(true);
+    const scoped = relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" });
+    expect(scoped.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
+    expect(scoped.every((h) => h.fromSummary)).toBe(true);
+  });
+
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "database migration work")]);
     runIndex(db);

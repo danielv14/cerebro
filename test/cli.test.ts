@@ -44,23 +44,32 @@ const makeIO = () => {
 };
 
 describe("parseHookPayload (relevant --stdin)", () => {
-  test("reads the prompt from a valid payload", () => {
+  test("reads the prompt and the cwd from a valid payload", () => {
     expect(parseHookPayload('{"prompt":"how did the migration go","cwd":"/repo"}')).toEqual({
       prompt: "how did the migration go",
+      cwd: "/repo",
     });
   });
 
   test("degrades to an empty prompt when the field is missing", () => {
-    expect(parseHookPayload('{"cwd":"/repo"}')).toEqual({ prompt: "" });
+    expect(parseHookPayload('{"cwd":"/repo"}')).toEqual({ prompt: "", cwd: "/repo" });
   });
 
   test("degrades to an empty prompt when the field is not a string", () => {
-    expect(parseHookPayload('{"prompt":42}')).toEqual({ prompt: "" });
+    expect(parseHookPayload('{"prompt":42}')).toEqual({ prompt: "", cwd: null });
   });
 
-  test("degrades to an empty prompt on malformed JSON", () => {
-    expect(parseHookPayload("{not json")).toEqual({ prompt: "" });
-    expect(parseHookPayload("")).toEqual({ prompt: "" });
+  test("degrades to no cwd when it is missing, empty, or not a string (#88)", () => {
+    // No cwd means `relevant` ranks globally, exactly as it did before the boost.
+    expect(parseHookPayload('{"prompt":"p"}')).toEqual({ prompt: "p", cwd: null });
+    expect(parseHookPayload('{"prompt":"p","cwd":""}')).toEqual({ prompt: "p", cwd: null });
+    // A non-string cwd fails the whole schema, so the prompt degrades too.
+    expect(parseHookPayload('{"prompt":"p","cwd":42}')).toEqual({ prompt: "", cwd: null });
+  });
+
+  test("degrades to an empty prompt and no cwd on malformed JSON", () => {
+    expect(parseHookPayload("{not json")).toEqual({ prompt: "", cwd: null });
+    expect(parseHookPayload("")).toEqual({ prompt: "", cwd: null });
   });
 });
 
@@ -498,5 +507,30 @@ describe("runCli", () => {
     runCli(["relevant", "zzzqqq nevermatches", "--context"], cap.io, seeded());
     expect(cap.logs).toEqual([]);
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("relevant --cwd boosts threads from that repo (#88)", () => {
+    // Equal text match; OTHER is a month fresher, so it leads without --cwd.
+    writeSession(env.projects, "-repo-mine", "MINE", [
+      userMsg("MINE", "u1", "notes about the limiter design", {
+        cwd: "/repo-mine",
+        timestamp: ts(0),
+      }),
+    ]);
+    writeSession(env.projects, "-repo-other", "OTHER", [
+      userMsg("OTHER", "u2", "notes about the limiter design", {
+        cwd: "/repo-other",
+        timestamp: ts(30 * 86_400),
+      }),
+    ]);
+
+    const order = (args: string[]): string[] => {
+      const cap = makeIO();
+      runCli(["relevant", "limiter", "--json", ...args], cap.io, seeded());
+      return (JSON.parse(cap.logs.join("\n")) as { id: string }[]).map((row) => row.id);
+    };
+
+    expect(order([])).toEqual(["OTHER", "MINE"]);
+    expect(order(["--cwd", "/repo-mine"])).toEqual(["MINE", "OTHER"]);
   });
 });

@@ -7,7 +7,9 @@ Usage:
                                          --all for every matching message)
   cerebro sessions [--project P] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
-  cerebro relevant <prompt> [--limit N] [--context]   Past threads relevant to a prompt
+  cerebro relevant <prompt> [--limit N] [--cwd P] [--context]
+                                         Past threads relevant to a prompt (threads in
+                                         --cwd's repo rank higher)
   cerebro show <session-id> [--full] [--range A..B]
                                          Show a thread (outline, full transcript, or
                                          a verbatim slice in outline numbering)
@@ -47,10 +49,12 @@ Options:
   --range <a..b>  show: only messages a through b (the outline / search #N numbering)
   --to <path>     backup: explicit target file (default: timestamped in backups/)
   --keep <n>      backup: prune oldest default-named backups beyond n
-  --cwd <path>    recent: directory to scope by (default: current dir)
+  --cwd <path>    recent: directory to scope by (default: current dir); relevant:
+                  repo whose threads get a ranking boost (default: the --stdin
+                  payload's cwd, else no boost)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
-  --stdin         relevant: read the prompt from a hook's JSON payload on stdin
+  --stdin         relevant: read the prompt (and cwd) from a hook's JSON payload on stdin
   --ids           digest stale: print one full session id per line (for scripts)
   --model <name>  digest write: record which model produced the summary
   --bytes <n>     digest model: tier by an already-measured transcript byte count

@@ -100,8 +100,8 @@ Recent sessions in my-app (last 14 days):
 Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
 ```
 
-### `cerebro relevant <prompt> [--limit N]`
-Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Rankingen är recency-viktad: bm25-poängen decayas med trådens ålder (halveringstid 90 dagar), så vid likvärdig textmatch vinner det färska arbetet (`search` är ren bm25). Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
+### `cerebro relevant <prompt> [--limit N] [--cwd P]`
+Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Rankingen är recency-viktad: bm25-poängen decayas med trådens ålder (halveringstid 90 dagar), så vid likvärdig textmatch vinner det färska arbetet (`search` är ren bm25). Trådar i samma repo som `--cwd` (git-roten, annars exakt projektsökväg) får dessutom poängen multiplicerad med 1.5 i båda tiers, ungefär värt två månaders färskhet. Det är en boost, aldrig ett filter: en klart starkare match i ett annat repo syns fortfarande, vilket är poängen för delad infrastruktur. Utan `--cwd` (och utan cwd i hook-payloaden) rankas allt globalt. Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
 
 ```
 $ cerebro relevant "how did we set up CI"
@@ -113,7 +113,7 @@ Related past sessions:
 To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
 ```
 
-`recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
+`recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten och cwd:n ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
 
 ### `cerebro show <session-id> [--full] [--range A..B]`
 Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. `--range 12..18` (eller ett ensamt tal) ger en ordagrann skiva med samma numrering som outlinen och som `#N`-markörerna i `search`-träffar, så du kan hoppa rakt till en träff i en jättetråd utan att dra hela transkriptet. Subagent-turer taggas `[subagent]`.
@@ -230,4 +230,4 @@ Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: 
 - **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
 - **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes. Varje sådant block kapas till första 1 KB (`[+N chars truncated]`-markör) eftersom huvudet rymmer det sökbara (tool-namn, file_path, kommando) medan resten är reproducerbart brus. Prosa och resonemang lagras ordagrant; fel (`[tool_result:error]`) kapas inte.
 - **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
-- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). `relevant` matchar **summeringarna först** (kurerat, hög signal) och faller tillbaka på rådata-bm25 for trådar som ännu inte summerats; en träff märkt `summary:` kommer från summeringen, `match:` från rådatan. En `SessionEnd`-hook vid `/clear` indexerar synkront och summerar sedan den just rensade sessionen i bakgrunden via `claude -p` (best-effort; `cerebro digest stale` är reconcilern som fångar det som missas). Du kan ändå proaktivt köra `relevant`/`search`/`digest search` när du vill gräva djupare.
+- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). Payloaden bär cwd:n, så trådar från samma repo boostas i rankingen. `relevant` matchar **summeringarna först** (kurerat, hög signal) och faller tillbaka på rådata-bm25 for trådar som ännu inte summerats; en träff märkt `summary:` kommer från summeringen, `match:` från rådatan. En `SessionEnd`-hook vid `/clear` indexerar synkront och summerar sedan den just rensade sessionen i bakgrunden via `claude -p` (best-effort; `cerebro digest stale` är reconcilern som fångar det som missas). Du kan ändå proaktivt köra `relevant`/`search`/`digest search` när du vill gräva djupare.

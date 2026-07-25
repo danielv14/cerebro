@@ -36,7 +36,8 @@ cerebro search <query> [--limit N] [--project P] [--since D] [--all]
                                             #   (best hit per thread; --all for every message)
 cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
-cerebro relevant <prompt> [--limit N]       # past threads relevant to a prompt
+cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a prompt
+                                            #   (threads in --cwd's repo rank higher)
 cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
 cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
@@ -218,8 +219,16 @@ bm25 for threads not yet summarized; a snippet labelled `summary:` came from the
 `match:` from the transcript. Both surface compact, recognizable breadcrumbs (id,
 date, title, the opening prompt, and for `relevant` a matching snippet), index-first
 so the model pulls detail on demand with `show` / `search`. `--context` emits an
-agent-facing block (silent when nothing matches); `--stdin` reads the prompt from a
-hook's JSON payload.
+agent-facing block (silent when nothing matches); `--stdin` reads the prompt (and the
+cwd) from a hook's JSON payload.
+
+Ranking also knows which repo you are in: threads from the cwd's repo (its git root,
+else the exact project path) get their score multiplied by 1.5 in both tiers, roughly
+worth two months of recency, since a prompt typed in repo X usually relates to past
+work in repo X. It is a boost, never a filter, so a much stronger match in another
+repo still surfaces, which matters for shared-infrastructure work. The cwd comes from
+the hook payload under `--stdin`, or from `--cwd <path>` manually; with neither,
+ranking is global as before.
 
 A `UserPromptSubmit` hook injects matching past threads on each prompt, so the model
 picks up earlier work when your prompt overlaps it:
