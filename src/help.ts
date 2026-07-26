@@ -2,10 +2,10 @@ export const HELP = `cerebro - permanent verbatim archive + search over Claude C
 
 Usage:
   cerebro index [--full] [--rebuild] [--dry-run]   Index all sessions incrementally
-  cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+  cerebro search <query> [--limit N] [--project P] [--since D] [--role R] [--prose] [--all]
                                          Full-text search (ranked, best hit per thread;
                                          --all for every matching message)
-  cerebro sessions [--project P] [--limit N]   List threads, newest first
+  cerebro sessions [--project P] [--since D] [--limit N]   List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
   cerebro relevant <prompt> [--limit N] [--cwd P] [--context]
                                          Past threads relevant to a prompt (threads in
@@ -14,6 +14,10 @@ Usage:
                                          Show a thread (outline, full transcript, or
                                          a verbatim slice in outline numbering)
   cerebro stats                          Archive counts
+  cerebro doctor [--full] [--json]       Read-only health report (integrity, schema,
+                                         digest backlog, deployed-binary drift, hooks);
+                                         exit 1 only on a hard failure
+  cerebro version                        Build identity of this binary
   cerebro backup [--to <path>] [--keep N]
                                          Snapshot the database (VACUUM INTO); default
                                          target <db-dir>/backups/archive-<ts>.sqlite
@@ -37,14 +41,21 @@ Digest actions:
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
   --full          index: ignore cursors and re-read everything (dedup skips known
-                  messages, so stored text is never touched); show: print full text
+                  messages, so stored text is never touched); show: print full text;
+                  doctor: the complete integrity_check instead of quick_check
   --rebuild       index: like --full, but also re-flatten the stored text of every
                   message still on disk (needed after a flattening/parser change;
                   messages whose source file is deleted are kept untouched)
   --dry-run       index: report what would be indexed, write nothing
   --limit <n>     Max rows to return
-  --project <p>   sessions/search: filter by project path substring
-  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31)
+  --project <p>   sessions/search: filter by project path substring (the thread's,
+                  so a resume is never dropped for lacking its own cwd)
+  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31);
+                  sessions: only threads last active at or after it
+  --role <r>      search: only user or assistant turns. A tool_result is recorded as
+                  a user turn, so --role user --prose is the "only my own prompts" query
+  --prose         search: drop messages that are nothing but flattened tool plumbing
+                  (a message that opens with prose and then calls a tool is kept)
   --all           search: every matching message instead of the best hit per thread
   --range <a..b>  show: only messages a through b (the outline / search #N numbering)
   --to <path>     backup: explicit target file (default: timestamped in backups/)
@@ -59,10 +70,13 @@ Options:
   --model <name>  digest write: record which model produced the summary
   --bytes <n>     digest model: tier by an already-measured transcript byte count
                   (skips re-rendering the transcript; used by the hooks)
-  --json          search/sessions/recent/relevant/show/stats/digest stale|search|show:
-                  emit the rows as JSON instead of the human listing
+  --json          search/sessions/recent/relevant/show/stats/doctor/version/
+                  digest stale|search|show: emit the rows as JSON instead of the
+                  human listing
   -h, --help      Show this help
 
 Env:
   CEREBRO_DB           Override the database path
-  CEREBRO_CLAUDE_DIR   Override the ~/.claude directory`;
+  CEREBRO_CLAUDE_DIR   Override the ~/.claude directory
+  CEREBRO_TZ           IANA zone for displayed timestamps (default Europe/Stockholm;
+                       stored timestamps are always verbatim UTC)`;

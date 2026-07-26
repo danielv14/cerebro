@@ -16,15 +16,27 @@ export interface SearchHit {
 }
 
 export interface SearchOpts {
-  // Substring filter on the thread's project path (same semantics as sessions --project).
+  // Substring filter on the thread's project path (same semantics as sessions
+  // --project). Goes through the `threads` rollup rather than the matched message's
+  // own session row, which is what makes those two commands agree; see the join below.
   project?: string;
   // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
-  // because stored timestamps are ISO-8601).
+  // because stored timestamps are ISO-8601). Per message, deliberately: unlike
+  // `project` this is a property of the turn, not of the thread it belongs to.
   since?: string;
+  // Only turns recorded with this role. A tool_result is a `user` turn, which is
+  // why this pairs with `prose`.
+  role?: string;
+  // Drop messages that are nothing but flattened tool plumbing.
+  prose?: boolean;
   // true = every matching message; false/absent = the best hit per thread, so one
   // chatty thread cannot occupy every result slot.
   all?: boolean;
 }
+
+// The roles a message can be recorded with, and so the accepted values of
+// `search --role`. classify() already drops everything else before insert.
+export const SEARCH_ROLES = ["user", "assistant"] as const;
 
 // Over-fetch window for the deduped search: `max(2000, limit * 50)` rows in one
 // query, quadrupled for at most 3 further rounds when the window ran out before
@@ -48,13 +60,35 @@ export const search = (
 ): SearchHit[] => {
   const filters: string[] = [];
   const filterParams: string[] = [];
+  // The project filter is thread-level, so it reads the root's representative
+  // project_path out of the `threads` view rather than the matched message's own
+  // session row (#86). Filtering on the session would silently drop every hit in a
+  // resume whose lines carry no cwd, or a cwd that differs from the root's (a
+  // subdirectory, a worktree, a moved repo), even though the thread belongs to the
+  // project. The view's root-preferring COALESCE is the same value `sessions
+  // --project` matches on, so the two commands agree by construction. The join is
+  // conditional because the view is a GROUP BY over sessions: an unfiltered search
+  // must not pay for a rollup it never reads.
+  const joins = opts.project ? "JOIN threads t ON t.id = s.root_session_id" : "";
   if (opts.project) {
-    filters.push("AND s.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
+    filters.push("AND t.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
     filterParams.push(escapeLike(opts.project));
   }
   if (opts.since) {
     filters.push("AND m.ts >= ?");
     filterParams.push(opts.since);
+  }
+  if (opts.role) {
+    filters.push("AND m.role = ?");
+    filterParams.push(opts.role);
+  }
+  if (opts.prose) {
+    // A prefix heuristic, not a parser: flattenContent renders a tool-only message
+    // as "[tool_use:Name] ..." or "[tool_result] ...", so a message that is nothing
+    // but plumbing always starts with "[tool_". The known miss is deliberate: a
+    // message that opens with prose and calls a tool further down is kept, because
+    // that prose is real content. No LIKE parameter, so nothing to escape.
+    filters.push("AND m.text NOT LIKE '[tool\\_%' ESCAPE '\\'");
   }
 
   // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
@@ -77,6 +111,7 @@ export const search = (
     FROM messages_fts
     JOIN messages m  ON m.id = messages_fts.rowid
     JOIN sessions s  ON s.session_id = m.session_id
+    ${joins}
     WHERE messages_fts MATCH ?
     ${filters.join("\n    ")}
     ORDER BY bm25(messages_fts)
@@ -160,19 +195,26 @@ export interface ThreadRow {
 }
 
 // List logical threads (roots), most-recently-active first, from the `threads`
-// view (see db.ts for the rollup). The project filter applies AFTER the rollup, on
-// the thread's representative project_path, so a thread is matched on its root's
-// project even when a resume's project_path is NULL or differs.
+// view (see db.ts for the rollup). Both filters apply AFTER the rollup, on the
+// thread's own values: the project on its representative project_path, so a thread
+// is matched on its root's project even when a resume's project_path is NULL or
+// differs, and `since` on the thread's last activity, the same `last_ts >= ?`
+// comparison recentThreads uses (lexical, because stored timestamps are ISO-8601).
 export const listThreads = (
   db: Database,
-  opts: { project?: string; limit?: number } = {},
+  opts: { project?: string; since?: string; limit?: number } = {},
 ): ThreadRow[] => {
   const params: (string | number)[] = [];
-  let where = "";
+  const conditions: string[] = [];
   if (opts.project) {
-    where = "WHERE project_path LIKE '%' || ? || '%' ESCAPE '\\'";
+    conditions.push("project_path LIKE '%' || ? || '%' ESCAPE '\\'");
     params.push(escapeLike(opts.project));
   }
+  if (opts.since) {
+    conditions.push("last_ts >= ?");
+    params.push(opts.since);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(opts.limit ?? 30);
 
   return db

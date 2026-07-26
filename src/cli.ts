@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
+import { buildStamp, buildStampLine } from "./build-stamp.ts";
 import { backupCommand } from "./commands/backup.ts";
 import { type CliIO, type CommandContext, numberOption, parseCliArgs } from "./commands/context.ts";
 import { digestCommand } from "./commands/digest.ts";
+import { doctorCommand } from "./commands/doctor.ts";
 import { indexCommand } from "./commands/index-cmd.ts";
 import { maintainCommand } from "./commands/maintain.ts";
 import { recentCommand } from "./commands/recent.ts";
@@ -38,6 +40,7 @@ const commands = new Map<string, (ctx: CommandContext) => void>([
   ["show", showCommand],
   ["digest", digestCommand],
   ["stats", statsCommand],
+  ["doctor", doctorCommand],
   ["maintain", maintainCommand],
   ["backup", backupCommand],
 ]);
@@ -79,6 +82,21 @@ export const runCli = (
     return;
   }
 
+  const dbPath = values.db || defaultDbPath();
+
+  // `version` answers before the database is opened, like --help. That is not just
+  // speed: doctor's drift check works by spawning the *deployed* binary's `version`,
+  // and that answer must not depend on whether its archive happens to be readable.
+  if (command === "version") {
+    const stamp = buildStamp();
+    if (values.json) io.log(JSON.stringify({ ...stamp, dbPath }, null, 2));
+    else {
+      io.log(buildStampLine(stamp));
+      io.log(`db: ${dbPath}`);
+    }
+    return;
+  }
+
   // --limit is shared by most commands, so it is validated once here and handed to
   // the handlers pre-parsed through the context.
   const parsedLimit = numberOption(
@@ -90,7 +108,6 @@ export const runCli = (
   if (!parsedLimit.ok) return;
   const limit = parsedLimit.value;
 
-  const dbPath = values.db || defaultDbPath();
   // Opening can fail (permissions, corrupt file, a lost migration race): report it
   // like any other error instead of escaping runCli as an unhandled stack trace.
   let db: Database;

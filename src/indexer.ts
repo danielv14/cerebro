@@ -290,12 +290,15 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   );
 };
 
-// Mark sessions whose source file no longer exists on disk as body-unavailable,
-// and (re)mark present ones as available. A temp table keeps this correct and
-// cheap regardless of how many files there are.
-const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
+// Reconcile the archive against what is actually on disk, in two ways against the
+// same temp table of present paths: flag sessions whose source file is gone as
+// body-unavailable (and re-flag present ones as available), and drop index_state
+// cursors for files that no longer exist. A temp table keeps both correct and cheap
+// regardless of how many files there are.
+const reconcilePresence = (db: Database, files: SessionFile[]): void => {
   // An empty scan almost always means a transient readdir failure, not that every
-  // session was deleted. Bail rather than flag the whole archive body-unavailable.
+  // session was deleted. Bail rather than flag the whole archive body-unavailable
+  // and wipe every cursor.
   if (files.length === 0) return;
 
   db.run("DROP TABLE IF EXISTS _present");
@@ -311,6 +314,15 @@ const markDeletedBodies = (db: Database, files: SessionFile[]): void => {
     `UPDATE sessions
        SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
   );
+  // Unlike sessions and messages, where the row *is* the archive (invariant #4), an
+  // index_state row for a file that is gone carries no information: it is a byte
+  // cursor into something unreadable. Claude Code deletes session files on its own
+  // schedule, so without this the one table that is meant to be a working cursor set
+  // grows forever. Only rows whose file is absent go, so an is_digest flag on a file
+  // that still exists is never lost. A pruned file that later reappears is simply
+  // re-read from byte 0 and UUID dedup makes that a no-op, so this cannot resurrect
+  // or duplicate anything.
+  db.run("DELETE FROM index_state WHERE source_file NOT IN (SELECT p FROM _present)");
   db.run("DROP TABLE _present");
 };
 
@@ -569,14 +581,14 @@ export const runIndex = (db: Database, full = false, rebuild = false): IndexResu
     },
     {
       // Isolate per-file failures (an unreadable or corrupt file) so one bad file
-      // does not abort the whole run and skip relinkThreads / markDeletedBodies.
+      // does not abort the whole run and skip relinkThreads / reconcilePresence.
       onError: (file, error) => console.error(`cerebro: skipped ${file.path}: ${error.message}`),
     },
   );
 
   // Unconditional: a source file can vanish from disk without anything being
-  // indexed, and that is exactly what flips body_available to 0.
-  markDeletedBodies(db, files);
+  // indexed, and that is exactly what flips body_available to 0 and orphans a cursor.
+  reconcilePresence(db, files);
   // A run that read no file inserted no message, so no new cross-session parent
   // link can exist and root_session_id cannot have changed. Skipping the relink
   // keeps a no-op index O(files discovered) instead of O(archive). The gate is on

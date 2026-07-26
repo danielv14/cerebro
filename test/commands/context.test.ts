@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { numberOption } from "../../src/commands/context.ts";
+import { numberOption, present } from "../../src/commands/context.ts";
 
 // Collect the reported messages so each case can assert both the outcome and the
 // exact wording (the four call sites pin their own labels in test/cli.test.ts).
@@ -78,5 +78,58 @@ describe("numberOption", () => {
       '--days must be a positive number (got "Infinity")',
       '--days must be a positive number (got "nope")',
     ]);
+  });
+});
+
+// A CommandContext stub with just the three fields `present` reads, plus captured
+// output so each mode can be asserted on the exact lines.
+const presentCtx = (json: boolean) => {
+  const logs: string[] = [];
+  const jsonPayloads: unknown[] = [];
+  return {
+    logs,
+    jsonPayloads,
+    ctx: {
+      io: {
+        log: (line: string) => logs.push(line),
+        error: () => {},
+        write: () => {},
+        setExitCode: () => {},
+      },
+      values: { json } as never,
+      emitJson: (payload: unknown) => jsonPayloads.push(payload),
+    },
+  };
+};
+
+describe("present", () => {
+  const rows = [{ id: "a" }, { id: "b" }];
+  const lines = (rs: { id: string }[]) => rs.map((r) => `row ${r.id}`);
+
+  test("renders the formatted lines when there are rows", () => {
+    const cap = presentCtx(false);
+    present(cap.ctx, rows, { lines, empty: "nothing" });
+    expect(cap.logs).toEqual(["row a", "row b"]);
+    expect(cap.jsonPayloads).toEqual([]);
+  });
+
+  test("prints the empty state and renders nothing when there are no rows", () => {
+    const cap = presentCtx(false);
+    present(cap.ctx, [], { lines, empty: "nothing" });
+    expect(cap.logs).toEqual(["nothing"]);
+  });
+
+  test("--json emits the rows and skips both the empty state and the lines", () => {
+    const cap = presentCtx(true);
+    present(cap.ctx, rows, { lines, empty: "nothing" });
+    expect(cap.jsonPayloads).toEqual([rows]);
+    expect(cap.logs).toEqual([]);
+  });
+
+  test("--json emits an empty array rather than the empty-state prose", () => {
+    const cap = presentCtx(true);
+    present(cap.ctx, [], { lines, empty: "nothing" });
+    expect(cap.jsonPayloads).toEqual([[]]);
+    expect(cap.logs).toEqual([]);
   });
 });

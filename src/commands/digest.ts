@@ -14,7 +14,7 @@ import {
 } from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
-import { type CommandContext, numberOption, readStdin, resolveOrFail } from "./context.ts";
+import { type CommandContext, numberOption, present, readStdin, resolveOrFail } from "./context.ts";
 
 // `digest stale` (human): one row per stale thread with the staleness reason, the
 // title on its own line, then the how-to-summarize footer. `promptVersion` is passed
@@ -174,15 +174,7 @@ export const digestCommand = (ctx: CommandContext): void => {
         break;
       }
       const hits = searchSummaries(db, query, limit ?? 10);
-      if (values.json) {
-        emitJson(hits);
-        break;
-      }
-      if (hits.length === 0) {
-        io.log("No matching summaries.");
-        break;
-      }
-      for (const line of summarySearchListing(hits)) io.log(line);
+      present(ctx, hits, { lines: summarySearchListing, empty: "No matching summaries." });
       break;
     }
 

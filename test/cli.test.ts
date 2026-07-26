@@ -294,6 +294,72 @@ describe("runCli", () => {
     }
   });
 
+  test("version prints the unstamped identity and never opens a db", () => {
+    const cap = makeIO();
+    let opened = false;
+    runCli(["version"], cap.io, () => {
+      opened = true;
+      return memDb();
+    });
+    // A source run must not claim a commit it does not have.
+    expect(cap.logs.join("\n")).toContain("cerebro dev (unknown, built unknown, bun ");
+    expect(cap.exitCode).toBe(0);
+    expect(opened).toBe(false);
+  });
+
+  test("version --json emits the stamp fields", () => {
+    const cap = makeIO();
+    runCli(["version", "--json"], cap.io, () => memDb());
+    expect(JSON.parse(cap.logs.join("\n"))).toMatchObject({
+      version: "dev",
+      commit: "unknown",
+      stamped: false,
+    });
+  });
+
+  test("doctor reports on a healthy archive and exits 0", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    const cap = makeIO();
+    runCli(["doctor"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("Database");
+    expect(out).toContain("schema");
+    expect(out).toContain("All checks passed");
+    expect(cap.exitCode).toBe(0);
+  });
+
+  test("doctor --json emits the checks and exits 1 on a hard failure", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    const cap = makeIO();
+    runCli(["doctor", "--json"], cap.io, () => {
+      const db = seeded()();
+      db.run("PRAGMA user_version = 999"); // a schema this build cannot speak
+      return db;
+    });
+    const payload = JSON.parse(cap.logs.join("\n"));
+    expect(payload.ok).toBe(false);
+    expect(payload.checks.find((c: { key: string }) => c.key === "schema").status).toBe("fail");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("sessions --since rejects an invalid date with the same message as search", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    const cap = makeIO();
+    runCli(["sessions", "--since", "2026-02-30"], cap.io, seeded());
+    expect(cap.errs.join("\n")).toContain(
+      '--since must be a valid ISO date like 2026-01-31 (got "2026-02-30")',
+    );
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("search --role rejects a value outside user | assistant", () => {
+    writeSession(env.projects, "-repo", "SESS", [userMsg("SESS", "u1", "limiter")]);
+    const cap = makeIO();
+    runCli(["search", "limiter", "--role", "system"], cap.io, seeded());
+    expect(cap.errs.join("\n")).toContain('--role must be one of user | assistant (got "system")');
+    expect(cap.exitCode).toBe(1);
+  });
+
   test("a failing database open reports cleanly instead of throwing", () => {
     const cap = makeIO();
     runCli(["stats"], cap.io, () => {

@@ -31,15 +31,18 @@ ln -sf /path/to/cerebro/skills/cerebro ~/.claude/skills/cerebro
 
 ```sh
 cerebro index [--full] [--rebuild] [--dry-run]   # incremental index (--full re-reads all; --rebuild also re-flattens stored text; --dry-run writes nothing)
-cerebro search <query> [--limit N] [--project P] [--since D] [--all]
+cerebro search <query> [--limit N] [--project P] [--since D] [--role R] [--prose] [--all]
                                             # ranked full-text search, snippet-first
                                             #   (best hit per thread; --all for every message)
-cerebro sessions [--project P] [--limit N]  # list threads, newest activity first
+                                            #   --role user|assistant, --prose: skip tool plumbing
+cerebro sessions [--project P] [--since D] [--limit N]  # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a prompt
                                             #   (threads in --cwd's repo rank higher)
 cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
+cerebro doctor [--full]                     # read-only health report (see "Health checks")
+cerebro version                             # build identity of this binary
 cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
 cerebro maintain                            # optimize FTS indexes, refresh planner stats, truncate WAL
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
@@ -47,15 +50,22 @@ cerebro digest <action>                     # curated session summaries (see "Cu
 
 `show` and search accept abbreviated session ids (the 8-char prefix shown in
 listings); an ambiguous prefix errors. The reader commands (`search`, `sessions`,
-`recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) take `--json`
-to emit the rows as JSON instead of the human listing -- the stable contract for
-scripts and agents.
+`recent`, `relevant`, `show`, `stats`, `doctor`, `version`,
+`digest stale|search|show`) take `--json` to emit the rows as JSON instead of the
+human listing -- the stable contract for scripts and agents.
 
 ### Database location
 
 Default `~/.claude/cerebro/archive.sqlite`. Override with `--db <path>` or
 `$CEREBRO_DB`. The scanned Claude directory (`~/.claude`) can be overridden with
 `$CEREBRO_CLAUDE_DIR`.
+
+Timestamps are stored verbatim UTC and displayed in wall-clock time, defaulting to
+`Europe/Stockholm`. `$CEREBRO_TZ` takes any IANA zone (`CEREBRO_TZ=UTC cerebro
+sessions`); an unknown zone falls back to the default rather than erroring. Bare `TZ`
+is deliberately ignored: hooks and launchd inherit environments cerebro does not
+control, and silently rendering the archive differently based on that would be
+surprising.
 
 The database lives outside this repo on purpose: it is derived, machine-local data
 that grows large (tens of MB) and holds verbatim private conversations. `*.sqlite`
@@ -73,188 +83,64 @@ A natural place to hang it is the scheduled digest batch, e.g. append
 `~/.claude/cerebro/cerebro backup --keep 8` to `digest-stale-batch.sh`'s schedule
 or run it from the same launchd/cron entry.
 
+To restore one, stop whatever writes to the archive first (disable the hooks or the
+launchd agent), then:
+
+```sh
+cp ~/.claude/cerebro/backups/archive-<timestamp>.sqlite ~/.claude/cerebro/archive.sqlite
+rm -f ~/.claude/cerebro/archive.sqlite-wal ~/.claude/cerebro/archive.sqlite-shm
+cerebro index      # catch up on everything written since the snapshot
+cerebro doctor     # confirm integrity and schema before re-enabling the hooks
+```
+
+Deleting the stale `-wal` / `-shm` files matters: they belong to the replaced
+database and SQLite would otherwise try to recover them onto the snapshot.
+
 `cerebro maintain` is the other housekeeping entry point: it merges the FTS
 indexes' incremental b-trees (`optimize`), refreshes the query planner's stats
 (`PRAGMA optimize`), and truncates the WAL. The scheduled digest batch runs it
 automatically at the end of each run.
 
-## Hooks (auto-index + context injection)
+### Health checks
 
-cerebro is on-demand, so two Claude Code hooks keep it useful without a daemon: one
-re-indexes when you clear a session, the other surfaces relevant past threads on each
-prompt. (Claude Code deletes session files after `cleanupPeriodDays`, default 30;
-raise it in `~/.claude/settings.json` and index before then.)
-
-Deploy a standalone binary so the hooks start fast (no `bun` spawn per event) and run
-even where `bun` is not on `PATH`:
+`cerebro doctor` is one read-only report over everything that can quietly go wrong:
+SQLite and FTS integrity, the schema version, orphaned index cursors, zero-message
+sessions, WAL size, digest coverage and staleness, whether the deployed binary has
+drifted from the repo, and whether the hooks are wired in `settings.json` at all. It
+never repairs anything; each finding names the command that does.
 
 ```sh
-bun run deploy   # builds dist/cerebro, copies it + the hook scripts (summarize-on-clear.sh, digest-stale-batch.sh) into $CLAUDE_CONFIG_DIR/cerebro (default ~/.claude/cerebro)
+cerebro doctor            # quick_check integrity, the everyday form
+cerebro doctor --full     # the complete integrity_check (slower on a large archive)
+cerebro doctor --json     # the same checks as structured rows
 ```
 
-The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
-tracks the repo live, but the hooks run this compiled copy, so a code
-change (or a digest-prompt change) does not reach the automated path until you re-run
-`bun run deploy`.
+Exit code is 1 only on a hard failure (corruption, or a schema this build cannot
+speak), so it is usable as a cron or CI guard without going red on a warning like a
+digest backlog. `cerebro version` prints the build identity on its own, which is what
+makes the drift check possible: a binary built from source reports itself as unbuilt
+rather than claiming a commit it does not have.
 
-### Index + summarize on /clear
+## Automation
 
-A `SessionEnd` hook with `matcher: "clear"` runs `summarize-on-clear.sh` the moment you
-clear a session. It indexes synchronously (so the just-finished session is captured
-immediately) and then fires a detached `claude -p` summary of that session in the
-background, so `/clear` is never blocked by the LLM call. In `~/.claude/settings.json`:
+cerebro is on-demand, so Claude Code hooks and a scheduled job are what keep it
+current without a daemon. Those are operational details rather than everyday usage,
+so they live in `docs/`:
 
-```json
-{
-  "hooks": {
-    "SessionEnd": [
-      { "matcher": "clear", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/summarize-on-clear.sh", "timeout": 120 } ] }
-    ]
-  }
-}
-```
+- **[docs/hooks.md](docs/hooks.md)** - the `SessionEnd` hook that indexes and
+  summarizes on `/clear`, the `UserPromptSubmit` hook that injects relevant past
+  threads on each prompt, and why both run a deployed binary rather than the source.
+- **[docs/scheduling.md](docs/scheduling.md)** - `digest-stale-batch.sh`, the
+  reconciler that drains the summary backlog, with a launchd plist and the cron
+  equivalent.
+- **[docs/digest-model-tiering.md](docs/digest-model-tiering.md)** - how the summary
+  model is chosen by transcript size, the token budget the threshold comes from, and
+  the `CEREBRO_DIGEST_*` overrides.
 
-`cerebro index` is incremental, so it only reads changed files; anything not yet flushed
-is caught by the next index. The background summary is best-effort: if it dies (no auth,
-rate limit, killed on teardown), `cerebro digest stale` re-surfaces the thread. To index
-on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
-instead.
+The deployed binary is a frozen snapshot: a code change does not reach the automated
+paths until `bun run deploy`. `cerebro doctor` reports when it has drifted (see
+"Health checks").
 
-The detached summary runs `claude -p --no-session-persistence`, so the summarization
-call itself never writes a transcript into `~/.claude/projects` for the indexer to pick
-up as a bogus session. As a backstop the indexer also skips any transcript whose first
-turn is the digest prompt, so even a digest run that predates this (or one written some
-other way) never enters the archive.
-
-The summary model is tiered by transcript size, since the model context window is the
-real constraint. Small threads (the common case) use `claude-haiku-4-5` (mechanical
-compress-and-tag work, cheapest input price, no effort/thinking overhead). Oversized
-threads escalate to `claude-sonnet-4-6[1m]` in a single shot: Sonnet has a 1M-token
-context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token thread
-is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
-it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
-default 200k window and a giant thread still fails with "Prompt is too long". cerebro
-owns the tiering: the hook asks `cerebro digest model` (passing `--bytes <n>`, the size of
-the `digest input` it already rendered, so the transcript is not rendered twice; `digest
-model <id>` renders and measures for manual use), which decides by the rendered
-transcript's byte size (`cerebro digest input` is the size-bounded transcript; see the
-`digest` section), and `cerebro digest input` water-fill-caps anything large enough to
-risk overflowing even a 1M context. The threshold is derived from a token budget, not the
-raw window: `claude -p` prepends its own system prompt and tool definitions (~77k tokens
-measured), so the default reserves 90k tokens of the small model's 200k window and treats
-the rest (≈330k bytes at 3 bytes/token) as the transcript budget. Override the tier via
-`CEREBRO_DIGEST_MODEL` (small, default Haiku), `CEREBRO_DIGEST_MODEL_LARGE` (large, default
-`claude-sonnet-4-6[1m]`), and `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold,
-default 330000) in the hook's environment.
-
-### Drain the backlog (scheduled reconciler)
-
-The `/clear` hook only summarizes the one session you just cleared, so every session
-that ends another way (headless `claude -p`, abandoned, still open) never gets a summary
-on its own. `digest-stale-batch.sh` is the reconciler that closes that gap: it indexes,
-then summarizes up to `CEREBRO_DIGEST_BATCH_CAP` (default 8) stale threads per run,
-newest first, reusing the same `claude -p` pipeline and size tiering as the `/clear`
-hook. A `mkdir` lock keeps two runs from overlapping, and failures are left for the next
-run. Draining the backlog is a performance measure as much as tidiness: every thread
-that gains a summary is one more prompt that `relevant` can answer from the cheap
-summary tier instead of the raw-transcript scan (see "Curated summaries"). Cap the
-per-run count so a large backlog drains over several runs instead of one token burst;
-raise the cap (or run it by hand) to drain faster:
-
-```sh
-CEREBRO_DIGEST_BATCH_CAP=400 ~/.claude/cerebro/digest-stale-batch.sh   # one-shot full drain
-```
-
-Schedule it however you like. On macOS, a `launchd` agent every 6 hours keeps the
-backlog near zero. The plist is machine-specific (absolute paths; launchd does not
-expand `~` or `$HOME`), so it is not checked in; create
-`~/Library/LaunchAgents/com.<you>.cerebro.digest-stale.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.you.cerebro.digest-stale</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/Users/YOU/.claude/cerebro/digest-stale-batch.sh</string>
-  </array>
-  <!-- Fixed clock times, not StartInterval: on a laptop that sleeps, StartInterval
-       coalesces missed runs into one burst on wake. -->
-  <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>17</integer></dict>
-    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>17</integer></dict>
-    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>17</integer></dict>
-    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>17</integer></dict>
-  </array>
-  <!-- launchd starts with a bare environment; claude and cerebro are native binaries
-       but still need a sane PATH. -->
-  <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
-  <key>StandardOutPath</key><string>/Users/YOU/.claude/cerebro/digest-stale.launchd.log</string>
-  <key>StandardErrorPath</key><string>/Users/YOU/.claude/cerebro/digest-stale.launchd.log</string>
-  <key>ProcessType</key><string>Background</string>
-  <key>LowPriorityIO</key><true/>
-</dict>
-</plist>
-```
-
-```sh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-stale.plist   # load
-launchctl kickstart -k gui/$(id -u)/com.you.cerebro.digest-stale                              # run now
-launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-stale.plist   # unload
-```
-
-Progress lands in `digest.log` (lines prefixed `[stale ...]`). A plain `cron` entry that
-runs the same script works just as well on Linux.
-
-### Relevant past threads per prompt
-
-`cerebro recent` lists recent threads for a repo and `cerebro relevant <prompt>`
-returns the threads most relevant to a prompt (FTS, bm25, recency-decayed: within
-each tier the bm25 score decays with the thread's age at a 90-day half-life, so an
-equal text match prefers recent work; plain `search` stays pure bm25). `relevant`
-matches the curated summaries first (high signal) and falls back to raw-transcript
-bm25 for threads not yet summarized; a snippet labelled `summary:` came from the summary,
-`match:` from the transcript. Both surface compact, recognizable breadcrumbs (id,
-date, title, the opening prompt, and for `relevant` a matching snippet), index-first
-so the model pulls detail on demand with `show` / `search`. `--context` emits an
-agent-facing block (silent when nothing matches); `--stdin` reads the prompt (and the
-cwd) from a hook's JSON payload.
-
-Ranking also knows which repo you are in: threads from the cwd's repo (its git root,
-else the exact project path) get their score multiplied by 1.5 in both tiers, roughly
-worth two months of recency, since a prompt typed in repo X usually relates to past
-work in repo X. It is a boost, never a filter, so a much stronger match in another
-repo still surfaces, which matters for shared-infrastructure work. The cwd comes from
-the hook payload under `--stdin`, or from `--cwd <path>` manually; with neither,
-ranking is global as before.
-
-The two tiers differ in cost, so summary coverage is what keeps this fast: an
-unsummarized archive falls through to the raw tier and pays its full-index scan on
-every prompt (386 ms on a 300 000-message archive with no summaries, see "Curated
-summaries"). Keep the backlog drained with the scheduled reconciler
-(`digest-stale-batch.sh`, see "Drain the backlog") and most prompts never reach the raw
-tier at all.
-
-A `UserPromptSubmit` hook injects matching past threads on each prompt, so the model
-picks up earlier work when your prompt overlaps it:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "~/.claude/cerebro/cerebro relevant --stdin --context --limit 5", "timeout": 15 } ] }
-    ]
-  }
-}
-```
-
-It never blocks (always exits 0) and stays silent when nothing matches. Remove a hook
-group to disable it.
 
 ## Curated summaries (`digest`)
 
