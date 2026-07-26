@@ -14,7 +14,7 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro",
+    "build": "bun build ./src/cli.ts --compile --outfile dist/cerebro --define __CEREBRO_VERSION__=\"\\\"$(node -p 'require(\"./package.json\").version')\\\"\" --define __CEREBRO_COMMIT__=\"\\\"$(git rev-parse --short HEAD 2>/dev/null || echo unknown)\\\"\" --define __CEREBRO_BUILT_AT__=\"\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\"\"",
     "deploy": "bun run build && DEST=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && mkdir -p \"$DEST\" && cp dist/cerebro \"$DEST/cerebro\" && cp hooks/summarize-on-clear.sh \"$DEST/summarize-on-clear.sh\" && cp hooks/digest-stale-batch.sh \"$DEST/digest-stale-batch.sh\" && chmod +x \"$DEST/summarize-on-clear.sh\" \"$DEST/digest-stale-batch.sh\""
   },
   "devDependencies": {
