@@ -18,6 +18,9 @@ import {
 const countMessages = (db: Database): number =>
   (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
 
+const countIndexState = (db: Database): number =>
+  (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
+
 describe("splitBuffer", () => {
   test("empty buffer keeps the cursor", () => {
     expect(splitBuffer(Buffer.from(""), 0)).toEqual({ lines: [], cursor: 0 });
@@ -525,6 +528,75 @@ describe("runIndex", () => {
       body_available: number;
     };
     expect(row.body_available).toBe(1);
+  });
+
+  test("a deleted source file's index_state cursor is pruned, its messages are not", () => {
+    const pathA = writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a")]);
+    writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b")]);
+    runIndex(db);
+    expect(countIndexState(db)).toBe(2);
+
+    require("node:fs").rmSync(pathA);
+    runIndex(db);
+
+    // The cursor is gone, but the archive is not: for a session whose source is
+    // deleted the rows here are the only copy (invariant #4).
+    expect(countIndexState(db)).toBe(1);
+    expect(db.query("SELECT source_file FROM index_state").get()).toEqual({
+      source_file: expect.stringContaining("B.jsonl"),
+    });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='A'").get()).toEqual({
+      c: 1,
+    });
+    expect(
+      db.query("SELECT body_available FROM sessions WHERE session_id='A'").get(),
+    ).toMatchObject({ body_available: 0 });
+  });
+
+  test("an empty scan does not wipe index_state (transient-failure guard)", () => {
+    const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db);
+    require("node:fs").rmSync(path);
+    require("node:fs").rmSync(require("node:path").dirname(path), { recursive: true, force: true });
+    runIndex(db); // zero files discovered
+    expect(countIndexState(db)).toBe(1);
+  });
+
+  test("a pruned file that reappears is re-indexed with no duplicate messages", () => {
+    // A second session keeps the scan non-empty, so the transient-failure guard
+    // does not short-circuit the prune.
+    writeSession(env.projects, "-repo-keep", "K", [userMsg("K", "uk", "keep")]);
+    const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
+    const raw = require("node:fs").readFileSync(path);
+    runIndex(db);
+    require("node:fs").rmSync(path);
+    runIndex(db);
+    expect(countIndexState(db)).toBe(1); // only the keeper
+
+    // Re-read from byte 0; UUID dedup makes that a no-op (invariant #4).
+    require("node:fs").writeFileSync(path, raw);
+    expect(runIndex(db).newMessages).toBe(0);
+    expect(countMessages(db)).toBe(2);
+    expect(countIndexState(db)).toBe(2);
+  });
+
+  test("an is_digest flag survives a prune when its file still exists", () => {
+    writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
+    const pathGone = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db);
+    expect(db.query("SELECT COUNT(*) AS c FROM index_state WHERE is_digest=1").get()).toEqual({
+      c: 1,
+    });
+
+    require("node:fs").rmSync(pathGone);
+    runIndex(db);
+
+    const rows = db.query("SELECT source_file, is_digest FROM index_state").all() as {
+      source_file: string;
+      is_digest: number;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.is_digest).toBe(1);
   });
 });
 
