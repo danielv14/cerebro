@@ -20,7 +20,7 @@ Dränk inte kontextfönstret. Följ den här trappan:
 3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
 4. **`cerebro show <id> --range A..B`** för att läsa en ordagrann skiva runt en träff (`search` visar varje träffs `#N`-position). **`--full`** först när du behöver hela transkriptet; hämta det inte i onödan, trådar kan vara tusentals meddelanden.
 
-Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel. Läskommandona (`search`, `sessions`, `recent`, `relevant`, `show`, `stats`, `digest stale|search|show`) tar `--json` när du vill ha raderna som JSON i stället för den människoläsbara listan (tomt resultat ger `[]`, aldrig prosa).
+Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel. Läskommandona (`search`, `sessions`, `recent`, `relevant`, `show`, `stats`, `doctor`, `version`, `digest stale|search|show`) tar `--json` när du vill ha raderna som JSON i stället för den människoläsbara listan (tomt resultat ger `[]`, aldrig prosa).
 
 ## Kommandon
 
@@ -50,8 +50,10 @@ Dry run (--full): would re-read all 210 file(s).
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
 ```
 
-### `cerebro search <query> [--limit N] [--project P] [--since D] [--all]`
-Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20. Som standard visas **bästa träffen per tråd** (så att en pratig tråd inte fyller alla platser); `--all` ger varje matchande meddelande. `--project P` filtrerar på substring i projektsökvägen, `--since 2026-01-31` på tidsstämpel.
+### `cerebro search <query> [--limit N] [--project P] [--since D] [--role R] [--prose] [--all]`
+Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20. Som standard visas **bästa träffen per tråd** (så att en pratig tråd inte fyller alla platser); `--all` ger varje matchande meddelande. `--project P` filtrerar på substring i projektsökvägen (trådens, så en resume utan egen cwd tappas inte bort), `--since 2026-01-31` på tidsstämpel.
+
+Verktygsanrop är flattenade in i meddelandetexten (`[tool_use:Bash] …`, `[tool_result] …`), vilket är bra för att hitta kommandon och filnamn men dränker prosa. Två filter mot det: `--role user|assistant` och `--prose` (som utesluter meddelanden som *bara* är verktygsplumbing). Ett `tool_result` räknas som en `user`-turn, så **`--role user --prose` är frågan "vad har jag själv skrivit om X"**.
 
 ```
 $ cerebro search "rate limiter" --limit 2
@@ -63,8 +65,16 @@ $ cerebro search "rate limiter" --limit 2
 2 hit(s), best per thread (--all for every message). Open one with: cerebro show <id> (jump to a hit: --range <n>)
 ```
 
-### `cerebro sessions [--project P] [--limit N]`
-Listar trådar, senast aktiva först. `--project P` filtrerar på substring i projektets sökväg. Visar `+N resume(s)` för trådar som återupptagits och `[body deleted]` om källfilen är raderad men arkivet finns kvar. Default limit 30. Trådar utan indexerade turns (en session som öppnats och stängts direkt) listas inte, och räknas inte i `stats`, men går fortfarande att öppna med `cerebro show <id>`.
+```
+$ cerebro search "rate limiter" --role user --prose --limit 1
+5e6f7a8b  2026-02-10 09:31  user       api-server  Fix flaky auth test
+    #14  … the [rate] [limiter] should return 429 with a Retry-After header when the …
+
+1 hit(s), best per thread (--all for every message). Open one with: cerebro show <id> (jump to a hit: --range <n>)
+```
+
+### `cerebro sessions [--project P] [--since D] [--limit N]`
+Listar trådar, senast aktiva först. `--project P` filtrerar på substring i projektets sökväg, `--since 2026-01-31` på trådens senaste aktivitet (samma datumformat som `search --since`). Visar `+N resume(s)` för trådar som återupptagits och `[body deleted]` om källfilen är raderad men arkivet finns kvar. Default limit 30. Trådar utan indexerade turns (en session som öppnats och stängts direkt) listas inte, och räknas inte i `stats`, men går fortfarande att öppna med `cerebro show <id>`.
 
 ```
 $ cerebro sessions --limit 4
@@ -160,6 +170,36 @@ Database size:    48.2 MB
 Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
 
+### `cerebro doctor [--full]` och `cerebro version`
+`doctor` är en read-only hälsorapport: SQLite- och FTS-integritet, schemaversion, föräldralösa index-cursors, tomma sessioner, WAL-storlek, digest-täckning, om den deployade binären drivit från repot, och om hookarna är inkopplade i `settings.json`. Den reparerar aldrig något, utan pekar ut kommandot som gör det. Exit 1 bara vid hårt fel (korruption eller ett schema den här builden inte kan läsa), så varningar som en digest-backlog gör den inte röd. `--full` kör hela `integrity_check` i stället för `quick_check`. `version` skriver bara byggidentiteten, vilket är det som gör drift-kontrollen möjlig.
+
+```
+$ cerebro doctor
+running    cerebro 0.1.0 (a1b2c3d, built 2026-07-26T09:12:00Z, bun 1.3.14)
+database   /Users/you/.claude/cerebro/archive.sqlite (48.2 MB)
+
+Build
+  ok    deployed          a1b2c3d, matches this build
+
+Database
+  ok    schema            v4 (current)
+  ok    integrity         quick_check
+  ok    messages_fts      ok
+  ok    summaries_fts     ok
+  ok    wal               0 bytes
+
+Archive
+  ok    index cursors     210 rows, no orphans
+  ok    empty sessions    0
+  warn  digest coverage   184/196 threads summarized, 12 stale  -> run the reconciler (hooks/digest-stale-batch.sh)
+
+Hooks
+  ok    UserPromptSubmit  relevant-thread injection
+  ok    SessionEnd        index + summarize on /clear
+
+All checks passed, 1 warning(s).
+```
+
 ### `cerebro backup [--to <path>] [--keep N]` och `cerebro maintain`
 Underhåll av arkivet. `backup` tar en konsistent snapshot av databasen (`VACUUM INTO`) till `<db-katalog>/backups/archive-<tidsstämpel>.sqlite`; `--to <path>` väljer explicit mål, `--keep N` rensar de äldsta default-namngivna backuperna utöver N. `maintain` optimerar FTS-indexen, uppdaterar query-plannerns statistik och trunkerar WAL-filen (den schemalagda digest-batchen kör den automatiskt). Du behöver sällan köra dessa själv, men de finns om användaren ber om backup eller om arkivet känns segt.
 
@@ -230,6 +270,7 @@ Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: 
 ## Bra att veta
 
 - **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
+- **Tidszon:** tidsstämplar lagras som ordagrann UTC och visas i `Europe/Stockholm`. `$CEREBRO_TZ` tar vilken IANA-zon som helst; en okänd zon faller tillbaka på default i stället för att krascha.
 - **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes. Varje sådant block kapas till första 1 KB (`[+N chars truncated]`-markör) eftersom huvudet rymmer det sökbara (tool-namn, file_path, kommando) medan resten är reproducerbart brus. Prosa och resonemang lagras ordagrant; fel (`[tool_result:error]`) kapas inte.
 - **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
 - **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). Payloaden bär cwd:n, så trådar från samma repo boostas i rankingen. `relevant` matchar **summeringarna först** (kurerat, hög signal) och faller tillbaka på rådata-bm25 for trådar som ännu inte summerats; en träff märkt `summary:` kommer från summeringen, `match:` från rådatan. En `SessionEnd`-hook vid `/clear` indexerar synkront och summerar sedan den just rensade sessionen i bakgrunden via `claude -p` (best-effort; `cerebro digest stale` är reconcilern som fångar det som missas). Du kan ändå proaktivt köra `relevant`/`search`/`digest search` när du vill gräva djupare.

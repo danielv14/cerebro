@@ -126,3 +126,17 @@ Title events: `custom-title` (priority 3) > `ai-title` (2) > `summary` (1).
 When you change a command, a flag, or its output, update both `README.md` and
 `skills/cerebro/SKILL.md` (the skill is symlinked into `~/.claude/skills/cerebro`
 and carries real example output, so refresh the examples too).
+
+README is the user guide; the operational half lives in `docs/`, so a hook or
+scheduling change belongs there rather than on the front page:
+
+- `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) and
+  `UserPromptSubmit` (relevant-thread injection) wirings, and the deployed-binary
+  rationale.
+- `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd
+  plist and the cron equivalent.
+- `docs/digest-model-tiering.md` - the size-to-model tiering, its token budget, the
+  `[1m]` suffix requirement and the `CEREBRO_DIGEST_*` overrides.
+
+README keeps the command table as the single canonical list next to `src/help.ts`;
+do not grow a competing one under `docs/`.
