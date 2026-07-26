@@ -135,6 +135,99 @@ describe("query (populated archive)", () => {
     expect(search(db, "limiter", 10).length).toBe(2);
   });
 
+  test("search --project keeps a resume whose own project_path is NULL (#86)", () => {
+    // The root carries the cwd; the resume's lines omit it, so its session row has a
+    // NULL project_path. Filtering on the session would drop the resume's hit even
+    // though the thread belongs to alpha.
+    writeSession(env.projects, "-repo-a", "ROOT", [
+      userMsg("ROOT", "r1", "zebra in the root", { cwd: "/home/user/alpha", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-a", "RESUME", [
+      userMsg("RESUME", "r2", "zebra in the resume", {
+        cwd: undefined,
+        parentUuid: "r1",
+        timestamp: ts(10),
+      }),
+    ]);
+    runIndex(db);
+    expect(
+      search(db, "zebra", 10, { all: true })
+        .map((h) => h.session_id)
+        .sort(),
+    ).toEqual(["RESUME", "ROOT"]);
+    expect(
+      search(db, "zebra", 10, { all: true, project: "alpha" })
+        .map((h) => h.session_id)
+        .sort(),
+    ).toEqual(["RESUME", "ROOT"]);
+  });
+
+  test("search --project keeps a resume whose cwd points at another project (#86)", () => {
+    writeSession(env.projects, "-repo-a", "ROOT", [
+      userMsg("ROOT", "r1", "zebra in the root", { cwd: "/home/user/alpha", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-a", "RESUME", [
+      userMsg("RESUME", "r2", "zebra in a worktree", {
+        cwd: "/home/user/worktrees/alpha-fix",
+        parentUuid: "r1",
+        timestamp: ts(10),
+      }),
+    ]);
+    runIndex(db);
+    // The thread's representative project_path is the root's, so both hits match.
+    expect(
+      search(db, "zebra", 10, { all: true, project: "user/alpha" })
+        .map((h) => h.session_id)
+        .sort(),
+    ).toEqual(["RESUME", "ROOT"]);
+  });
+
+  test("search --role and --prose cut tool plumbing out of the hits (#87)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "how do we handle the limiter", { timestamp: ts(0) }),
+      assistantMsg("S", "a1", "the limiter is rate-based", { parentUuid: "u1", timestamp: ts(1) }),
+      assistantMsg(
+        "S",
+        "a2",
+        [{ type: "tool_use", name: "Bash", input: { command: "grep limiter src" } }],
+        { parentUuid: "a1", timestamp: ts(2) },
+      ),
+      userMsg("S", "u2", [{ type: "tool_result", content: "src/limiter.ts:1" }], {
+        parentUuid: "a2",
+        timestamp: ts(3),
+      }),
+    ]);
+    runIndex(db);
+    const ids = (opts: Parameters<typeof search>[3]) =>
+      search(db, "limiter", 10, { all: true, ...opts })
+        .map((h) => h.id)
+        .sort((a, b) => a - b);
+    const [prose1, prose2, toolUse, toolResult] = ids({});
+    expect([prose1, prose2, toolUse, toolResult]).toHaveLength(4);
+    expect(ids({ role: "user" })).toEqual([prose1!, toolResult!]);
+    expect(ids({ role: "assistant" })).toEqual([prose2!, toolUse!]);
+    expect(ids({ prose: true })).toEqual([prose1!, prose2!]);
+    // The "only my own prompts" query: a tool_result is a user turn, so --role user
+    // alone is not enough.
+    expect(ids({ role: "user", prose: true })).toEqual([prose1!]);
+  });
+
+  test("search --prose keeps a message that opens with prose and then calls a tool (#87)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      assistantMsg(
+        "S",
+        "a1",
+        [
+          { type: "text", text: "Checking the limiter now." },
+          { type: "tool_use", name: "Bash", input: { command: "grep limiter src" } },
+        ],
+        { timestamp: ts(0) },
+      ),
+    ]);
+    runIndex(db);
+    expect(search(db, "limiter", 10, { all: true, prose: true })).toHaveLength(1);
+  });
+
   test("deduped search looks past a chatty thread that dominates the ranked hits", () => {
     // 210 matching messages in one thread outrank the other thread's single match.
     // A 200-row window would starve OTHER; the 2000-row over-fetch surfaces it in one
@@ -221,6 +314,24 @@ describe("query (populated archive)", () => {
     const filtered = listThreads(db, { project: "repo-a" });
     expect(filtered.length).toBe(1);
     expect(filtered[0]!.id).toBe("A");
+  });
+
+  test("listThreads --since filters on the thread's last activity, inclusively (#91)", () => {
+    writeSession(env.projects, "-repo", "OLD", [
+      userMsg("OLD", "u1", "old", { timestamp: "2026-01-10T12:00:00.000Z" }),
+    ]);
+    writeSession(env.projects, "-repo", "CUTOFF", [
+      userMsg("CUTOFF", "u2", "on the cutoff", { timestamp: "2026-02-01T00:00:00.000Z" }),
+    ]);
+    writeSession(env.projects, "-repo", "NEW", [
+      userMsg("NEW", "u3", "new", { timestamp: "2026-03-05T12:00:00.000Z" }),
+    ]);
+    runIndex(db);
+    expect(listThreads(db, { since: "2026-02-01" }).map((t) => t.id)).toEqual(["NEW", "CUTOFF"]);
+    expect(listThreads(db, { since: "2026-04-01" })).toEqual([]);
+    // Combines with --project rather than replacing it.
+    expect(listThreads(db, { since: "2026-02-01", project: "nope" })).toEqual([]);
+    expect(listThreads(db, {}).length).toBe(3);
   });
 
   test("listThreads aggregates a resume's messages into the thread total", () => {

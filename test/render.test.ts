@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { humanBytes, oneLine, projectName, shortDate, shortId, shortTime } from "../src/render.ts";
 
 // ── Primitives ────────────────────────────────────────────────────────────────
@@ -61,6 +61,33 @@ describe("shortDate", () => {
     expect(shortDate(undefined)).toBe("??????????");
     expect(shortDate("")).toBe("??????????");
     expect(shortDate("not-a-date")).toBe("??????????");
+  });
+});
+
+describe("CEREBRO_TZ", () => {
+  // Every other test in this file asserts the unset default, so the guard that the
+  // default did not move is the rest of the suite, not a case here.
+  const saved = process.env.CEREBRO_TZ;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CEREBRO_TZ;
+    else process.env.CEREBRO_TZ = saved;
+  });
+
+  test("overrides the display zone for shortTime and shortDate", () => {
+    process.env.CEREBRO_TZ = "UTC";
+    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 08:00"); // no offset
+    expect(shortDate("2026-07-15T23:30:00Z")).toBe("2026-07-15"); // Stockholm would roll over
+  });
+
+  test("an unknown zone falls back to the default instead of throwing", () => {
+    process.env.CEREBRO_TZ = "Mars/Olympus_Mons";
+    expect(() => shortTime("2026-07-15T08:00:00Z")).not.toThrow();
+    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 10:00"); // CEST
+  });
+
+  test("an empty value is treated as unset", () => {
+    process.env.CEREBRO_TZ = "";
+    expect(shortTime("2026-01-15T08:00:00Z")).toBe("2026-01-15 09:00"); // CET
   });
 });
 

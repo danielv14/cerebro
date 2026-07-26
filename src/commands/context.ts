@@ -33,6 +33,8 @@ export const parseCliArgs = (args: string[]) =>
       cwd: { type: "string" },
       days: { type: "string" },
       since: { type: "string" },
+      role: { type: "string" },
+      prose: { type: "boolean", default: false },
       all: { type: "boolean", default: false },
       context: { type: "boolean", default: false },
       stdin: { type: "boolean", default: false },
@@ -102,6 +104,78 @@ export const numberOption = (
     return { ok: false };
   }
   return { ok: true, value };
+};
+
+// The shared tail of a plain reader command: emit the rows as JSON, or print the
+// empty state, or render the lines. Used only by the commands whose tail really is
+// those three steps over one row array (search, sessions, digest search).
+//
+// The others deliberately keep their own tail, and needing an extra option here is
+// the signal that a command belongs in this list rather than in the helper:
+//   - show     validates --range first and its JSON payload is { id, total, from,
+//              messages }, not the rendered rows.
+//   - recent   enriches the rows with the opening prompt for JSON only.
+//   - relevant is silent instead of printing an empty state in --context mode, and
+//              that silence is the hook contract.
+//   - digest stale has a third mode (--ids) between JSON and the listing.
+//   - digest show renders one nullable summary, not a list.
+//   - stats and doctor have no empty state and a JSON payload that carries fields
+//              the listing does not.
+export const present = <T>(
+  ctx: Pick<CommandContext, "io" | "values" | "emitJson">,
+  rows: T[],
+  opts: { lines: (rows: T[]) => string[]; empty: string },
+): void => {
+  if (ctx.values.json) {
+    ctx.emitJson(rows);
+    return;
+  }
+  if (rows.length === 0) {
+    ctx.io.log(opts.empty);
+    return;
+  }
+  for (const line of opts.lines(rows)) ctx.io.log(line);
+};
+
+// Validate an ISO date CLI option (the `--since` shape, shared by search and
+// sessions so the two cannot drift on what a date is). Anchored shape check plus a
+// round-trip calendar check: an unanchored regex would let "2026-31-01" or trailing
+// garbage through, and Date.parse alone is engine-dependent (JSC rolls "2026-02-30"
+// over to March 2). A bad date would make the lexical ts comparison silently exclude
+// everything instead of erroring. `{ ok: false }` means the message has already been
+// reported and the caller must stop.
+export const dateOption = (
+  raw: string | undefined,
+  name: string,
+  fail: (message: string) => void,
+): { ok: true; value: string | undefined } | { ok: false } => {
+  if (raw === undefined) return { ok: true, value: undefined };
+  const parsed = Date.parse(`${raw}T00:00:00Z`);
+  const roundTrips =
+    /^\d{4}-\d{2}-\d{2}$/.test(raw) &&
+    !Number.isNaN(parsed) &&
+    new Date(parsed).toISOString().slice(0, 10) === raw;
+  if (!roundTrips) {
+    fail(`--${name} must be a valid ISO date like 2026-01-31 (got "${raw}")`);
+    return { ok: false };
+  }
+  return { ok: true, value: raw };
+};
+
+// Validate a CLI option against a closed set of allowed values, reporting them in
+// the error so the user does not have to go looking in --help.
+export const enumOption = (
+  raw: string | undefined,
+  name: string,
+  allowed: readonly string[],
+  fail: (message: string) => void,
+): { ok: true; value: string | undefined } | { ok: false } => {
+  if (raw === undefined) return { ok: true, value: undefined };
+  if (!allowed.includes(raw)) {
+    fail(`--${name} must be one of ${allowed.join(" | ")} (got "${raw}")`);
+    return { ok: false };
+  }
+  return { ok: true, value: raw };
 };
 
 // Resolve a positional session-id argument (an id or a unique prefix) to a full

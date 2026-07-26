@@ -1,6 +1,6 @@
 import { listThreads, type ThreadRow } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import type { CommandContext } from "./context.ts";
+import { type CommandContext, dateOption, present } from "./context.ts";
 
 // Line 1 of a `sessions` thread row: no leading indent, wall-clock time, the message
 // count, the project name, then resume and "[body deleted]" suffixes. The
@@ -32,16 +32,20 @@ export const sessionsListing = (threads: ThreadRow[]): string[] => {
 };
 
 // The `sessions` command: list logical threads, newest first, optionally filtered
-// by --project.
-export const sessionsCommand = ({ db, io, values, limit, emitJson }: CommandContext): void => {
-  const threads = listThreads(db, { project: values.project, limit: limit ?? 30 });
-  if (values.json) {
-    emitJson(threads);
-    return;
-  }
-  if (threads.length === 0) {
-    io.log("No sessions indexed yet. Run: cerebro index");
-    return;
-  }
-  for (const line of sessionsListing(threads)) io.log(line);
+// by --project and --since.
+export const sessionsCommand = (ctx: CommandContext): void => {
+  const { db, values, limit, fail } = ctx;
+  // Same anchored-ISO-date shape as search --since, from the same validator, rather
+  // than a second date syntax.
+  const since = dateOption(values.since, "since", fail);
+  if (!since.ok) return;
+  const threads = listThreads(db, {
+    project: values.project,
+    since: since.value,
+    limit: limit ?? 30,
+  });
+  present(ctx, threads, {
+    lines: sessionsListing,
+    empty: "No sessions indexed yet. Run: cerebro index",
+  });
 };
