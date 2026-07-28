@@ -1,7 +1,8 @@
 // The digest package's public surface: everything the former single-file digest
-// module exported, re-exported from its three concerns so callers change only the
+// module exported, re-exported from its concerns so callers change only the
 // import path. prompt.ts owns the summarization contract and model tiering,
-// stale.ts owns the staleness predicate, store.ts owns summary storage and search.
+// stale.ts owns the staleness predicate, store.ts owns summary storage and search,
+// run.ts owns the summarize pipeline and the seam the model call sits behind.
 export { DIGEST_PROMPT_SIGNATURE } from "../digest-signature.ts";
 export {
   buildDigestInput,
@@ -12,6 +13,16 @@ export {
   digestModelConfig,
   pickDigestModel,
 } from "./prompt.ts";
+export {
+  claudeSummarizer,
+  type DigestOutcome,
+  type DrainResult,
+  runDigest,
+  runDrain,
+  type SummarizeRequest,
+  type SummarizeResult,
+  type Summarizer,
+} from "./run.ts";
 export { countStaleThreads, type StaleThread, staleThreads } from "./stale.ts";
 export {
   getSummary,

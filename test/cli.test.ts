@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import { join } from "node:path";
 import { type CliIO, runCli } from "../src/cli.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
@@ -598,5 +601,109 @@ describe("runCli", () => {
 
     expect(order([])).toEqual(["OTHER", "MINE"]);
     expect(order(["--cwd", "/repo-mine"])).toEqual(["MINE", "OTHER"]);
+  });
+
+  // `digest run` / `digest drain` drive the real summarizer, so these go through a
+  // stand-in for the claude CLI (CEREBRO_CLAUDE_BIN) rather than a seam injected in
+  // the test. That covers the wiring the unit tests cannot: dispatch, argument
+  // resolution, the reported line and the exit code.
+  describe("digest run and drain", () => {
+    let binDir: string;
+    let savedBin: string | undefined;
+
+    const fakeClaude = (script: string): void => {
+      const path = join(binDir, "claude");
+      fs.writeFileSync(path, `#!/usr/bin/env bash\n${script}\n`);
+      fs.chmodSync(path, 0o755);
+      process.env.CEREBRO_CLAUDE_BIN = path;
+    };
+
+    beforeEach(() => {
+      binDir = fs.mkdtempSync(join(os.tmpdir(), "cerebro-cli-claude-"));
+      savedBin = process.env.CEREBRO_CLAUDE_BIN;
+    });
+    afterEach(() => {
+      if (savedBin === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
+      else process.env.CEREBRO_CLAUDE_BIN = savedBin;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    });
+
+    test("digest run summarizes the thread and exits 0", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "tuning the limiter", { timestamp: ts(0) }),
+      ]);
+      fakeClaude('echo "Tuned the limiter in cerebro. Keywords: limiter"');
+      const cap = makeIO();
+      runCli(["digest", "run", "SESS"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Summarized SESS");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest run exits 1 and says why when no summary was stored", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "tuning the limiter", { timestamp: ts(0) }),
+      ]);
+      fakeClaude('echo "Prompt is too long" >&2; exit 1');
+      const cap = makeIO();
+      runCli(["digest", "run", "SESS"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Failed SESS");
+      expect(cap.logs.join("\n")).toContain("digest stale will retry it");
+      expect(cap.exitCode).toBe(1);
+    });
+
+    test("digest run on an unknown id reports it like every other id-taking command", () => {
+      const cap = makeIO();
+      runCli(["digest", "run", "NOPE"], cap.io, () => memDb());
+
+      expect(cap.errs.join("\n")).toContain('No session matching "NOPE".');
+      expect(cap.exitCode).toBe(1);
+    });
+
+    test("digest drain summarizes the backlog and reports the counts", () => {
+      writeSession(env.projects, "-repo", "ONE", [
+        userMsg("ONE", "u1", "first thread", { timestamp: ts(0) }),
+      ]);
+      writeSession(env.projects, "-repo", "TWO", [
+        userMsg("TWO", "u2", "second thread", { timestamp: ts(1) }),
+      ]);
+      fakeClaude('echo "Did some work in cerebro. Keywords: work"');
+      const cap = makeIO();
+      runCli(["digest", "drain", "--limit", "2"], cap.io, seeded());
+
+      const out = cap.logs.join("\n");
+      expect(out).toContain("Draining up to 2 stale thread(s).");
+      expect(out).toContain("Drain complete: 2 summarized, 0 failed.");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest drain says the backlog is clean when nothing is stale", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+      ]);
+      const cap = makeIO();
+      runCli(["digest", "drain"], cap.io, () => {
+        const db = openDb(":memory:");
+        runIndex(db);
+        writeSummary(db, "SESS", "A stored summary. Keywords: work");
+        return db;
+      });
+
+      expect(cap.logs.join("\n")).toContain("Nothing stale, the backlog is clean.");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest drain aborts and exits 1 when the model runner cannot be started", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+      ]);
+      process.env.CEREBRO_CLAUDE_BIN = join(binDir, "does-not-exist");
+      const cap = makeIO();
+      runCli(["digest", "drain"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Drain aborted:");
+      expect(cap.exitCode).toBe(1);
+    });
   });
 });

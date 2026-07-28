@@ -13,9 +13,10 @@ context at a flat $3/$15 per MTok (no long-context premium), so a 400-600k-token
 is summarized whole rather than truncated or map-reduced. The `[1m]` suffix is required:
 it is how Claude Code selects the 1M-context variant; plain `claude-sonnet-4-6` gets the
 default 200k window and a giant thread still fails with "Prompt is too long". cerebro
-owns the tiering: the hook asks `cerebro digest model` (passing `--bytes <n>`, the size
-of the `digest input` it already rendered, so the transcript is not rendered twice;
-`digest model <id>` renders and measures for manual use), which decides by the rendered
+owns the tiering: `digest run` and `digest drain` measure the transcript where they
+render it and tier on that, and `cerebro digest model` exposes the same decision for
+manual inspection (`--bytes <n>` tiers an already-measured size, `<id>` renders and
+measures). It decides by the rendered
 transcript's byte size (`cerebro digest input` is the size-bounded transcript; see
 "Curated summaries" in the [README](../README.md)), and `cerebro digest input`
 water-fill-caps anything large enough to risk overflowing even a 1M context. The

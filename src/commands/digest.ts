@@ -1,10 +1,15 @@
+import * as v from "valibot";
 import {
   buildDigestInput,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
+  type DigestOutcome,
+  type DrainResult,
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
+  runDigest,
+  runDrain,
   type StaleThread,
   type StoredSummary,
   type SummaryHit,
@@ -35,7 +40,7 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
   }
   lines.push(
     `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
-      `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
+      `  cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)`,
   );
   return lines;
 };
@@ -80,8 +85,59 @@ export const noSummaryHint = (sessionId: string): string =>
 export const summarySaved = (root: string, chars: number): string =>
   `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
+// One line per summarize attempt, for `digest run` and for each thread of a
+// `digest drain`. Both the hooks' logs and a human read these, so a failure always
+// names the reason and says the thread is not lost.
+export const digestOutcomeLine = (outcome: DigestOutcome): string => {
+  const id = shortId(outcome.root);
+  const size = outcome.bytes === undefined ? "" : ` ${outcome.bytes} bytes ->`;
+  switch (outcome.status) {
+    case "summarized":
+      return `Summarized ${id}:${size} ${outcome.model}, ${outcome.chars} chars.`;
+    case "skipped":
+      return `Skipped ${id}: ${outcome.reason}; digest stale will retry it.`;
+    default:
+      return `Failed ${id}:${size} ${outcome.reason}; left unsummarized, digest stale will retry it.`;
+  }
+};
+
+// `digest drain`: the per-thread lines, then what the run achieved. An aborted run
+// says so on its own line, because "0 summarized" alone reads like a clean backlog.
+export const drainReport = (result: DrainResult, limit: number): string[] => {
+  if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
+  const lines = [`Draining up to ${limit} stale thread(s).`];
+  for (const outcome of result.outcomes) lines.push(digestOutcomeLine(outcome));
+  if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
+  lines.push(`Drain complete: ${result.summarized} summarized, ${result.failed} failed.`);
+  return lines;
+};
+
+// The accepted shape of the JSON a SessionEnd hook pipes to `digest run --stdin`
+// (Claude Code sends { session_id, ... }). Extra keys are ignored. This is the
+// third untrusted I/O boundary, and it replaces a sed that scraped the id out of
+// the payload with a regex in the hook script.
+const SessionEndPayloadSchema = v.object({ session_id: v.optional(v.string()) });
+
+// Pull the session id out of that payload, pure over the already-read raw string
+// so it is unit-testable without fd-0 plumbing. Returns null on any parse or
+// validation failure, and the caller reports a missing id rather than summarizing
+// something arbitrary.
+export const parseSessionEndPayload = (raw: string): string | null => {
+  try {
+    const parsed = v.safeParse(SessionEndPayloadSchema, JSON.parse(raw));
+    if (!parsed.success) return null;
+    return parsed.output.session_id || null;
+  } catch {
+    return null;
+  }
+};
+
+// How many stale threads one `digest drain` summarizes when --limit is absent.
+// Matches the reconciler's own default cap.
+const DEFAULT_DRAIN_LIMIT = 8;
+
 // The `digest` command: dispatch over its action sub-commands
-// (stale | prompt | input | model | write | search | show).
+// (stale | prompt | input | model | run | drain | write | search | show).
 export const digestCommand = (ctx: CommandContext): void => {
   const { db, io, values, positionals, limit, fail, emitJson } = ctx;
   const action = positionals[1];
@@ -147,6 +203,34 @@ export const digestCommand = (ctx: CommandContext): void => {
       break;
     }
 
+    case "run": {
+      // --stdin takes the id from the SessionEnd payload, so the clear hook needs
+      // neither jq nor a sed over untrusted JSON.
+      const idArg = values.stdin ? parseSessionEndPayload(readStdin()) : positionals[2];
+      if (values.stdin && !idArg) {
+        fail("digest run: no session_id in the payload on stdin");
+        break;
+      }
+      const sessionId = resolveOrFail(db, idArg ?? undefined, "digest run", fail);
+      if (!sessionId) break;
+      const outcome = runDigest(db, sessionId);
+      io.log(digestOutcomeLine(outcome));
+      // Exit 1 whenever no summary was stored, so a manual invocation is
+      // scriptable. The clear hook is detached and ignores this.
+      if (outcome.status !== "summarized") io.setExitCode(1);
+      break;
+    }
+
+    case "drain": {
+      const cap = limit ?? DEFAULT_DRAIN_LIMIT;
+      const result = runDrain(db, cap);
+      for (const line of drainReport(result, cap)) io.log(line);
+      // Per-thread failures are normal and leave the thread stale for next time;
+      // only a run that could not proceed at all is an error.
+      if (result.aborted) io.setExitCode(1);
+      break;
+    }
+
     case "write": {
       const sessionId = resolveOrFail(db, positionals[2], "digest write", fail);
       if (!sessionId) break;
@@ -197,7 +281,8 @@ export const digestCommand = (ctx: CommandContext): void => {
     default:
       fail(
         `digest: unknown action "${action ?? ""}". ` +
-          "Use: stale | prompt | input <id> | model <id> | write <id> | search <query> | show <id>",
+          "Use: stale | run <id> | drain | prompt | input <id> | model <id> | write <id> | " +
+          "search <query> | show <id>",
       );
   }
 };

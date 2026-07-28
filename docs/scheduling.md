@@ -7,10 +7,11 @@ The scheduled job that drains the summary backlog, and how to run it on macOS
 The `/clear` hook only summarizes the one session you just cleared, so every session
 that ends another way (headless `claude -p`, abandoned, still open) never gets a summary
 on its own. `digest-stale-batch.sh` is the reconciler that closes that gap: it indexes,
-then summarizes up to `CEREBRO_DIGEST_BATCH_CAP` (default 8) stale threads per run,
-newest first, reusing the same `claude -p` pipeline and size tiering as the `/clear`
-hook. A `mkdir` lock keeps two runs from overlapping, and failures are left for the next
-run. Draining the backlog is a performance measure as much as tidiness: every thread
+then runs `cerebro digest drain --limit $CEREBRO_DIGEST_BATCH_CAP` (default 8), which
+summarizes that many stale threads newest first through the same pipeline and size
+tiering the `/clear` hook uses. The script itself owns only the scheduling concerns: a
+`mkdir` lock so two runs never overlap, a pinned PATH for launchd, and the log. A thread
+that fails is left for the next run and never aborts the current one. Draining the backlog is a performance measure as much as tidiness: every thread
 that gains a summary is one more prompt that `relevant` can answer from the cheap
 summary tier instead of the raw-transcript scan (see "Curated summaries" in the
 [README](../README.md)). Cap the

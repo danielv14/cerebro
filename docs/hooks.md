@@ -26,8 +26,10 @@ change (or a digest-prompt change) does not reach the automated path until you r
 
 A `SessionEnd` hook with `matcher: "clear"` runs `summarize-on-clear.sh` the moment you
 clear a session. It indexes synchronously (so the just-finished session is captured
-immediately) and then fires a detached `claude -p` summary of that session in the
-background, so `/clear` is never blocked by the LLM call. In `~/.claude/settings.json`:
+immediately) and then fires a detached `cerebro digest run --stdin` in the background,
+so `/clear` is never blocked by the model call. The script pipes the SessionEnd payload
+straight through: cerebro pulls the session id out of it and owns the whole summarize
+sequence (render, tier, call, guard, store). In `~/.claude/settings.json`:
 
 ```json
 {
@@ -41,11 +43,13 @@ background, so `/clear` is never blocked by the LLM call. In `~/.claude/settings
 
 `cerebro index` is incremental, so it only reads changed files; anything not yet flushed
 is caught by the next index. The background summary is best-effort: if it dies (no auth,
-rate limit, killed on teardown), `cerebro digest stale` re-surfaces the thread. To index
+rate limit, killed on teardown), nothing is stored and `cerebro digest drain` retries the
+thread on its next run. To index
 on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
 instead.
 
-The detached summary runs `claude -p --no-session-persistence`, so the summarization
+The detached summary spawns `claude -p --no-session-persistence` (override the binary
+with `CEREBRO_CLAUDE_BIN`), so the summarization
 call itself never writes a transcript into `~/.claude/projects` for the indexer to pick
 up as a bogus session. As a backstop the indexer also skips any transcript whose first
 turn is the digest prompt, so even a digest run that predates this (or one written some

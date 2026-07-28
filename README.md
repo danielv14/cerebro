@@ -164,13 +164,20 @@ cerebro relevant "<prose prompt>" --limit 5    386 ms
 
 That is in front of the user on each prompt, and it shrinks as coverage rises.
 
-cerebro stays pure storage and **never calls an LLM**. It owns the prompt and the
-storage format (one versioned contract), and accepts a summary the model produced:
+cerebro owns the summarization contract end to end: the prompt, the size tiering, the
+storage format (one versioned contract), and the guard that refuses to store output
+that cannot be a summary. It has no model of its own and never summarizes on its own
+initiative; the model call is one subprocess behind a seam, the same way git
+resolution is, and it only happens when you ask for it:
 
 ```sh
 cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (never summarized,
                                             #   new activity since, or older prompt version).
                                             #   --ids: one full id per line, for scripts
+cerebro digest run <id>                     # summarize one thread: render, tier the model,
+                                            #   call it, guard the output, store it
+cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
+                                            #   (default 8); one failure never aborts the run
 cerebro digest prompt                       # print the canonical summarization prompt
 cerebro digest input <id>                   # print the size-bounded transcript to summarize
 cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
@@ -183,20 +190,33 @@ cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
 
-The model step lives outside the binary, in a hook or skill that pipes a transcript
-through `claude -p` and writes the result back. Pipe `digest input` (not `show --full`):
-it renders the same transcript but bounded to fit a single model context, so a giant
-thread does not blow the context limit.
+`digest run` is the whole sequence in one command, and it is what the hooks call:
+
+```sh
+cerebro digest run <id>              # one thread
+cerebro digest drain --limit 8       # the stalest N, newest first
+```
+
+It spawns `claude -p --no-session-persistence` with the model the tiering picked,
+hands it the transcript on stdin, and stores the result only if the call succeeded and
+the output is not an error string or a fragment. Nothing is stored on failure, so the
+thread stays stale and the next `drain` retries it. `CEREBRO_CLAUDE_BIN` overrides
+which binary is spawned.
+
+The composable verbs are still there when you want to drive the steps yourself, or
+summarize inline as an agent without spawning anything:
 
 ```sh
 cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 ```
 
-This keeps the contract in one place: the prompt asks for exactly what `digest write`
-stores, and `digest stale` re-surfaces a thread whenever it gains messages or the
-prompt version (`DIGEST_PROMPT_VERSION`) is bumped. Run `digest stale` as a batch
-"now and then" (it is the reconciler); a fire-and-forget summary on `/clear` is an
-optional fast path on top, never the source of truth.
+Pipe `digest input` rather than `show --full`: it renders the same transcript but
+bounded to fit a single model context, so a giant thread does not blow the context
+limit. Either route keeps the contract in one place: the prompt asks for exactly what
+`digest write` stores, and `digest stale` re-surfaces a thread whenever it gains
+messages or the prompt version (`DIGEST_PROMPT_VERSION`) is bumped. `digest drain` is
+the reconciler, run "now and then" or on a schedule; a fire-and-forget summary on
+`/clear` is an optional fast path on top, never the source of truth.
 
 ## How it works
 

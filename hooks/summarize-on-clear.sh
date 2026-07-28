@@ -5,12 +5,16 @@
 # Design:
 # - The index runs synchronously (incremental, fast) so /clear captures the
 #   session into the archive immediately.
-# - The summary runs detached, so /clear is never blocked by an LLM call. cerebro
-#   itself never calls an LLM; this script pipes the transcript through `claude -p`
-#   out of band and writes the result back with `cerebro digest write`.
+# - The summary runs detached, so /clear is never blocked by the model call.
+# - `cerebro digest run` owns the whole summarize sequence: render the
+#   size-bounded transcript, tier the model on its size, call the model, refuse
+#   output that cannot be a summary, store it. This script decides only *when*
+#   that happens and *where* its output is logged. Those rules used to live here
+#   and in digest-stale-batch.sh as two copies of the same bash; they are one
+#   tested code path now.
 # - It is best-effort. If the detached job dies (no auth, rate limit, killed on
-#   session teardown), nothing is lost: `cerebro digest stale` is the reconciler
-#   and re-surfaces the thread on the next run.
+#   session teardown), nothing is lost: `cerebro digest drain` is the reconciler
+#   and re-surfaces the thread on its next run.
 # - It targets only the cleared session id, so headless `claude -p` sessions
 #   (which are never /cleared) never trigger summaries of themselves.
 set -uo pipefail
@@ -25,71 +29,14 @@ payload="$(cat)"
 sleep 0.5
 { date "+[clear-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# Pull the session id out of the payload without depending on jq being installed.
-session_id="$(printf '%s' "$payload" \
-  | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  | head -n1)"
-
-# Nothing to summarize without an id, or if the claude CLI is not on PATH.
-[ -n "$session_id" ] || exit 0
-command -v claude >/dev/null 2>&1 || exit 0
-
-# Detached summary: nohup + closed stdio so it outlives the /clear teardown. The
-# inner command renders the size-bounded transcript from cerebro (which owns the
-# rendering contract), asks cerebro which model to use, and writes the output back.
-#
-# `cerebro digest model <id>` owns the size -> model tiering (cerebro is the single
-# source of truth; the hook no longer hardcodes the threshold). The rationale: the
-# context window is the real constraint and pricing rewards it. Small threads (the
-# common case) -> Haiku 4.5 (200k context, cheapest, mechanical compress+tag job
-# that fires on every /clear). Oversized threads -> Sonnet 4.6 [1m] in a single
-# shot (1M context at a flat price, so a half-million-token thread fits whole
-# without map-reduce); the "[1m]" suffix is how Claude Code selects the 1M variant,
-# without it a giant thread still fails with "Prompt is too long". The same env
-# vars still override the choice (CEREBRO_DIGEST_MODEL, CEREBRO_DIGEST_MODEL_LARGE,
-# CEREBRO_DIGEST_HAIKU_MAX_CHARS); they are now read by `digest model`, and the
-# child cerebro process inherits them from this hook's environment.
-#
-# The model output is captured to a file and only written back if claude -p
-# succeeds (exit 0) and produced non-empty output. Piping claude straight into
-# `digest write` would store whatever claude printed even on failure: a past run
-# stored a "Prompt is too long" error as the summary that way. On failure we log
-# and leave the thread unsummarized; `cerebro digest stale` retries it next time.
-nohup bash -c '
-  cerebro_bin="$1"; sid="$2"; log="$3"
-  {
-    date "+[digest %F %T] summarizing $sid"
-    tmp="$(mktemp)"
-    out="$(mktemp)"
-    # A failed or empty render must skip the summary: `digest model --bytes` always
-    # resolves a model, so without this check an empty transcript would be
-    # summarized as "(No substantive session content.)" and stored, permanently
-    # marking a thread with real content as summarized-and-fresh.
-    if ! "$cerebro_bin" digest input "$sid" > "$tmp" || [ ! -s "$tmp" ]; then
-      echo "[digest] $sid: digest input failed or empty — skipped; digest stale will retry"
-      rm -f "$tmp" "$out"; exit 0
-    fi
-    # Tier on the size of the transcript we just rendered (digest model --bytes),
-    # instead of asking `digest model <id>` to render the whole thread a second
-    # time just to measure it.
-    bytes="$(wc -c < "$tmp" | tr -d " ")"
-    model="$("$cerebro_bin" digest model --bytes "$bytes")"
-    [ -n "$model" ] || { echo "[digest] $sid: could not resolve a model — skipped"; rm -f "$tmp" "$out"; exit 0; }
-    echo "[digest] $sid: $bytes bytes -> $model"
-    # --no-session-persistence: this headless summarization is a one-shot, never
-    # resumed, and persisting it would write a transcript into ~/.claude/projects that
-    # the indexer then picks up as a bogus session (its first turn is the digest
-    # prompt). Not persisting it keeps cerebro from indexing its own digest runs.
-    claude -p --no-session-persistence --model "$model" "$("$cerebro_bin" digest prompt)" < "$tmp" > "$out"
-    rc=$?
-    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
-      "$cerebro_bin" digest write "$sid" --model "$model" < "$out"
-    else
-      echo "[digest] $sid: summary failed (claude exit $rc, $(wc -c < "$out" | tr -d " ") bytes) — left unsummarized; digest stale will retry"
-    fi
-    rm -f "$tmp" "$out"
-  } >> "$log/digest.log" 2>&1
-' _ "$CEREBRO" "$session_id" "$LOG_DIR" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
+# Detached summary: nohup so it outlives the /clear teardown. The payload is piped
+# to `digest run --stdin`, which pulls the session id out of it with a validated
+# JSON boundary. This script no longer sed-scrapes an id out of that JSON, and no
+# longer renders, measures, tiers, or guards anything itself.
+printf '%s' "$payload" | nohup bash -c '
+  cerebro_bin="$1"; log="$2"
+  { date "+[digest %F %T]"; "$cerebro_bin" digest run --stdin; } >> "$log/digest.log" 2>&1
+' _ "$CEREBRO" "$LOG_DIR" >> "$LOG_DIR/digest.log" 2>&1 &
 
 disown 2>/dev/null || true
 exit 0
