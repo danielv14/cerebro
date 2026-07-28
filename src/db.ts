@@ -202,6 +202,17 @@ const migrate = (db: Database): void => {
   addColumnIfMissing(db, "index_state", "is_digest", "is_digest INTEGER NOT NULL DEFAULT 0");
 };
 
+// Size of the database file, or null when there is nothing to measure (an
+// in-memory database, or a path that does not exist yet). Both `stats` and
+// `doctor` report it, from here rather than each guarding its own statSync.
+export const dbFileSize = (path: string): number | null => {
+  try {
+    return fs.statSync(path).size;
+  } catch {
+    return null;
+  }
+};
+
 export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });

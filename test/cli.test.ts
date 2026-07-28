@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { type CliIO, runCli } from "../src/cli.ts";
+import { type CliIO, commands, runCli } from "../src/cli.ts";
+import { isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -76,6 +77,73 @@ describe("parseHookPayload (relevant --stdin)", () => {
   });
 });
 
+describe("option declarations", () => {
+  // The accepted vocabulary of every command, pinned. The dispatcher derives what
+  // it accepts from these declarations, so this is the one place that notices a
+  // flag quietly disappearing from a command (or appearing on the wrong one).
+  const EXPECTED: Record<string, string[]> = {
+    index: ["dry-run", "full", "rebuild"],
+    search: ["all", "json", "limit", "project", "prose", "role", "since"],
+    sessions: ["json", "limit", "project", "since"],
+    recent: ["context", "cwd", "days", "json", "limit"],
+    relevant: ["context", "cwd", "json", "limit", "stdin"],
+    show: ["full", "json", "range"],
+    stats: ["json"],
+    doctor: ["full", "json"],
+    maintain: [],
+    backup: ["keep", "to"],
+    version: ["json"],
+    "digest stale": ["ids", "json", "limit"],
+    "digest run": ["stdin"],
+    "digest drain": ["limit"],
+    "digest prompt": [],
+    "digest input": [],
+    "digest model": ["bytes"],
+    "digest write": ["model"],
+    "digest search": ["json", "limit"],
+    "digest show": ["json"],
+  };
+
+  const declared = (): Record<string, string[]> => {
+    const out: Record<string, string[]> = {};
+    for (const [name, node] of commands) {
+      if (isGroup(node)) {
+        for (const [action, sub] of Object.entries(node.subcommands)) {
+          out[`${name} ${action}`] = Object.keys(sub.options).sort();
+        }
+      } else {
+        out[name] = Object.keys(node.options).sort();
+      }
+    }
+    return out;
+  };
+
+  test("every command declares exactly the options it accepts", () => {
+    expect(declared()).toEqual(
+      Object.fromEntries(Object.entries(EXPECTED).map(([k, v]) => [k, [...v].sort()])),
+    );
+  });
+
+  test("a flag name shared by several commands agrees on its kind everywhere", () => {
+    // The parser needs one table up front, so two commands declaring --full as a
+    // boolean and a string would silently make one of them wrong.
+    const kinds = new Map<string, string>();
+    for (const [name, node] of commands) {
+      const tables = isGroup(node)
+        ? Object.values(node.subcommands).map((sub) => sub.options)
+        : [node.options];
+      for (const table of tables) {
+        for (const [option, spec] of Object.entries(table)) {
+          const seen = kinds.get(option);
+          if (seen !== undefined) expect(`${option}:${spec.kind}`).toBe(`${option}:${seen}`);
+          else kinds.set(option, spec.kind);
+        }
+      }
+      expect(name).toBeTruthy();
+    }
+  });
+});
+
 describe("runCli", () => {
   let env: TempClaude;
 
@@ -135,6 +203,44 @@ describe("runCli", () => {
     runCli(["search", "--nope"], cap.io, () => memDb());
     expect(cap.errs.join("\n").toLowerCase()).toContain("unknown option");
     expect(cap.exitCode).toBe(1);
+  });
+
+  test("a flag another command owns is rejected, not swallowed (#105)", () => {
+    // --keep is backup's, --range is show's, --bytes is digest model's. Each used
+    // to parse fine for any command and then be ignored in silence.
+    for (const args of [
+      ["sessions", "--keep", "3"],
+      ["sessions", "--range", "1..2"],
+      ["stats", "--bytes", "5"],
+      ["maintain", "--json"],
+    ]) {
+      const cap = makeIO();
+      runCli(args, cap.io, () => memDb());
+      expect(cap.errs.join("\n")).toContain(`Unknown option --${args[1]!.slice(2)}`);
+      expect(cap.errs.join("\n")).toContain(`cerebro ${args[0]}`);
+      expect(cap.exitCode).toBe(1);
+    }
+  });
+
+  test("a flag another digest action owns is rejected per action", () => {
+    const cap = makeIO();
+    runCli(["digest", "search", "--bytes", "5"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("Unknown option --bytes for `cerebro digest search`");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("the global options work with every command", () => {
+    // --db is how every test and hook points at a throwaway archive, and --help
+    // short-circuits regardless of the command.
+    const cap = makeIO();
+    runCli(["sessions", "--db", ":memory:"], cap.io, () => memDb());
+    expect(cap.errs).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+
+    const help = makeIO();
+    runCli(["backup", "--help"], help.io, () => memDb());
+    expect(help.logs.join("\n")).toContain("Usage:");
+    expect(help.exitCode).toBe(0);
   });
 
   test("show without an id fails via the shared resolveOrFail", () => {

@@ -2,7 +2,9 @@ import * as v from "valibot";
 import { gitInfo } from "../git.ts";
 import { type RelevantThread, relevantThreads } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
-import { type CommandContext, readStdin } from "./context.ts";
+import { CliError, flag, numeric, type OptionTable, text } from "./args.ts";
+import { defineCommand } from "./command.ts";
+import { readStdin } from "./helpers.ts";
 
 // Line 1 of a `relevant` thread row: id, date, project, title. Distinct from the
 // `recent` / `sessions` rows.
@@ -75,53 +77,52 @@ export const parseHookPayload = (raw: string): { prompt: string; cwd: string | n
   }
 };
 
+const options = {
+  cwd: text(),
+  stdin: flag(),
+  context: flag(),
+  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  json: flag(),
+} satisfies OptionTable;
+
 // The `relevant` command: past threads relevant to a prompt (summary tier first),
 // for per-prompt context injection.
-export const relevantCommand = ({
-  db,
-  io,
-  values,
-  positionals,
-  limit,
-  emitJson,
-}: CommandContext): void => {
-  // --stdin reads the prompt from a hook's JSON payload (UserPromptSubmit
-  // sends { prompt, cwd, ... } on stdin), so the hook needs no jq or wrapper.
-  let prompt = positionals.slice(1).join(" ");
-  // The directory the prompt was typed in, used only to boost same-repo threads.
-  // An explicit --cwd wins over the payload's (manual use and tests); with neither,
-  // ranking stays global. Deliberately NOT defaulted to process.cwd(): a manual
-  // `relevant "..."` must rank exactly as it did before.
-  let cwd = values.cwd || null;
-  if (values.stdin) {
-    // The fd-0 read (readStdin, shared with digest write) is the only impure step;
-    // the parsing/validation is in the pure parseHookPayload. A failed read (no
-    // stdin) degrades to "" too.
-    const payload = parseHookPayload(readStdin());
-    prompt = payload.prompt;
-    cwd = values.cwd || payload.cwd;
-  }
-  if (!prompt) {
-    if (!values.context) {
-      io.error("relevant: missing <prompt>");
-      io.setExitCode(1);
+export const relevantCommand = defineCommand({
+  options,
+  run: ({ db, args, rest }) => {
+    // --stdin reads the prompt from a hook's JSON payload (UserPromptSubmit
+    // sends { prompt, cwd, ... } on stdin), so the hook needs no jq or wrapper.
+    let prompt = rest.join(" ");
+    // The directory the prompt was typed in, used only to boost same-repo threads.
+    // An explicit --cwd wins over the payload's (manual use and tests); with neither,
+    // ranking stays global. Deliberately NOT defaulted to process.cwd(): a manual
+    // `relevant "..."` must rank exactly as it did before.
+    let cwd = args.cwd || null;
+    if (args.stdin) {
+      // The fd-0 read is the only impure step; the parsing and validation are in the
+      // pure parseHookPayload. A failed read (no stdin) degrades to "" too.
+      const payload = parseHookPayload(readStdin());
+      prompt = payload.prompt;
+      cwd = args.cwd || payload.cwd;
     }
-    return;
-  }
-  // Same repo resolution as `recent`: the git root when the cwd is inside a repo,
-  // else the exact path. gitInfo tolerates a null cwd (and a deleted directory).
-  const threads = relevantThreads(db, prompt, limit ?? 3, Date.now(), {
-    repoRoot: gitInfo(cwd).root,
-    cwd,
-  });
-  if (values.json) {
-    emitJson(threads);
-    return;
-  }
-  if (threads.length === 0) {
-    // Silent in --context mode so the UserPromptSubmit hook injects nothing.
-    if (!values.context) io.log("No related past sessions.");
-    return;
-  }
-  for (const line of relevantBlock(threads, { context: values.context })) io.log(line);
-};
+    if (!prompt) {
+      // A hook whose payload carried no prompt must stay silent rather than report
+      // an error into the model's context; a manual call gets the error.
+      if (args.context) return {};
+      throw new CliError("relevant: missing <prompt>");
+    }
+    // Same repo resolution as `recent`: the git root when the cwd is inside a repo,
+    // else the exact path. gitInfo tolerates a null cwd (and a deleted directory).
+    const threads = relevantThreads(db, prompt, args.limit ?? 3, Date.now(), {
+      repoRoot: gitInfo(cwd).root,
+      cwd,
+    });
+    return {
+      json: threads,
+      lines: threads.length > 0 ? relevantBlock(threads, { context: args.context }) : [],
+      empty: "No related past sessions.",
+      // Silent in --context mode so the UserPromptSubmit hook injects nothing.
+      silentWhenEmpty: args.context,
+    };
+  },
+});

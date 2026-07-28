@@ -1,6 +1,8 @@
 import { oneLine, shortId, shortTime } from "../render.ts";
 import { type ThreadMessage, threadMessages } from "../thread.ts";
-import { type CommandContext, resolveOrFail } from "./context.ts";
+import { CliError, flag, messageRange, type OptionTable } from "./args.ts";
+import { defineCommand } from "./command.ts";
+import { resolveOrThrow } from "./helpers.ts";
 
 // The shared header of `show` (outline and full): id + message count, with a blank
 // line under it (the trailing "\n" plus io.log's own newline).
@@ -55,53 +57,43 @@ export const showRange = (
   return lines;
 };
 
+// --range's shape is validated by the option itself; whether it fits the thread is
+// decided here, because only the command knows how long the thread is.
+const options = {
+  full: flag(),
+  range: messageRange(),
+  json: flag(),
+} satisfies OptionTable;
+
 // The `show` command: a thread as outline (default), full transcript (--full), or
 // a verbatim slice in outline numbering (--range A..B).
-export const showCommand = ({
-  db,
-  io,
-  values,
-  positionals,
-  fail,
-  emitJson,
-}: CommandContext): void => {
-  const sessionId = resolveOrFail(db, positionals[1], "show", fail);
-  if (!sessionId) return;
-  const messages = threadMessages(db, sessionId);
+export const showCommand = defineCommand({
+  options,
+  run: ({ db, args, rest }) => {
+    const sessionId = resolveOrThrow(db, rest[0], "show");
+    const messages = threadMessages(db, sessionId);
 
-  // --range is resolved (and validated) BEFORE the output format is chosen,
-  // so `--range A..B --json` returns the requested slice as JSON instead of
-  // silently dumping the whole thread.
-  let slice = messages;
-  let from = 1;
-  if (values.range !== undefined) {
-    // --range A..B (or a single N): a verbatim slice in outline numbering,
-    // the jump target for search's #N ordinals.
-    const match = values.range.match(/^(\d+)(?:\.\.(\d+))?$/);
-    const start = match ? Number(match[1]) : 0;
-    const to = match?.[2] ? Number(match[2]) : start;
-    if (!match || start < 1 || to < start) {
-      fail(`--range must be N or A..B with 1 <= A <= B (got "${values.range}")`);
-      return;
+    // The slice is resolved BEFORE the output format is chosen, so
+    // `--range A..B --json` returns the requested slice instead of the whole thread.
+    let slice = messages;
+    let from = 1;
+    if (args.range) {
+      if (args.range.from > messages.length) {
+        throw new CliError(
+          `--range starts at ${args.range.from} but the thread has ${messages.length} message(s)`,
+        );
+      }
+      from = args.range.from;
+      slice = messages.slice(from - 1, Math.min(args.range.to, messages.length));
     }
-    if (start > messages.length) {
-      fail(`--range starts at ${start} but the thread has ${messages.length} message(s)`);
-      return;
-    }
-    from = start;
-    slice = messages.slice(start - 1, Math.min(to, messages.length));
-  }
 
-  if (values.json) {
-    emitJson({ id: sessionId, total: messages.length, from, messages: slice });
-    return;
-  }
-  if (values.range !== undefined) {
-    for (const line of showRange(sessionId, slice, { from, total: messages.length })) {
-      io.log(line);
+    const json = { id: sessionId, total: messages.length, from, messages: slice };
+    if (args.range) {
+      return { json, lines: showRange(sessionId, slice, { from, total: messages.length }) };
     }
-    return;
-  }
-  const lines = values.full ? showFull(sessionId, messages) : showOutline(sessionId, messages);
-  for (const line of lines) io.log(line);
-};
+    return {
+      json,
+      lines: args.full ? showFull(sessionId, messages) : showOutline(sessionId, messages),
+    };
+  },
+});
