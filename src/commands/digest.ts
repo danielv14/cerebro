@@ -1,10 +1,15 @@
+import * as v from "valibot";
 import {
   buildDigestInput,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
+  type DigestOutcome,
+  type DrainResult,
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
+  runDigest,
+  runDrain,
   type StaleThread,
   type StoredSummary,
   type SummaryHit,
@@ -14,7 +19,9 @@ import {
 } from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
-import { type CommandContext, numberOption, present, readStdin, resolveOrFail } from "./context.ts";
+import { CliError, flag, numeric, type OptionTable, text } from "./args.ts";
+import { type CommandGroup, defineCommand } from "./command.ts";
+import { readStdin, resolveOrThrow } from "./helpers.ts";
 
 // `digest stale` (human): one row per stale thread with the staleness reason, the
 // title on its own line, then the how-to-summarize footer. `promptVersion` is passed
@@ -35,7 +42,7 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
   }
   lines.push(
     `\n${rows.length} thread(s) need a summary. Summarize one:\n` +
-      `  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`,
+      `  cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)`,
   );
   return lines;
 };
@@ -80,124 +87,207 @@ export const noSummaryHint = (sessionId: string): string =>
 export const summarySaved = (root: string, chars: number): string =>
   `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
-// The `digest` command: dispatch over its action sub-commands
-// (stale | prompt | input | model | write | search | show).
-export const digestCommand = (ctx: CommandContext): void => {
-  const { db, io, values, positionals, limit, fail, emitJson } = ctx;
-  const action = positionals[1];
-  switch (action) {
-    case "prompt":
-      io.log(DIGEST_PROMPT);
-      break;
-
-    case "input": {
-      const sessionId = resolveOrFail(db, positionals[2], "digest input", fail);
-      if (!sessionId) break;
-      // The size-bounded transcript fed to `claude -p`. Written raw to stdout
-      // (no trailing newline of our own) so it pipes straight into the model.
-      io.write(buildDigestInput(threadMessages(db, sessionId)));
-      break;
-    }
-
-    case "model": {
-      // --bytes N tiers on an already-measured size: the hooks render the
-      // transcript once with `digest input`, `wc -c` it for logging anyway,
-      // and pass that here, so the transcript is not rendered a second time
-      // just to be measured.
-      const bytes = numberOption(
-        values.bytes,
-        "bytes",
-        { integer: true, min: 0, label: "a non-negative integer" },
-        fail,
-      );
-      if (!bytes.ok) break;
-      if (bytes.value !== undefined) {
-        io.log(pickDigestModel(bytes.value));
-        break;
-      }
-      const sessionId = resolveOrFail(db, positionals[2], "digest model", fail);
-      if (!sessionId) break;
-      // The model the summarize hook would pick for this thread, by the byte
-      // size of its rendered transcript (matching the hook's `wc -c`). cerebro
-      // owns the tiering; the hook asks instead of hardcoding the threshold.
-      const input = buildDigestInput(threadMessages(db, sessionId));
-      io.log(pickDigestModel(Buffer.byteLength(input, "utf8")));
-      break;
-    }
-
-    case "stale": {
-      const rows = staleThreads(db, limit ?? 50);
-      if (values.json) {
-        emitJson(rows);
-        break;
-      }
-      // --ids: the machine mode (see staleIds above). Empty output means nothing
-      // is stale.
-      if (values.ids) {
-        for (const line of staleIds(rows)) io.log(line);
-        break;
-      }
-      if (rows.length === 0) {
-        io.log("All threads are summarized and up to date.");
-        break;
-      }
-      for (const line of staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })) {
-        io.log(line);
-      }
-      break;
-    }
-
-    case "write": {
-      const sessionId = resolveOrFail(db, positionals[2], "digest write", fail);
-      if (!sessionId) break;
-      const text = readStdin().trim();
-      if (!text) {
-        fail("digest write: no summary text on stdin");
-        break;
-      }
-      // Refuse to store output that cannot be a summary (an error message, a
-      // fragment). The thread stays stale, so the reconciler retries it.
-      const reason = rejectSummaryReason(text);
-      if (reason) {
-        fail(`digest write: rejected: ${reason}`);
-        break;
-      }
-      const root = writeSummary(db, sessionId, text, values.model ?? null);
-      io.log(summarySaved(root, text.length));
-      break;
-    }
-
-    case "search": {
-      const query = positionals.slice(2).join(" ");
-      if (!query) {
-        fail("digest search: missing <query>");
-        break;
-      }
-      const hits = searchSummaries(db, query, limit ?? 10);
-      present(ctx, hits, { lines: summarySearchListing, empty: "No matching summaries." });
-      break;
-    }
-
-    case "show": {
-      const sessionId = resolveOrFail(db, positionals[2], "digest show", fail);
-      if (!sessionId) break;
-      const summary = getSummary(db, sessionId);
-      if (values.json) {
-        emitJson(summary);
-        break;
-      }
-      if (!summary) {
-        io.log(noSummaryHint(sessionId));
-        break;
-      }
-      for (const line of digestShow(summary)) io.log(line);
-      break;
-    }
-
+// One line per summarize attempt, for `digest run` and for each thread of a
+// `digest drain`. Both the hooks' logs and a human read these, so a failure always
+// names the reason and says the thread is not lost.
+export const digestOutcomeLine = (outcome: DigestOutcome): string => {
+  const id = shortId(outcome.root);
+  switch (outcome.status) {
+    case "summarized":
+      return `Summarized ${id}: ${outcome.chars} chars stored.`;
+    case "skipped":
+      // No retry promise here: the only way to skip is an empty transcript, and the
+      // `threads` view keeps zero-message threads out of the stale list entirely.
+      return `Skipped ${id}: ${outcome.reason}.`;
     default:
-      fail(
-        `digest: unknown action "${action ?? ""}". ` +
-          "Use: stale | prompt | input <id> | model <id> | write <id> | search <query> | show <id>",
-      );
+      return `Failed ${id}: ${outcome.reason}; left unsummarized, digest drain will retry it.`;
   }
+};
+
+// The breadcrumb printed before the model is called, naming the thread, the size
+// and the model. A wedged call leaves this line behind, which is the whole point:
+// the bash pipeline logged it and losing it made a hung run unreadable.
+export const digestStartLine = (about: { root: string; bytes: number; model: string }): string =>
+  `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
+
+// What a `digest drain` achieved, printed after the per-thread lines the run
+// streamed as it went. An aborted run says so on its own line, because
+// "0 summarized" alone reads like a clean backlog.
+export const drainSummary = (result: DrainResult): string[] => {
+  if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
+  const lines: string[] = [];
+  if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
+  const skipped = result.skipped > 0 ? `, ${result.skipped} skipped` : "";
+  lines.push(`Drain complete: ${result.summarized} summarized, ${result.failed} failed${skipped}.`);
+  return lines;
+};
+
+// The accepted shape of the JSON a SessionEnd hook pipes to `digest run --stdin`
+// (Claude Code sends { session_id, ... }). Extra keys are ignored. This is the
+// third untrusted I/O boundary, and it replaces a sed that scraped the id out of
+// the payload with a regex in the hook script.
+const SessionEndPayloadSchema = v.object({ session_id: v.optional(v.string()) });
+
+// Pull the session id out of that payload, pure over the already-read raw string
+// so it is unit-testable without fd-0 plumbing. Returns null on any parse or
+// validation failure, and the caller reports a missing id rather than summarizing
+// something arbitrary.
+export const parseSessionEndPayload = (raw: string): string | null => {
+  try {
+    const parsed = v.safeParse(SessionEndPayloadSchema, JSON.parse(raw));
+    if (!parsed.success) return null;
+    return parsed.output.session_id || null;
+  } catch {
+    return null;
+  }
+};
+
+// How many stale threads one `digest drain` summarizes when --limit is absent.
+// Matches the reconciler's own default cap.
+const DEFAULT_DRAIN_LIMIT = 8;
+
+const limitOption = numeric({ integer: true, min: 1, label: "a positive integer" });
+
+// `digest` is a group: each action declares the flags it accepts, so
+// `digest search --bytes 5` is rejected the same way an unknown flag on a
+// top-level command is, and each action's arguments arrive validated.
+export const digestCommand: CommandGroup = {
+  unknownAction: (action) =>
+    `digest: unknown action "${action ?? ""}". ` +
+    "Use: stale | run <id> | drain | prompt | input <id> | model <id> | write <id> | " +
+    "search <query> | show <id>",
+
+  subcommands: {
+    stale: defineCommand({
+      options: { limit: limitOption, ids: flag(), json: flag() } satisfies OptionTable,
+      run: ({ db, args }) => {
+        const rows = staleThreads(db, args.limit ?? 50);
+        return {
+          json: rows,
+          // --ids is the machine mode: full ids, one per line, no header, titles or
+          // footer, so a caller never scrapes the human listing. Empty output means
+          // nothing is stale, which is what the reconciler's guard reads.
+          lines: args.ids
+            ? staleIds(rows)
+            : rows.length > 0
+              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })
+              : [],
+          empty: args.ids ? undefined : "All threads are summarized and up to date.",
+        };
+      },
+    }),
+
+    run: defineCommand({
+      options: { stdin: flag() } satisfies OptionTable,
+      run: ({ db, args, rest, progress }) => {
+        // --stdin takes the id from the SessionEnd payload, so the clear hook needs
+        // neither jq nor a sed over untrusted JSON.
+        const idArg = args.stdin ? parseSessionEndPayload(readStdin()) : rest[0];
+        if (args.stdin && !idArg) {
+          throw new CliError("digest run: no session_id in the payload on stdin");
+        }
+        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+          // Printed before the model call, so a hung call still names the thread.
+          onStart: (about) => progress(digestStartLine(about)),
+        });
+        return {
+          lines: [digestOutcomeLine(outcome)],
+          // Exit 1 whenever no summary was stored, so a manual invocation is
+          // scriptable. The clear hook is detached and ignores this.
+          exitCode: outcome.status === "summarized" ? 0 : 1,
+        };
+      },
+    }),
+
+    drain: defineCommand({
+      options: { limit: limitOption } satisfies OptionTable,
+      run: ({ db, args, progress }) => {
+        const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
+        // Reported per thread as it completes: a drain makes up to `cap` model
+        // calls and the reconciler's only witness is digest.log.
+        const result = runDrain(db, cap, {
+          onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
+          onThreadStart: (about) => progress(digestStartLine(about)),
+          onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
+        });
+        return {
+          lines: drainSummary(result),
+          // Per-thread failures are normal and leave the thread stale for next time;
+          // only a run that could not proceed at all is an error.
+          exitCode: result.aborted ? 1 : 0,
+        };
+      },
+    }),
+
+    prompt: defineCommand({
+      options: {} satisfies OptionTable,
+      run: () => ({ lines: [DIGEST_PROMPT] }),
+    }),
+
+    input: defineCommand({
+      options: {} satisfies OptionTable,
+      // The size-bounded transcript fed to the model. Raw stdout with no trailing
+      // newline of our own, so it pipes straight into one.
+      run: ({ db, rest }) => ({
+        raw: buildDigestInput(threadMessages(db, resolveOrThrow(db, rest[0], "digest input"))),
+      }),
+    }),
+
+    model: defineCommand({
+      options: {
+        bytes: numeric({ integer: true, min: 0, label: "a non-negative integer" }),
+      } satisfies OptionTable,
+      run: ({ db, args, rest }) => {
+        // --bytes N tiers an already-measured size without rendering anything.
+        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes)] };
+        // Otherwise render the thread and tier on its size, for manual inspection.
+        const input = buildDigestInput(
+          threadMessages(db, resolveOrThrow(db, rest[0], "digest model")),
+        );
+        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"))] };
+      },
+    }),
+
+    write: defineCommand({
+      options: { model: text() } satisfies OptionTable,
+      run: ({ db, args, rest }) => {
+        const sessionId = resolveOrThrow(db, rest[0], "digest write");
+        const summary = readStdin().trim();
+        if (!summary) throw new CliError("digest write: no summary text on stdin");
+        // Refuse to store output that cannot be a summary (an error message, a
+        // fragment). The thread stays stale, so the reconciler retries it.
+        const rejected = rejectSummaryReason(summary);
+        if (rejected) throw new CliError(`digest write: rejected: ${rejected}`);
+        const root = writeSummary(db, sessionId, summary, args.model ?? null);
+        return { lines: [summarySaved(root, summary.length)] };
+      },
+    }),
+
+    search: defineCommand({
+      options: { limit: limitOption, json: flag() } satisfies OptionTable,
+      run: ({ db, args, rest }) => {
+        const query = rest.join(" ");
+        if (!query) throw new CliError("digest search: missing <query>");
+        const hits = searchSummaries(db, query, args.limit ?? 10);
+        return {
+          json: hits,
+          lines: hits.length > 0 ? summarySearchListing(hits) : [],
+          empty: "No matching summaries.",
+        };
+      },
+    }),
+
+    show: defineCommand({
+      options: { json: flag() } satisfies OptionTable,
+      run: ({ db, rest }) => {
+        const sessionId = resolveOrThrow(db, rest[0], "digest show");
+        const summary = getSummary(db, sessionId);
+        return {
+          json: summary,
+          lines: summary ? digestShow(summary) : [],
+          empty: noSummaryHint(sessionId),
+        };
+      },
+    }),
+  },
 };

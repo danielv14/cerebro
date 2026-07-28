@@ -1,6 +1,7 @@
 import { runBackup } from "../backup.ts";
 import { humanBytes } from "../render.ts";
-import { type CommandContext, numberOption } from "./context.ts";
+import { numeric, type OptionTable, text } from "./args.ts";
+import { defineCommand } from "./command.ts";
 
 // `backup` output: where the snapshot landed, its size, and anything pruned.
 export const backupReport = (result: {
@@ -13,17 +14,16 @@ export const backupReport = (result: {
   return lines;
 };
 
+const options = {
+  to: text(),
+  keep: numeric({ integer: true, min: 1, label: "a positive integer" }),
+} satisfies OptionTable;
+
 // The `backup` command: snapshot the database via VACUUM INTO, optionally pruning
 // old default-named snapshots with --keep.
-export const backupCommand = ({ db, io, values, dbPath, fail }: CommandContext): void => {
-  const keep = numberOption(
-    values.keep,
-    "keep",
-    { integer: true, min: 1, label: "a positive integer" },
-    fail,
-  );
-  if (!keep.ok) return;
-  for (const line of backupReport(runBackup(db, dbPath, { to: values.to, keep: keep.value }))) {
-    io.log(line);
-  }
-};
+export const backupCommand = defineCommand({
+  options,
+  run: ({ db, args, dbPath }) => ({
+    lines: backupReport(runBackup(db, dbPath, { to: args.to, keep: args.keep })),
+  }),
+});

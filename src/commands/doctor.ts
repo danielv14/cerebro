@@ -1,8 +1,9 @@
-import { statSync } from "node:fs";
 import { buildStampLine } from "../build-stamp.ts";
+import { dbFileSize } from "../db.ts";
 import { type Check, type DoctorReport, runDoctor } from "../doctor.ts";
 import { humanBytes } from "../render.ts";
-import type { CommandContext } from "./context.ts";
+import { flag, type OptionTable } from "./args.ts";
+import { defineCommand } from "./command.ts";
 
 // A status marker wide enough to align every row, so failures are scannable in a
 // wall of ok.
@@ -47,20 +48,22 @@ export const doctorReport = (
   return lines;
 };
 
+const options = { full: flag(), json: flag() } satisfies OptionTable;
+
 // The `doctor` command: one read-only health report over the archive, the schema,
 // the digest backlog, the deployed binary and the hook wiring. Exits 1 only on a
 // hard failure (corruption, a schema this build cannot speak), so it is usable as a
 // cron or CI-style guard without going red on a warning. The report itself is the
 // error message, so nothing is printed twice on the way out.
-export const doctorCommand = ({ db, io, values, dbPath, emitJson }: CommandContext): void => {
-  const report = runDoctor(db, dbPath, { full: values.full });
-  let dbBytes: number | null = null;
-  try {
-    dbBytes = statSync(dbPath).size;
-  } catch {
-    dbBytes = null;
-  }
-  if (values.json) emitJson({ ...report, dbPath, dbBytes });
-  else for (const line of doctorReport(report, dbPath, dbBytes)) io.log(line);
-  if (!report.ok) io.setExitCode(1);
-};
+export const doctorCommand = defineCommand({
+  options,
+  run: ({ db, args, dbPath }) => {
+    const report = runDoctor(db, dbPath, { full: args.full });
+    const dbBytes = dbFileSize(dbPath);
+    return {
+      json: { ...report, dbPath, dbBytes },
+      lines: doctorReport(report, dbPath, dbBytes),
+      exitCode: report.ok ? 0 : 1,
+    };
+  },
+});

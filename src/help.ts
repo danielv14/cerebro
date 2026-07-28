@@ -27,6 +27,8 @@ Usage:
 
 Digest actions:
   cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
+  cerebro digest run <id> | --stdin           Summarize one thread end to end
+  cerebro digest drain [--limit N]            Summarize the stalest N threads (default 8)
   cerebro digest prompt                       Print the summarization prompt
   cerebro digest input <id>                   Print the size-bounded transcript to summarize
   cerebro digest model <id> | --bytes N       Print the model the size tiering would pick
@@ -34,8 +36,10 @@ Digest actions:
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
 
-  cerebro is pure storage and never calls an LLM. A hook or skill produces the
-  summary and writes it back, e.g.:
+  run/drain spawn \`claude -p\` with the model the tiering picked and store the
+  result only if it succeeded and is not an error string. cerebro owns the prompt,
+  the tiering and the storage guard; it never summarizes on its own initiative.
+  The steps are still separately available if you want to drive them yourself:
     cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 
 Options:
@@ -65,18 +69,21 @@ Options:
                   payload's cwd, else no boost)
   --days <n>      recent: only threads active within the last n days (default 14)
   --context       recent/relevant: emit an agent-facing context block (for a hook)
-  --stdin         relevant: read the prompt (and cwd) from a hook's JSON payload on stdin
+  --stdin         relevant: read the prompt (and cwd) from a hook's JSON payload on
+                  stdin; digest run: read the session id from a SessionEnd payload
   --ids           digest stale: print one full session id per line (for scripts)
   --model <name>  digest write: record which model produced the summary
   --bytes <n>     digest model: tier by an already-measured transcript byte count
                   (skips re-rendering the transcript; used by the hooks)
   --json          search/sessions/recent/relevant/show/stats/doctor/version/
                   digest stale|search|show: emit the rows as JSON instead of the
-                  human listing
+                  human listing. A command that does not list it here rejects it,
+                  as it does any other flag that is not its own.
   -h, --help      Show this help
 
 Env:
   CEREBRO_DB           Override the database path
   CEREBRO_CLAUDE_DIR   Override the ~/.claude directory
   CEREBRO_TZ           IANA zone for displayed timestamps (default Europe/Stockholm;
-                       stored timestamps are always verbatim UTC)`;
+                       stored timestamps are always verbatim UTC)
+  CEREBRO_CLAUDE_BIN   The binary digest run/drain spawn (default: claude on PATH)`;

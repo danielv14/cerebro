@@ -2,7 +2,8 @@ import { gitInfo } from "../git.ts";
 import { recentThreads, type ThreadRow } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { threadOpeningPrompt } from "../thread.ts";
-import { type CommandContext, numberOption } from "./context.ts";
+import { flag, numeric, type OptionTable, text } from "./args.ts";
+import { defineCommand } from "./command.ts";
 
 // Line 1 of a `recent` thread row. `showMsgs: false` (the --context branch) drops
 // the "N msgs" column; otherwise the count is right-padded to width 4. The title is
@@ -58,45 +59,42 @@ export const recentBlock = (
   return lines;
 };
 
+// Fractional days are allowed: --days multiplies into a millisecond cutoff, so
+// 1.5 is a meaningful window (unlike a row limit).
+const options = {
+  cwd: text(),
+  days: numeric({ min: 0, minExclusive: true, label: "a positive number" }),
+  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  context: flag(),
+  json: flag(),
+} satisfies OptionTable;
+
 // The `recent` command: threads recently active in one repo (by git root when the
 // cwd is inside a repo, else by exact project path), for session-start context.
-export const recentCommand = ({ db, io, values, limit, fail, emitJson }: CommandContext): void => {
-  const cwd = values.cwd || process.cwd();
-  // Fractional days are allowed: this multiplies into a millisecond cutoff, so
-  // --days 1.5 is a meaningful window (unlike a row limit).
-  const parsedDays = numberOption(
-    values.days,
-    "days",
-    { min: 0, minExclusive: true, label: "a positive number" },
-    fail,
-  );
-  if (!parsedDays.ok) return;
-  const days = parsedDays.value ?? 14;
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const repoRoot = gitInfo(cwd).root;
-  const threads = recentThreads(db, { repoRoot, cwd, since, limit: limit ?? 5 });
+export const recentCommand = defineCommand({
+  options,
+  run: ({ db, args }) => {
+    const cwd = args.cwd || process.cwd();
+    const days = args.days ?? 14;
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const repoRoot = gitInfo(cwd).root;
+    const threads = recentThreads(db, { repoRoot, cwd, since, limit: args.limit ?? 5 });
+    // The opening prompt is fetched here so the render stays db-free. JSON carries
+    // it as a field; the listing puts it on its own follow-up line.
+    const rows = threads.map((thread) => ({
+      thread,
+      opening: threadOpeningPrompt(db, thread.id),
+    }));
 
-  if (values.json) {
-    emitJson(threads.map((thread) => ({ ...thread, opening: threadOpeningPrompt(db, thread.id) })));
-    return;
-  }
-
-  if (threads.length === 0) {
-    // Silent in --context mode so the SessionStart hook injects nothing.
-    if (!values.context) io.log("No recent sessions for this repo.");
-    return;
-  }
-
-  // Fetch the opening prompt per thread here so render stays db-free.
-  const rows = threads.map((thread) => ({
-    thread,
-    opening: threadOpeningPrompt(db, thread.id),
-  }));
-  for (const line of recentBlock(rows, {
-    repoPath: repoRoot ?? cwd,
-    days,
-    context: values.context,
-  })) {
-    io.log(line);
-  }
-};
+    return {
+      json: rows.map(({ thread, opening }) => ({ ...thread, opening })),
+      lines:
+        rows.length > 0
+          ? recentBlock(rows, { repoPath: repoRoot ?? cwd, days, context: args.context })
+          : [],
+      empty: "No recent sessions for this repo.",
+      // Silent in --context mode so the SessionStart hook injects nothing.
+      silentWhenEmpty: args.context,
+    };
+  },
+});

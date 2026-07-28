@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type CliIO, runCli } from "../src/cli.ts";
+import fs from "node:fs";
+import os from "node:os";
+import { join } from "node:path";
+import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
+import { isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -73,6 +77,77 @@ describe("parseHookPayload (relevant --stdin)", () => {
   });
 });
 
+describe("option declarations", () => {
+  // The accepted vocabulary of every command, pinned. The dispatcher derives what
+  // it accepts from these declarations, so this is the one place that notices a
+  // flag quietly disappearing from a command (or appearing on the wrong one).
+  const EXPECTED: Record<string, string[]> = {
+    index: ["dry-run", "full", "rebuild"],
+    search: ["all", "json", "limit", "project", "prose", "role", "since"],
+    sessions: ["json", "limit", "project", "since"],
+    recent: ["context", "cwd", "days", "json", "limit"],
+    relevant: ["context", "cwd", "json", "limit", "stdin"],
+    show: ["full", "json", "range"],
+    stats: ["json"],
+    doctor: ["full", "json"],
+    maintain: [],
+    backup: ["keep", "to"],
+    version: ["json"],
+    "digest stale": ["ids", "json", "limit"],
+    "digest run": ["stdin"],
+    "digest drain": ["limit"],
+    "digest prompt": [],
+    "digest input": [],
+    "digest model": ["bytes"],
+    "digest write": ["model"],
+    "digest search": ["json", "limit"],
+    "digest show": ["json"],
+  };
+
+  const declared = (): Record<string, string[]> => {
+    const out: Record<string, string[]> = {};
+    for (const [name, node] of commands) {
+      if (isGroup(node)) {
+        for (const [action, sub] of Object.entries(node.subcommands)) {
+          out[`${name} ${action}`] = Object.keys(sub.options).sort();
+        }
+      } else {
+        out[name] = Object.keys(node.options).sort();
+      }
+    }
+    return out;
+  };
+
+  test("every command declares exactly the options it accepts", () => {
+    expect(declared()).toEqual(
+      Object.fromEntries(Object.entries(EXPECTED).map(([k, v]) => [k, [...v].sort()])),
+    );
+  });
+
+  test("a flag name shared by several commands agrees on its kind everywhere", () => {
+    // The parser needs one table up front, so two commands declaring --full as a
+    // boolean and a string would silently make one of them wrong. Seeded with the
+    // globals because parserOptions adds those first and first declaration wins: a
+    // command redeclaring --db as a flag would be parsed as a string forever, and
+    // read back as absent on every invocation.
+    const kinds = new Map<string, string>(
+      Object.entries(GLOBAL_OPTIONS).map(([option, spec]) => [option, spec.kind]),
+    );
+    for (const [, node] of commands) {
+      const tables = isGroup(node)
+        ? Object.values(node.subcommands).map((sub) => sub.options)
+        : [node.options];
+      for (const table of tables) {
+        for (const [option, spec] of Object.entries(table)) {
+          const seen = kinds.get(option);
+          if (seen !== undefined) expect(`${option}:${spec.kind}`).toBe(`${option}:${seen}`);
+          else kinds.set(option, spec.kind);
+        }
+      }
+    }
+  });
+});
+
 describe("runCli", () => {
   let env: TempClaude;
 
@@ -134,7 +209,45 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(1);
   });
 
-  test("show without an id fails via the shared resolveOrFail", () => {
+  test("a flag another command owns is rejected, not swallowed (#105)", () => {
+    // --keep is backup's, --range is show's, --bytes is digest model's. Each used
+    // to parse fine for any command and then be ignored in silence.
+    for (const args of [
+      ["sessions", "--keep", "3"],
+      ["sessions", "--range", "1..2"],
+      ["stats", "--bytes", "5"],
+      ["maintain", "--json"],
+    ]) {
+      const cap = makeIO();
+      runCli(args, cap.io, () => memDb());
+      expect(cap.errs.join("\n")).toContain(`Unknown option --${args[1]!.slice(2)}`);
+      expect(cap.errs.join("\n")).toContain(`cerebro ${args[0]}`);
+      expect(cap.exitCode).toBe(1);
+    }
+  });
+
+  test("a flag another digest action owns is rejected per action", () => {
+    const cap = makeIO();
+    runCli(["digest", "search", "--bytes", "5"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("Unknown option --bytes for `cerebro digest search`");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("the global options work with every command", () => {
+    // --db is how every test and hook points at a throwaway archive, and --help
+    // short-circuits regardless of the command.
+    const cap = makeIO();
+    runCli(["sessions", "--db", ":memory:"], cap.io, () => memDb());
+    expect(cap.errs).toEqual([]);
+    expect(cap.exitCode).toBe(0);
+
+    const help = makeIO();
+    runCli(["backup", "--help"], help.io, () => memDb());
+    expect(help.logs.join("\n")).toContain("Usage:");
+    expect(help.exitCode).toBe(0);
+  });
+
+  test("show without an id fails via the shared resolveOrThrow", () => {
     const cap = makeIO();
     runCli(["show"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("show: missing <session-id>");
@@ -250,6 +363,34 @@ describe("runCli", () => {
     runCli(["search", "zzyzx", "--json"], cap.io, seeded());
     expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("--json emits an empty array rather than the empty-state prose, for every reader", () => {
+    // This is the contract the deleted `present` helper used to pin: in JSON mode a
+    // reader emits [] and never its human empty state. It lives in runCli's emit now.
+    for (const args of [
+      ["sessions", "--json"],
+      ["search", "zzyzx", "--json"],
+      ["digest", "search", "zzyzx", "--json"],
+      ["recent", "--cwd", "/nowhere", "--json"],
+      ["relevant", "zzzqqq", "--json"],
+    ]) {
+      const cap = makeIO();
+      runCli(args, cap.io, () => memDb());
+      expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
+      expect(cap.errs).toEqual([]);
+      expect(cap.exitCode).toBe(0);
+    }
+  });
+
+  test("the human empty state is printed instead, once, when JSON is not asked for", () => {
+    const cap = makeIO();
+    runCli(["sessions"], cap.io, () => memDb());
+    expect(cap.logs).toEqual(["No sessions indexed yet. Run: cerebro index"]);
+
+    const digest = makeIO();
+    runCli(["digest", "search", "zzyzx"], digest.io, () => memDb());
+    expect(digest.logs).toEqual(["No matching summaries."]);
   });
 
   test("show --json returns the thread's messages (#54)", () => {
@@ -598,5 +739,118 @@ describe("runCli", () => {
 
     expect(order([])).toEqual(["OTHER", "MINE"]);
     expect(order(["--cwd", "/repo-mine"])).toEqual(["MINE", "OTHER"]);
+  });
+
+  // `digest run` / `digest drain` drive the real summarizer, so these go through a
+  // stand-in for the claude CLI (CEREBRO_CLAUDE_BIN) rather than a seam injected in
+  // the test. That covers the wiring the unit tests cannot: dispatch, argument
+  // resolution, the reported line and the exit code.
+  describe("digest run and drain", () => {
+    let binDir: string;
+    let savedBin: string | undefined;
+
+    const fakeClaude = (script: string): void => {
+      const path = join(binDir, "claude");
+      fs.writeFileSync(path, `#!/usr/bin/env bash\n${script}\n`);
+      fs.chmodSync(path, 0o755);
+      process.env.CEREBRO_CLAUDE_BIN = path;
+    };
+
+    beforeEach(() => {
+      binDir = fs.mkdtempSync(join(os.tmpdir(), "cerebro-cli-claude-"));
+      savedBin = process.env.CEREBRO_CLAUDE_BIN;
+      // Point at nothing by default, so a test that forgets fakeClaude() fails
+      // loudly instead of spawning the developer's real claude CLI.
+      process.env.CEREBRO_CLAUDE_BIN = join(binDir, "no-such-binary");
+    });
+    afterEach(() => {
+      if (savedBin === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
+      else process.env.CEREBRO_CLAUDE_BIN = savedBin;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    });
+
+    test("digest run summarizes the thread and exits 0", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "tuning the limiter", { timestamp: ts(0) }),
+      ]);
+      fakeClaude('echo "Tuned the limiter in cerebro. Keywords: limiter"');
+      const cap = makeIO();
+      runCli(["digest", "run", "SESS"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Summarized SESS");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest run exits 1 and says why when no summary was stored", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "tuning the limiter", { timestamp: ts(0) }),
+      ]);
+      fakeClaude('echo "Prompt is too long" >&2; exit 1');
+      const cap = makeIO();
+      runCli(["digest", "run", "SESS"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Failed SESS");
+      expect(cap.logs.join("\n")).toContain("digest drain will retry it");
+      expect(cap.exitCode).toBe(1);
+    });
+
+    test("digest run on an unknown id reports it like every other id-taking command", () => {
+      const cap = makeIO();
+      runCli(["digest", "run", "NOPE"], cap.io, () => memDb());
+
+      expect(cap.errs.join("\n")).toContain('No session matching "NOPE".');
+      expect(cap.exitCode).toBe(1);
+    });
+
+    test("digest drain summarizes the backlog and reports the counts", () => {
+      writeSession(env.projects, "-repo", "ONE", [
+        userMsg("ONE", "u1", "first thread", { timestamp: ts(0) }),
+      ]);
+      writeSession(env.projects, "-repo", "TWO", [
+        userMsg("TWO", "u2", "second thread", { timestamp: ts(1) }),
+      ]);
+      fakeClaude('echo "Did some work in cerebro. Keywords: work"');
+      const cap = makeIO();
+      runCli(["digest", "drain", "--limit", "2"], cap.io, seeded());
+
+      // The per-thread lines are streamed as each one finishes, before the run
+      // returns, so the reconciler's log shows progress instead of going quiet for
+      // minutes. Order matters: header, then one line per thread, then the summary.
+      expect(cap.logs[0]).toBe("Draining up to 2 stale thread(s): 2 to do.");
+      // Per thread: the breadcrumb naming size and model, then the outcome. The
+      // breadcrumb is what a wedged model call leaves behind.
+      expect(cap.logs[1]).toMatch(/^Summarizing \w+: \d+ bytes -> \S+$/);
+      expect(cap.logs[2]).toMatch(/^Summarized \w+: \d+ chars stored\.$/);
+      expect(cap.logs.at(-1)).toBe("Drain complete: 2 summarized, 0 failed.");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest drain says the backlog is clean when nothing is stale", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+      ]);
+      const cap = makeIO();
+      runCli(["digest", "drain"], cap.io, () => {
+        const db = openDb(":memory:");
+        runIndex(db);
+        writeSummary(db, "SESS", "A stored summary. Keywords: work");
+        return db;
+      });
+
+      expect(cap.logs.join("\n")).toContain("Nothing stale, the backlog is clean.");
+      expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest drain aborts and exits 1 when the model runner cannot be started", () => {
+      writeSession(env.projects, "-repo", "SESS", [
+        userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
+      ]);
+      process.env.CEREBRO_CLAUDE_BIN = join(binDir, "does-not-exist");
+      const cap = makeIO();
+      runCli(["digest", "drain"], cap.io, seeded());
+
+      expect(cap.logs.join("\n")).toContain("Drain aborted:");
+      expect(cap.exitCode).toBe(1);
+    });
   });
 });

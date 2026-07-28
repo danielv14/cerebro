@@ -1,6 +1,7 @@
 import { type DryRunResult, dryRunIndex, type IndexResult, runIndex } from "../indexer.ts";
 import { humanBytes } from "../render.ts";
-import type { CommandContext } from "./context.ts";
+import { flag, type OptionTable } from "./args.ts";
+import { defineCommand } from "./command.ts";
 
 // `index`: the one-line result of a real run.
 export const indexResult = (result: IndexResult): string[] => [
@@ -42,20 +43,21 @@ export const dryRunReport = (plan: DryRunResult): string[] => {
   return lines;
 };
 
+const options = {
+  full: flag(),
+  rebuild: flag(),
+  "dry-run": flag(),
+} satisfies OptionTable;
+
 // The `index` command: incremental by default; --full/--rebuild re-read everything
 // (dedup keeps it idempotent); --dry-run reports the plan without writing. Named
 // index-cmd.ts, not index.ts, so the file never doubles as a directory index import.
-export const indexCommand = ({ db, io, values }: CommandContext): void => {
-  if (values["dry-run"]) {
+export const indexCommand = defineCommand({
+  options,
+  run: ({ db, args }) => {
     // A rebuild reads exactly what --full reads; the dry run reports that plan.
-    for (const line of dryRunReport(dryRunIndex(db, values.full || values.rebuild))) {
-      io.log(line);
-    }
-    return;
-  }
-  if (values.rebuild) {
-    for (const line of rebuildResult(runIndex(db, false, true))) io.log(line);
-    return;
-  }
-  for (const line of indexResult(runIndex(db, values.full))) io.log(line);
-};
+    if (args["dry-run"]) return { lines: dryRunReport(dryRunIndex(db, args.full || args.rebuild)) };
+    if (args.rebuild) return { lines: rebuildResult(runIndex(db, false, true)) };
+    return { lines: indexResult(runIndex(db, args.full)) };
+  },
+});

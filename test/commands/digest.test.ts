@@ -53,7 +53,7 @@ describe("staleListing", () => {
       "deadbeef  2026-07-15 10:00   120 msgs  cerebro  [new activity since summary]",
       "    Third",
       "\n3 thread(s) need a summary. Summarize one:\n" +
-        '  cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>',
+        "  cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)",
     ]);
   });
 });

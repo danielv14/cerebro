@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cerebro: drain the digest backlog. Indexes, then summarizes up to CAP stale
-# threads per run through `claude -p`, writing each summary back.
+# cerebro: drain the digest backlog. Indexes, then hands up to CAP stale threads
+# to `cerebro digest drain`, which summarizes each one and writes it back.
 #
 # This is the reconciler that summarize-on-clear.sh assumes exists. The clear hook
 # only summarizes the one just-cleared session, so every session that ends without
@@ -14,7 +14,7 @@
 set -uo pipefail
 
 # launchd gives a bare environment. claude and cerebro are native binaries, but we
-# still pin a sane PATH so they (and mktemp/wc/etc) resolve.
+# still pin a sane PATH so both resolve: cerebro spawns claude by name.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 CEREBRO="${CEREBRO_BIN:-$HOME/.claude/cerebro/cerebro}"
@@ -52,62 +52,23 @@ fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 trap 'exit' INT TERM
 
-command -v claude >/dev/null 2>&1 || { log "claude not on PATH — skipping"; exit 0; }
-
 # Keep the archive fresh even between /clears: index synchronously first so newly
 # written sessions become eligible for summarizing on this same run.
 { date "+[stale-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# Newest-first list of stale thread ids, capped. --ids is the machine-readable
-# contract (one full id per line, no human formatting), so this never scrapes the
-# listing layout; empty output means nothing is stale.
-ids="$("$CEREBRO" digest stale --limit "$CAP" --ids 2>/dev/null)"
-[ -n "$ids" ] || { log "nothing stale, backlog clean"; exit 0; }
-
-count="$(printf '%s\n' "$ids" | grep -c .)"
-log "draining up to CAP=$CAP: $count thread(s) this run"
-
-done_n=0; failed=0
-while IFS= read -r sid; do
-  [ -n "$sid" ] || continue
-  tmp="$(mktemp)"; out="$(mktemp)"
-
-  # A failed or empty render must skip this thread: `digest model --bytes` always
-  # resolves a model, so without this check an empty transcript would be summarized
-  # as "(No substantive session content.)" and stored, permanently marking a thread
-  # with real content as summarized-and-fresh.
-  if ! "$CEREBRO" digest input "$sid" > "$tmp" || [ ! -s "$tmp" ]; then
-    log "$sid: digest input failed or empty — skipped, left for next run"
-    rm -f "$tmp" "$out"; failed=$((failed + 1)); continue
-  fi
-  # Tier on the transcript we just rendered (digest model --bytes) instead of
-  # having `digest model <id>` render the whole thread a second time.
-  bytes="$(wc -c < "$tmp" | tr -d ' ')"
-  model="$("$CEREBRO" digest model --bytes "$bytes")"
-  if [ -z "$model" ]; then
-    log "$sid: could not resolve a model — skipped"
-    rm -f "$tmp" "$out"; continue
-  fi
-  log "$sid: $bytes bytes -> $model"
-
-  # Mirror summarize-on-clear.sh: --no-session-persistence so this one-shot is not
-  # written into ~/.claude/projects and re-indexed as a bogus session. Only write
-  # the summary back on success + non-empty output (never store an error string).
-  claude -p --no-session-persistence --model "$model" "$("$CEREBRO" digest prompt)" < "$tmp" > "$out"
-  rc=$?
-  if [ "$rc" -eq 0 ] && [ -s "$out" ]; then
-    "$CEREBRO" digest write "$sid" --model "$model" < "$out"
-    done_n=$((done_n + 1))
-  else
-    log "$sid: summary failed (claude exit $rc, $(wc -c < "$out" | tr -d ' ') bytes) — left for next run"
-    failed=$((failed + 1))
-  fi
-  rm -f "$tmp" "$out"
-done <<< "$ids"
-
-log "run complete: $done_n summarized, $failed failed"
+# Drain the backlog. `cerebro digest drain` owns the per-thread sequence (render,
+# tier the model, call it, guard the output, store it), the newest-first ordering,
+# and "one failed thread must not abort the run". This script owns only the things
+# that belong to the shell: scheduling, the single-flight lock, PATH, and the log.
+# The loop, the temp files and the `claude` invocation that used to live here are
+# gone, along with the second copy of them in summarize-on-clear.sh.
+# Each line is stamped as it arrives, not just the first: drain streams a line per
+# thread as it completes, and a timestamp on every one is what makes a wedged
+# overnight run readable. `read` is line-buffered, so this keeps the streaming.
+"$CEREBRO" digest drain --limit "$CAP" 2>&1 |
+  while IFS= read -r line; do log "$line"; done
 
 # Housekeeping while we already hold the single-flight lock: merge the FTS
 # indexes' incremental b-trees, refresh planner stats, truncate the WAL.
-"$CEREBRO" maintain >> "$LOG" 2>&1 || true
+"$CEREBRO" maintain 2>&1 | while IFS= read -r line; do log "$line"; done
 exit 0

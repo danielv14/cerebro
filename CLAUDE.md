@@ -13,8 +13,9 @@ code.
   below). Dev deps are types only plus Biome (lint + format). Do not add native or
   network runtime deps.
 - **Valibot validates the untrusted I/O boundaries only**: the session JSONL events
-  and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the hook stdin
-  payload in `src/commands/relevant.ts` (`parseHookPayload`). Anything that comes out
+  and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the two hook
+  stdin payloads (`parseHookPayload` in `src/commands/relevant.ts`,
+  `parseSessionEndPayload` in `src/commands/digest.ts`). Anything that comes out
   of SQLite or is
   built internally (the `db.query(...).get/all(...) as X` rows, `FileMeta`,
   `ThreadRow`, and the other internal shapes) stays typed by interface
@@ -39,9 +40,13 @@ code.
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
   session-file discovery (`test/paths.test.ts`: ordering, tiebreak, subagent walk),
   git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance),
-  dry-run parity, CLI dispatch (`test/cli.test.ts`: arg validation + each command
-  via an injected db and capturing sink), the digest layer (staleness, model
-  tiering), and every query function. Add tests when you touch these.
+  dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option
+  tables, per-command rejection of foreign flags, and each command via an injected
+  db and capturing sink), option coercion (`test/commands/args.test.ts`), the
+  digest layer (staleness, model tiering) and its summarize pipeline
+  (`test/digest-run.test.ts`: every failure mode through a fake Summarizer, plus
+  the real adapter against a stand-in `claude` script), and every query function.
+  Add tests when you touch these.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`). The PATH symlink tracks the repo live.
 - **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook
@@ -63,6 +68,31 @@ code.
 
   `CEREBRO_CLAUDE_DIR` overrides the scanned `~/.claude` directory if you want a
   fixture set of session files.
+
+## How a command is shaped
+
+Every command is a `defineCommand({ options, run })` under `src/commands/`
+(`digest` is a `CommandGroup` of such commands, one per action). A command
+declares the flags it accepts as data (`src/commands/args.ts`) and its run step
+maps validated arguments to a `CommandOutput`. It never prints, never chooses
+between JSON and a listing, and cannot read a flag it did not declare.
+
+`runCli` owns the rest: parsing, rejecting a flag the command did not declare
+(this is why `cerebro sessions --keep 3` errors instead of being ignored),
+coercing and validating the declared ones, opening and closing the database, and
+rendering the result. A bad argument is a `CliError` thrown from wherever the rule
+lives; runCli turns it into one message plus exit 1.
+
+When adding a command: declare its options, return data, and add it to the
+`commands` map plus the pinned option table in `test/cli.test.ts`. When adding a
+flag to an existing command, declare it on that command only. Reach for a new
+option builder in `args.ts` rather than validating inside a run step.
+
+The `digest run` / `digest drain` pipeline (`src/digest/run.ts`) is the one place
+cerebro spawns a model. It sits behind the `Summarizer` seam: `claudeSummarizer`
+spawns the CLI, tests pass a fake. cerebro owns the prompt, the size tiering and
+the storage guard, and never summarizes on its own initiative; the hooks decide
+when. `CEREBRO_CLAUDE_BIN` overrides the binary.
 
 ## Invariants you must not break
 

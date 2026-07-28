@@ -1,6 +1,7 @@
 import { listThreads, type ThreadRow } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import { type CommandContext, dateOption, present } from "./context.ts";
+import { flag, isoDate, numeric, type OptionTable, text } from "./args.ts";
+import { defineCommand } from "./command.ts";
 
 // Line 1 of a `sessions` thread row: no leading indent, wall-clock time, the message
 // count, the project name, then resume and "[body deleted]" suffixes. The
@@ -31,21 +32,29 @@ export const sessionsListing = (threads: ThreadRow[]): string[] => {
   return lines;
 };
 
+// Same anchored-ISO-date shape as search --since, from the same validator, rather
+// than a second date syntax.
+const options = {
+  project: text(),
+  since: isoDate(),
+  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  json: flag(),
+} satisfies OptionTable;
+
 // The `sessions` command: list logical threads, newest first, optionally filtered
 // by --project and --since.
-export const sessionsCommand = (ctx: CommandContext): void => {
-  const { db, values, limit, fail } = ctx;
-  // Same anchored-ISO-date shape as search --since, from the same validator, rather
-  // than a second date syntax.
-  const since = dateOption(values.since, "since", fail);
-  if (!since.ok) return;
-  const threads = listThreads(db, {
-    project: values.project,
-    since: since.value,
-    limit: limit ?? 30,
-  });
-  present(ctx, threads, {
-    lines: sessionsListing,
-    empty: "No sessions indexed yet. Run: cerebro index",
-  });
-};
+export const sessionsCommand = defineCommand({
+  options,
+  run: ({ db, args }) => {
+    const threads = listThreads(db, {
+      project: args.project,
+      since: args.since,
+      limit: args.limit ?? 30,
+    });
+    return {
+      json: threads,
+      lines: threads.length > 0 ? sessionsListing(threads) : [],
+      empty: "No sessions indexed yet. Run: cerebro index",
+    };
+  },
+});
