@@ -65,5 +65,7 @@ launchctl kickstart -k gui/$(id -u)/com.you.cerebro.digest-stale                
 launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-stale.plist   # unload
 ```
 
-Progress lands in `digest.log` (lines prefixed `[stale ...]`). A plain `cron` entry that
-runs the same script works just as well on Linux.
+Progress lands in `digest.log`, one `[stale ...]`-stamped line per thread as it
+completes (the drain streams them rather than reporting at the end, so a wedged model
+call is visible while it is happening). A plain `cron` entry that runs the same script
+works just as well on Linux.

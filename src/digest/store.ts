@@ -36,17 +36,26 @@ export const rejectSummaryReason = (text: string): string | null => {
 };
 
 // Store a summary for the thread that owns `sessionId`. Upserts on the thread root,
-// stamping the current prompt version and the thread's current last_ts (so later
+// stamping the current prompt version and the last_ts the summary covers (so later
 // activity makes it stale). The FTS triggers keep summaries_fts in sync. Returns
 // the root id the summary was attributed to.
+//
+// `coversLastTs` is the thread's last_ts *as it was when the transcript was
+// rendered*. Pass it whenever the summary was produced from a snapshot taken
+// earlier: a model call takes minutes, and messages indexed in the meantime would
+// otherwise be stamped as covered by a summary that never saw them, leaving them
+// invisible to the staleness predicate until the prompt version is bumped. Omit it
+// and the thread's current last_ts is used, which is right for `digest write`,
+// where the caller just produced the summary from what is there now.
 export const writeSummary = (
   db: Database,
   sessionId: string,
   summary: string,
   model: string | null = null,
+  coversLastTs?: string | null,
 ): string => {
   const root = rootOf(db, sessionId);
-  const sourceLastTs = threadLastTs(db, root);
+  const sourceLastTs = coversLastTs === undefined ? threadLastTs(db, root) : coversLastTs;
 
   db.query(
     `INSERT INTO summaries (root_session_id, summary, prompt_version, model, summarized_at, source_last_ts)

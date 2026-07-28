@@ -302,11 +302,15 @@ CI runs `biome ci` on every PR alongside typecheck, tests, and a compile build.
 
 ```
 src/
-  cli.ts        parseArgs + the command dispatch table + db lifetime
+  cli.ts        parseArgs + the dispatch table + option checking + db lifetime
+                + rendering (a command returns data; runCli prints it)
   help.ts       the HELP text
-  commands/     one module per command (handler + its output formatting)
-    context.ts  CliIO / CliValues / CommandContext seam + resolveOrFail
-  db.ts         openDb() + schema/migrations
+  commands/     one module per command: its declared options, its run step, and
+                its output formatting
+    args.ts     options as data (flag/text/numeric/isoDate/choice/range) + CliError
+    command.ts  defineCommand, CommandInput/CommandOutput, the group shape
+    helpers.ts  readStdin() + resolveOrThrow()
+  db.ts         openDb() + schema/migrations + dbFileSize()
   paths.ts      session-file discovery (top-level + subagents)
   jsonl.ts      parseLine() + classify() + flattenContent()
   git.ts        gitInfo(cwd) with cache
@@ -315,7 +319,8 @@ src/
   query.ts      search(), listThreads(), recentThreads(), relevantThreads(), ...
   render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
   digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads()
-                (stale.ts), writeSummary() + searchSummaries() (store.ts)
+                (stale.ts), writeSummary() + searchSummaries() (store.ts),
+                the summarize pipeline + the Summarizer seam (run.ts)
   digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
                 digest-transcript skipping on it)
   backup.ts     runBackup() (VACUUM INTO snapshots + pruning)
@@ -326,6 +331,6 @@ test/
 
 Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
 pure-JS dependencies: `stopword` filters filler words out of relevance queries, and
-`valibot` validates the untrusted I/O boundaries (the session JSONL and the hook
-stdin payload). FTS5 external-content tables over `messages` and `summaries` provide
+`valibot` validates the untrusted I/O boundaries (the session JSONL and the two hook
+stdin payloads). FTS5 external-content tables over `messages` and `summaries` provide
 ranked search.

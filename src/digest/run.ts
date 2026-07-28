@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { rootOf, threadMessages } from "../thread.ts";
+import { rootOf, threadLastTs, threadMessages } from "../thread.ts";
 import { buildDigestInput, DIGEST_PROMPT, pickDigestModel } from "./prompt.ts";
 import { staleThreads } from "./stale.ts";
 import { rejectSummaryReason, writeSummary } from "./store.ts";
@@ -51,10 +51,14 @@ export const claudeSummarizer: Summarizer = ({ input, model, prompt }) => {
     const text = proc.stdout.toString().trim();
     if (proc.exitCode !== 0) {
       const firstErrorLine = proc.stderr.toString().trim().split("\n")[0] ?? "";
+      // A killed child (OOM, a teardown SIGTERM) has a null exitCode and a signal
+      // instead, and "exited null" tells the operator nothing.
+      const how =
+        proc.exitCode === null ? `was killed by ${proc.signalCode}` : `exited ${proc.exitCode}`;
       return {
         ok: false,
         text,
-        detail: `${bin} exited ${proc.exitCode}${firstErrorLine ? `: ${firstErrorLine}` : ""}`,
+        detail: `${bin} ${how}${firstErrorLine ? `: ${firstErrorLine}` : ""}`,
       };
     }
     if (!text) return { ok: false, text, detail: `${bin} produced no output` };
@@ -83,24 +87,39 @@ export interface DigestOutcome {
   fatal?: boolean;
 }
 
+export interface DigestOptions {
+  summarize?: Summarizer;
+  // Called once the transcript is rendered and the model chosen, before the call
+  // is made. The breadcrumb the bash pipeline used to log: without it a wedged
+  // model call leaves no trace of which thread, how big, or which model.
+  onStart?: (about: { root: string; bytes: number; model: string }) => void;
+}
+
 // Summarize one thread. Never throws for an expected failure: the caller (a hook,
 // a drain) needs the outcome, not an exception.
 export const runDigest = (
   db: Database,
   sessionId: string,
-  summarize: Summarizer = claudeSummarizer,
+  opts: DigestOptions = {},
 ): DigestOutcome => {
+  const summarize = opts.summarize ?? claudeSummarizer;
   const root = rootOf(db, sessionId);
   const input = buildDigestInput(threadMessages(db, sessionId));
+  // Captured with the transcript, not after the model returns: the call takes
+  // minutes, and anything indexed during it must stay stale rather than be stamped
+  // as covered by a summary that never saw it.
+  const coversLastTs = threadLastTs(db, root);
   // An empty render must never be summarized: the prompt would dutifully answer
   // "(No substantive session content.)" and storing that would permanently mark a
-  // thread as summarized-and-fresh.
-  if (input.length === 0) return { status: "skipped", root, reason: "empty transcript" };
+  // thread as summarized-and-fresh. Nothing retries this one, and nothing needs
+  // to: the `threads` view excludes zero-message threads from the stale list.
+  if (input.length === 0) return { status: "skipped", root, reason: "nothing to summarize" };
 
   // Measured where the transcript is produced, so the tiering never needs a second
   // render (which is what `digest model --bytes` existed to avoid in the hooks).
   const bytes = Buffer.byteLength(input, "utf8");
   const model = pickDigestModel(bytes);
+  opts.onStart?.({ root, bytes, model });
 
   const result = summarize({ input, model, prompt: DIGEST_PROMPT });
   if (!result.ok) {
@@ -113,7 +132,7 @@ export const runDigest = (
     return { status: "failed", root, reason: `rejected, ${rejected}`, model, bytes };
   }
 
-  writeSummary(db, sessionId, result.text, model);
+  writeSummary(db, sessionId, result.text, model, coversLastTs);
   return { status: "summarized", root, model, bytes, chars: result.text.length };
 };
 
@@ -121,6 +140,9 @@ export interface DrainResult {
   outcomes: DigestOutcome[];
   summarized: number;
   failed: number;
+  // Threads with nothing to summarize. Counted apart from failures: a skip is not
+  // something that went wrong, and reporting it as a failure misleads the operator.
+  skipped: number;
   // Set when a fatal outcome stopped the run early (the model runner is missing).
   aborted?: string;
 }
@@ -129,6 +151,8 @@ export interface DrainOptions {
   summarize?: Summarizer;
   // Called once before the first thread, with how many will be attempted.
   onStart?: (count: number) => void;
+  // Called for each thread once its model is chosen, before the call is made.
+  onThreadStart?: (about: { root: string; bytes: number; model: string }) => void;
   // Called as each thread finishes, so a caller can report progress during a run
   // that takes minutes rather than only after it.
   onOutcome?: (outcome: DigestOutcome) => void;
@@ -140,15 +164,27 @@ export interface DrainOptions {
 // (no model runner at all) does abort, since every remaining thread would fail the
 // same way.
 export const runDrain = (db: Database, limit: number, opts: DrainOptions = {}): DrainResult => {
-  const summarize = opts.summarize ?? claudeSummarizer;
-  const result: DrainResult = { outcomes: [], summarized: 0, failed: 0 };
+  const result: DrainResult = { outcomes: [], summarized: 0, failed: 0, skipped: 0 };
   const threads = staleThreads(db, limit);
   if (threads.length > 0) opts.onStart?.(threads.length);
   for (const thread of threads) {
-    const outcome = runDigest(db, thread.id, summarize);
+    // One thread must never take the run down with it. The bash loop got this for
+    // free (each iteration was its own command); here an unexpected throw from any
+    // step -- a SQL error, an unreadable row -- would otherwise abandon the
+    // remaining threads and the closing report.
+    let outcome: DigestOutcome;
+    try {
+      outcome = runDigest(db, thread.id, {
+        summarize: opts.summarize,
+        onStart: opts.onThreadStart,
+      });
+    } catch (error) {
+      outcome = { status: "failed", root: thread.id, reason: (error as Error).message };
+    }
     opts.onOutcome?.(outcome);
     result.outcomes.push(outcome);
     if (outcome.status === "summarized") result.summarized++;
+    else if (outcome.status === "skipped") result.skipped++;
     else result.failed++;
     if (outcome.fatal) {
       result.aborted = outcome.reason;

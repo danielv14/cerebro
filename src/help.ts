@@ -77,7 +77,8 @@ Options:
                   (skips re-rendering the transcript; used by the hooks)
   --json          search/sessions/recent/relevant/show/stats/doctor/version/
                   digest stale|search|show: emit the rows as JSON instead of the
-                  human listing
+                  human listing. A command that does not list it here rejects it,
+                  as it does any other flag that is not its own.
   -h, --help      Show this help
 
 Env:

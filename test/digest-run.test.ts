@@ -15,6 +15,7 @@ import {
   staleThreads,
 } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
+import { threadLastTs } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -60,7 +61,7 @@ describe("runDigest", () => {
 
   test("stores the summary and reports the size and model it used", () => {
     const { summarize, calls } = fakeSummarizer();
-    const outcome = runDigest(db, "SESS", summarize);
+    const outcome = runDigest(db, "SESS", { summarize });
 
     expect(outcome.status).toBe("summarized");
     expect(outcome.root).toBe("SESS");
@@ -85,17 +86,17 @@ describe("runDigest", () => {
       "INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('EMPTY', 'EMPTY', 0)",
     );
     const { summarize, calls } = fakeSummarizer();
-    const outcome = runDigest(db, "EMPTY", summarize);
+    const outcome = runDigest(db, "EMPTY", { summarize });
 
     expect(outcome.status).toBe("skipped");
-    expect(outcome.reason).toBe("empty transcript");
+    expect(outcome.reason).toBe("nothing to summarize");
     expect(calls).toEqual([]); // the model is never called
     expect(getSummary(db, "EMPTY")).toBeNull();
   });
 
   test("a non-zero exit from the model stores nothing", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
-    const outcome = runDigest(db, "SESS", summarize);
+    const outcome = runDigest(db, "SESS", { summarize });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.reason).toBe("claude exited 1");
@@ -108,14 +109,14 @@ describe("runDigest", () => {
       text: "",
       detail: "claude produced no output",
     });
-    expect(runDigest(db, "SESS", summarize).status).toBe("failed");
+    expect(runDigest(db, "SESS", { summarize }).status).toBe("failed");
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
   test("output that looks like an error is rejected by the storage guard", () => {
     // The incident this guard exists for: an API failure stored as a summary.
     const { summarize } = fakeSummarizer({ text: "Prompt is too long: 213000 tokens" });
-    const outcome = runDigest(db, "SESS", summarize);
+    const outcome = runDigest(db, "SESS", { summarize });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.reason).toContain("rejected");
@@ -124,7 +125,7 @@ describe("runDigest", () => {
 
   test("a fragment too short to be a summary is rejected", () => {
     const { summarize } = fakeSummarizer({ text: "ok" });
-    expect(runDigest(db, "SESS", summarize).status).toBe("failed");
+    expect(runDigest(db, "SESS", { summarize }).status).toBe("failed");
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
@@ -135,15 +136,47 @@ describe("runDigest", () => {
       detail: "could not run claude: not found",
       fatal: true,
     });
-    const outcome = runDigest(db, "SESS", summarize);
+    const outcome = runDigest(db, "SESS", { summarize });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.fatal).toBe(true);
   });
 
+  test("stamps the last_ts the transcript covered, not the one at store time", () => {
+    // The model call takes minutes. Anything indexed while it runs must stay stale:
+    // stamping the thread's *current* last_ts would mark messages the summary never
+    // saw as covered, and the staleness predicate would never surface them again.
+    const beforeCall = threadLastTs(db, "SESS");
+    const summarize: Summarizer = () => {
+      // Stand in for "a new message landed during the call".
+      db.run(
+        `INSERT INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
+         VALUES ('u2', 'SESS', 'a1', '2099-01-01T00:00:00.000Z', 'user', 'later work', 0)`,
+      );
+      db.run("UPDATE sessions SET last_ts = '2099-01-01T00:00:00.000Z' WHERE session_id = 'SESS'");
+      return { ok: true, text: GOOD_SUMMARY, detail: "" };
+    };
+
+    expect(runDigest(db, "SESS", { summarize }).status).toBe("summarized");
+    expect(getSummary(db, "SESS")?.source_last_ts).toBe(beforeCall);
+    // ...so the thread is stale again immediately, and the new message gets covered.
+    expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
+  });
+
+  test("reports the thread and the model before the call, for a hung one", () => {
+    const started: { root: string; bytes: number; model: string }[] = [];
+    const { summarize } = fakeSummarizer();
+    runDigest(db, "SESS", { summarize, onStart: (about) => started.push(about) });
+
+    expect(started.length).toBe(1);
+    expect(started[0]!.root).toBe("SESS");
+    expect(started[0]!.bytes).toBeGreaterThan(0);
+    expect(started[0]!.model).toBeTruthy();
+  });
+
   test("every failure leaves the thread stale so a later run retries it", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
-    runDigest(db, "SESS", summarize);
+    runDigest(db, "SESS", { summarize });
     expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
   });
 });
@@ -258,6 +291,38 @@ describe("runDrain", () => {
     expect(result.outcomes.length).toBe(3);
     // The failed one is still stale, the other two are not.
     expect(staleThreads(db, 10).length).toBe(1);
+  });
+
+  test("an unexpected throw takes down one thread, not the run", () => {
+    // The bash loop got per-thread isolation for free. Here a SQL error or any
+    // other surprise inside one thread must not abandon the rest of the batch or
+    // the closing report.
+    let call = 0;
+    const summarize: Summarizer = () => {
+      call++;
+      if (call === 1) throw new Error("something unexpected");
+      return { ok: true, text: GOOD_SUMMARY, detail: "" };
+    };
+    const result = runDrain(db, 8, { summarize });
+
+    expect(result.outcomes.length).toBe(3);
+    expect(result.summarized).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0]!.reason).toContain("something unexpected");
+  });
+
+  test("a skipped thread is counted apart from a failure", () => {
+    // A skip is not a model failure, and digest.log is the only signal for "is the
+    // model broken?".
+    db.run(
+      "INSERT INTO sessions (session_id, root_session_id, msg_count, last_ts) VALUES ('EMPTY', 'EMPTY', 0, '2026-01-01T00:00:00Z')",
+    );
+    const outcome = runDigest(db, "EMPTY", { summarize: fakeSummarizer().summarize });
+    expect(outcome.status).toBe("skipped");
+
+    const result = runDrain(db, 8, { summarize: fakeSummarizer().summarize });
+    expect(result.failed).toBe(0);
+    expect(result.skipped).toBe(0); // the threads view keeps empty threads out entirely
   });
 
   test("aborts the run when the model runner cannot be started at all", () => {

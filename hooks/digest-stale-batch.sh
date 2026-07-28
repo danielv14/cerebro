@@ -62,9 +62,13 @@ trap 'exit' INT TERM
 # that belong to the shell: scheduling, the single-flight lock, PATH, and the log.
 # The loop, the temp files and the `claude` invocation that used to live here are
 # gone, along with the second copy of them in summarize-on-clear.sh.
-{ date "+[stale %F %T]"; "$CEREBRO" digest drain --limit "$CAP"; } >> "$LOG" 2>&1
+# Each line is stamped as it arrives, not just the first: drain streams a line per
+# thread as it completes, and a timestamp on every one is what makes a wedged
+# overnight run readable. `read` is line-buffered, so this keeps the streaming.
+"$CEREBRO" digest drain --limit "$CAP" 2>&1 |
+  while IFS= read -r line; do log "$line"; done
 
 # Housekeeping while we already hold the single-flight lock: merge the FTS
 # indexes' incremental b-trees, refresh planner stats, truncate the WAL.
-"$CEREBRO" maintain >> "$LOG" 2>&1 || true
+"$CEREBRO" maintain 2>&1 | while IFS= read -r line; do log "$line"; done
 exit 0

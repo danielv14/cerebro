@@ -29,14 +29,18 @@ payload="$(cat)"
 sleep 0.5
 { date "+[clear-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# Detached summary: nohup so it outlives the /clear teardown. The payload is piped
-# to `digest run --stdin`, which pulls the session id out of it with a validated
-# JSON boundary. This script no longer sed-scrapes an id out of that JSON, and no
-# longer renders, measures, tiers, or guards anything itself.
-printf '%s' "$payload" | nohup bash -c '
-  cerebro_bin="$1"; log="$2"
-  { date "+[digest %F %T]"; "$cerebro_bin" digest run --stdin; } >> "$log/digest.log" 2>&1
-' _ "$CEREBRO" "$LOG_DIR" >> "$LOG_DIR/digest.log" 2>&1 &
+# Detached summary: nohup so it outlives the /clear teardown. The payload travels as
+# an argument and is piped to `digest run --stdin` *inside* the detached child, so no
+# foreground process has to survive teardown for the id to arrive. cerebro pulls the
+# session id out of that JSON at a validated boundary; this script no longer
+# sed-scrapes it, and no longer renders, measures, tiers, or guards anything.
+nohup bash -c '
+  cerebro_bin="$1"; log="$2"; payload="$3"
+  {
+    date "+[digest %F %T]"
+    printf "%s" "$payload" | "$cerebro_bin" digest run --stdin
+  } >> "$log/digest.log" 2>&1
+' _ "$CEREBRO" "$LOG_DIR" "$payload" >> "$LOG_DIR/digest.log" 2>&1 </dev/null &
 
 disown 2>/dev/null || true
 exit 0

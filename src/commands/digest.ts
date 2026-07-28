@@ -92,16 +92,23 @@ export const summarySaved = (root: string, chars: number): string =>
 // names the reason and says the thread is not lost.
 export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   const id = shortId(outcome.root);
-  const size = outcome.bytes === undefined ? "" : ` ${outcome.bytes} bytes ->`;
   switch (outcome.status) {
     case "summarized":
-      return `Summarized ${id}:${size} ${outcome.model}, ${outcome.chars} chars.`;
+      return `Summarized ${id}: ${outcome.chars} chars stored.`;
     case "skipped":
-      return `Skipped ${id}: ${outcome.reason}; digest stale will retry it.`;
+      // No retry promise here: the only way to skip is an empty transcript, and the
+      // `threads` view keeps zero-message threads out of the stale list entirely.
+      return `Skipped ${id}: ${outcome.reason}.`;
     default:
-      return `Failed ${id}:${size} ${outcome.reason}; left unsummarized, digest stale will retry it.`;
+      return `Failed ${id}: ${outcome.reason}; left unsummarized, digest drain will retry it.`;
   }
 };
+
+// The breadcrumb printed before the model is called, naming the thread, the size
+// and the model. A wedged call leaves this line behind, which is the whole point:
+// the bash pipeline logged it and losing it made a hung run unreadable.
+export const digestStartLine = (about: { root: string; bytes: number; model: string }): string =>
+  `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
 
 // What a `digest drain` achieved, printed after the per-thread lines the run
 // streamed as it went. An aborted run says so on its own line, because
@@ -110,7 +117,8 @@ export const drainSummary = (result: DrainResult): string[] => {
   if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
   const lines: string[] = [];
   if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
-  lines.push(`Drain complete: ${result.summarized} summarized, ${result.failed} failed.`);
+  const skipped = result.skipped > 0 ? `, ${result.skipped} skipped` : "";
+  lines.push(`Drain complete: ${result.summarized} summarized, ${result.failed} failed${skipped}.`);
   return lines;
 };
 
@@ -171,14 +179,17 @@ export const digestCommand: CommandGroup = {
 
     run: defineCommand({
       options: { stdin: flag() } satisfies OptionTable,
-      run: ({ db, args, rest }) => {
+      run: ({ db, args, rest, progress }) => {
         // --stdin takes the id from the SessionEnd payload, so the clear hook needs
         // neither jq nor a sed over untrusted JSON.
         const idArg = args.stdin ? parseSessionEndPayload(readStdin()) : rest[0];
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
-        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"));
+        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+          // Printed before the model call, so a hung call still names the thread.
+          onStart: (about) => progress(digestStartLine(about)),
+        });
         return {
           lines: [digestOutcomeLine(outcome)],
           // Exit 1 whenever no summary was stored, so a manual invocation is
@@ -196,6 +207,7 @@ export const digestCommand: CommandGroup = {
         // calls and the reconciler's only witness is digest.log.
         const result = runDrain(db, cap, {
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
+          onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
         });
         return {

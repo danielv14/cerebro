@@ -16,10 +16,10 @@ default 200k window and a giant thread still fails with "Prompt is too long". ce
 owns the tiering: `digest run` and `digest drain` measure the transcript where they
 render it and tier on that, and `cerebro digest model` exposes the same decision for
 manual inspection (`--bytes <n>` tiers an already-measured size, `<id>` renders and
-measures). It decides by the rendered
-transcript's byte size (`cerebro digest input` is the size-bounded transcript; see
-"Curated summaries" in the [README](../README.md)), and `cerebro digest input`
-water-fill-caps anything large enough to risk overflowing even a 1M context. The
+measures). The decision is made on the rendered transcript's byte size (the same
+size-bounded render `cerebro digest input` prints; see "Curated summaries" in the
+[README](../README.md)), which water-fill-caps anything large enough to risk
+overflowing even a 1M context. The
 threshold is derived from a token budget, not the raw window: `claude -p` prepends its
 own system prompt and tool definitions (~77k tokens measured), so the default reserves
 90k tokens of the small model's 200k window and treats the rest (≈330k bytes at 3

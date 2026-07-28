@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { type CliIO, commands, runCli } from "../src/cli.ts";
+import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
 import { isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
@@ -126,9 +126,14 @@ describe("option declarations", () => {
 
   test("a flag name shared by several commands agrees on its kind everywhere", () => {
     // The parser needs one table up front, so two commands declaring --full as a
-    // boolean and a string would silently make one of them wrong.
-    const kinds = new Map<string, string>();
-    for (const [name, node] of commands) {
+    // boolean and a string would silently make one of them wrong. Seeded with the
+    // globals because parserOptions adds those first and first declaration wins: a
+    // command redeclaring --db as a flag would be parsed as a string forever, and
+    // read back as absent on every invocation.
+    const kinds = new Map<string, string>(
+      Object.entries(GLOBAL_OPTIONS).map(([option, spec]) => [option, spec.kind]),
+    );
+    for (const [, node] of commands) {
       const tables = isGroup(node)
         ? Object.values(node.subcommands).map((sub) => sub.options)
         : [node.options];
@@ -139,7 +144,6 @@ describe("option declarations", () => {
           else kinds.set(option, spec.kind);
         }
       }
-      expect(name).toBeTruthy();
     }
   });
 });
@@ -243,7 +247,7 @@ describe("runCli", () => {
     expect(help.exitCode).toBe(0);
   });
 
-  test("show without an id fails via the shared resolveOrFail", () => {
+  test("show without an id fails via the shared resolveOrThrow", () => {
     const cap = makeIO();
     runCli(["show"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("show: missing <session-id>");
@@ -359,6 +363,34 @@ describe("runCli", () => {
     runCli(["search", "zzyzx", "--json"], cap.io, seeded());
     expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("--json emits an empty array rather than the empty-state prose, for every reader", () => {
+    // This is the contract the deleted `present` helper used to pin: in JSON mode a
+    // reader emits [] and never its human empty state. It lives in runCli's emit now.
+    for (const args of [
+      ["sessions", "--json"],
+      ["search", "zzyzx", "--json"],
+      ["digest", "search", "zzyzx", "--json"],
+      ["recent", "--cwd", "/nowhere", "--json"],
+      ["relevant", "zzzqqq", "--json"],
+    ]) {
+      const cap = makeIO();
+      runCli(args, cap.io, () => memDb());
+      expect(JSON.parse(cap.logs.join("\n"))).toEqual([]);
+      expect(cap.errs).toEqual([]);
+      expect(cap.exitCode).toBe(0);
+    }
+  });
+
+  test("the human empty state is printed instead, once, when JSON is not asked for", () => {
+    const cap = makeIO();
+    runCli(["sessions"], cap.io, () => memDb());
+    expect(cap.logs).toEqual(["No sessions indexed yet. Run: cerebro index"]);
+
+    const digest = makeIO();
+    runCli(["digest", "search", "zzyzx"], digest.io, () => memDb());
+    expect(digest.logs).toEqual(["No matching summaries."]);
   });
 
   test("show --json returns the thread's messages (#54)", () => {
@@ -727,6 +759,9 @@ describe("runCli", () => {
     beforeEach(() => {
       binDir = fs.mkdtempSync(join(os.tmpdir(), "cerebro-cli-claude-"));
       savedBin = process.env.CEREBRO_CLAUDE_BIN;
+      // Point at nothing by default, so a test that forgets fakeClaude() fails
+      // loudly instead of spawning the developer's real claude CLI.
+      process.env.CEREBRO_CLAUDE_BIN = join(binDir, "no-such-binary");
     });
     afterEach(() => {
       if (savedBin === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
@@ -755,7 +790,7 @@ describe("runCli", () => {
       runCli(["digest", "run", "SESS"], cap.io, seeded());
 
       expect(cap.logs.join("\n")).toContain("Failed SESS");
-      expect(cap.logs.join("\n")).toContain("digest stale will retry it");
+      expect(cap.logs.join("\n")).toContain("digest drain will retry it");
       expect(cap.exitCode).toBe(1);
     });
 
@@ -782,7 +817,10 @@ describe("runCli", () => {
       // returns, so the reconciler's log shows progress instead of going quiet for
       // minutes. Order matters: header, then one line per thread, then the summary.
       expect(cap.logs[0]).toBe("Draining up to 2 stale thread(s): 2 to do.");
-      expect(cap.logs.slice(1, 3).every((line) => line.startsWith("Summarized "))).toBe(true);
+      // Per thread: the breadcrumb naming size and model, then the outcome. The
+      // breadcrumb is what a wedged model call leaves behind.
+      expect(cap.logs[1]).toMatch(/^Summarizing \w+: \d+ bytes -> \S+$/);
+      expect(cap.logs[2]).toMatch(/^Summarized \w+: \d+ chars stored\.$/);
       expect(cap.logs.at(-1)).toBe("Drain complete: 2 summarized, 0 failed.");
       expect(cap.exitCode).toBe(0);
     });
