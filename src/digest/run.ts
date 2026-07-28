@@ -125,19 +125,28 @@ export interface DrainResult {
   aborted?: string;
 }
 
+export interface DrainOptions {
+  summarize?: Summarizer;
+  // Called once before the first thread, with how many will be attempted.
+  onStart?: (count: number) => void;
+  // Called as each thread finishes, so a caller can report progress during a run
+  // that takes minutes rather than only after it.
+  onOutcome?: (outcome: DigestOutcome) => void;
+}
+
 // Drain the digest backlog: up to `limit` stale threads, newest first, because a
 // recent thread is the one most likely to be recalled. One thread failing must not
 // abort the run, so failures are counted and the loop continues; a fatal outcome
 // (no model runner at all) does abort, since every remaining thread would fail the
 // same way.
-export const runDrain = (
-  db: Database,
-  limit: number,
-  summarize: Summarizer = claudeSummarizer,
-): DrainResult => {
+export const runDrain = (db: Database, limit: number, opts: DrainOptions = {}): DrainResult => {
+  const summarize = opts.summarize ?? claudeSummarizer;
   const result: DrainResult = { outcomes: [], summarized: 0, failed: 0 };
-  for (const thread of staleThreads(db, limit)) {
+  const threads = staleThreads(db, limit);
+  if (threads.length > 0) opts.onStart?.(threads.length);
+  for (const thread of threads) {
     const outcome = runDigest(db, thread.id, summarize);
+    opts.onOutcome?.(outcome);
     result.outcomes.push(outcome);
     if (outcome.status === "summarized") result.summarized++;
     else result.failed++;

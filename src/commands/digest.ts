@@ -103,12 +103,12 @@ export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   }
 };
 
-// `digest drain`: the per-thread lines, then what the run achieved. An aborted run
-// says so on its own line, because "0 summarized" alone reads like a clean backlog.
-export const drainReport = (result: DrainResult, limit: number): string[] => {
+// What a `digest drain` achieved, printed after the per-thread lines the run
+// streamed as it went. An aborted run says so on its own line, because
+// "0 summarized" alone reads like a clean backlog.
+export const drainSummary = (result: DrainResult): string[] => {
   if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
-  const lines = [`Draining up to ${limit} stale thread(s).`];
-  for (const outcome of result.outcomes) lines.push(digestOutcomeLine(outcome));
+  const lines: string[] = [];
   if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
   lines.push(`Drain complete: ${result.summarized} summarized, ${result.failed} failed.`);
   return lines;
@@ -190,11 +190,16 @@ export const digestCommand: CommandGroup = {
 
     drain: defineCommand({
       options: { limit: limitOption } satisfies OptionTable,
-      run: ({ db, args }) => {
+      run: ({ db, args, progress }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
-        const result = runDrain(db, cap);
+        // Reported per thread as it completes: a drain makes up to `cap` model
+        // calls and the reconciler's only witness is digest.log.
+        const result = runDrain(db, cap, {
+          onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
+          onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
+        });
         return {
-          lines: drainReport(result, cap),
+          lines: drainSummary(result),
           // Per-thread failures are normal and leave the thread stale for next time;
           // only a run that could not proceed at all is an error.
           exitCode: result.aborted ? 1 : 0,

@@ -14,6 +14,12 @@ export interface CommandInput<A> {
   // a command never indexes past its own arguments.
   rest: string[];
   dbPath: string;
+  // Emit a line *now*, before the command returns. This is not a second output
+  // channel for results: it exists because `digest drain` makes up to N model
+  // calls over several minutes and its only witness is a log file someone tails.
+  // Buffering those lines until the end would make a hung call indistinguishable
+  // from a slow one. Everything else returns its lines and ignores this.
+  progress: (line: string) => void;
 }
 
 export interface CommandOutput {
@@ -42,7 +48,7 @@ export interface CommandOutput {
 // table; this is the one place the connection is cast away.
 export interface Command {
   options: OptionTable;
-  run: (input: CommandInput<Record<string, never>>) => CommandOutput;
+  run: (input: CommandInput<Record<string, unknown>>) => CommandOutput;
   // `version` answers before the database is opened: doctor's drift check spawns
   // the deployed binary's `version`, and that answer must not depend on whether
   // its archive happens to be readable.

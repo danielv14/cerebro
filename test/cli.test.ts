@@ -778,9 +778,12 @@ describe("runCli", () => {
       const cap = makeIO();
       runCli(["digest", "drain", "--limit", "2"], cap.io, seeded());
 
-      const out = cap.logs.join("\n");
-      expect(out).toContain("Draining up to 2 stale thread(s).");
-      expect(out).toContain("Drain complete: 2 summarized, 0 failed.");
+      // The per-thread lines are streamed as each one finishes, before the run
+      // returns, so the reconciler's log shows progress instead of going quiet for
+      // minutes. Order matters: header, then one line per thread, then the summary.
+      expect(cap.logs[0]).toBe("Draining up to 2 stale thread(s): 2 to do.");
+      expect(cap.logs.slice(1, 3).every((line) => line.startsWith("Summarized "))).toBe(true);
+      expect(cap.logs.at(-1)).toBe("Drain complete: 2 summarized, 0 failed.");
       expect(cap.exitCode).toBe(0);
     });
 

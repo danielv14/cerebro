@@ -226,8 +226,8 @@ describe("runDrain", () => {
 
   test("an empty backlog does no work", () => {
     const { summarize, calls } = fakeSummarizer();
-    runDrain(db, 8, summarize); // first pass summarizes everything
-    const second = runDrain(db, 8, summarize);
+    runDrain(db, 8, { summarize }); // first pass summarizes everything
+    const second = runDrain(db, 8, { summarize });
 
     expect(second.outcomes).toEqual([]);
     expect(second.summarized).toBe(0);
@@ -236,7 +236,7 @@ describe("runDrain", () => {
 
   test("stops at the limit and leaves the rest for the next run", () => {
     const { summarize } = fakeSummarizer();
-    const result = runDrain(db, 2, summarize);
+    const result = runDrain(db, 2, { summarize });
 
     expect(result.summarized).toBe(2);
     expect(result.outcomes.length).toBe(2);
@@ -251,7 +251,7 @@ describe("runDrain", () => {
         ? { ok: false, text: "", detail: "claude exited 1" }
         : { ok: true, text: GOOD_SUMMARY, detail: "" };
     };
-    const result = runDrain(db, 8, summarize);
+    const result = runDrain(db, 8, { summarize });
 
     expect(result.summarized).toBe(2);
     expect(result.failed).toBe(1);
@@ -267,7 +267,7 @@ describe("runDrain", () => {
       detail: "could not run claude: not found",
       fatal: true,
     });
-    const result = runDrain(db, 8, summarize);
+    const result = runDrain(db, 8, { summarize });
 
     expect(result.aborted).toContain("could not run claude");
     expect(calls.length).toBe(1); // no point trying the other two

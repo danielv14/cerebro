@@ -187,9 +187,9 @@ export const runCli = (
   }
 
   // Coerce and validate this command's own options, once, here.
-  let commandArgs: Record<string, never>;
+  let commandArgs: Record<string, unknown>;
   try {
-    commandArgs = readOptions(command.options, values) as Record<string, never>;
+    commandArgs = readOptions(command.options, values);
   } catch (error) {
     fail((error as Error).message);
     return;
@@ -210,7 +210,15 @@ export const runCli = (
 
   if (command.needsDb === false) {
     // No database to open, close, or fail on.
-    emit(command.run({ db: null as unknown as Database, args: commandArgs, rest, dbPath }));
+    emit(
+      command.run({
+        db: null as unknown as Database,
+        args: commandArgs,
+        rest,
+        dbPath,
+        progress: io.log,
+      }),
+    );
     return;
   }
 
@@ -225,7 +233,7 @@ export const runCli = (
   }
 
   try {
-    emit(command.run({ db, args: commandArgs, rest, dbPath }));
+    emit(command.run({ db, args: commandArgs, rest, dbPath, progress: io.log }));
   } catch (error) {
     // A CliError (a bad argument, an unresolvable id), an ambiguous session prefix,
     // or an unexpected SQL error: show the message, not a stack trace.
