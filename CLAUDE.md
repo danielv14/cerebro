@@ -25,7 +25,10 @@ code.
 - TypeScript strict, `moduleResolution: bundler`, `.ts` extensions in imports.
 - Code style follows the global conventions (const arrow functions, async/await,
   no em dashes in output) and is enforced by Biome (`biome.json`): 2-space indent,
-  double quotes, semicolons, trailing commas, 100-col width. Commits in English.
+  double quotes, semicolons, trailing commas, 100-col width. Everything written in the
+  repo is English: commits, comments, CLI output, `README.md`, `docs/` and the skill.
+  The repo is public and cloneable, so Swedish prose does not belong in it (the only
+  Swedish that does is data: the `swe` stopword list and the tokenizer examples).
 
 ## Developing and testing
 
