@@ -1,31 +1,52 @@
 ---
 name: cerebro
-description: Sök och återhämta innehåll ur alla tidigare Claude Code-sessioner (verbatim-arkiv med fulltextsök). Använd vid "cerebro", "tidigare session", "vad gjorde jag i", "vad sa vi om", "hitta konversationen där", "sök i mina claude-sessioner", "recall session", "förra gången vi", "hur löste vi X tidigare".
+description: Search and recall content from every past Claude Code session (verbatim archive with full-text search). Use on "cerebro", "earlier session", "what did I do in", "what did we say about", "find the conversation where", "search my claude sessions", "recall session", "last time we", "how did we solve X before".
 ---
 
 # cerebro
 
-`cerebro` är ett lokalt CLI som indexerar **alla** Claude Code-sessioner (inklusive de Claude Code redan raderat) till en SQLite-databas och gör dem sökbara. Det är ett verbatim-arkiv: hela konversationer, vilket repo/mapp de tillhör, och subagent-transkript. Använd det för att hitta vad som faktiskt sades eller gjordes i en tidigare session.
+`cerebro` is a local CLI that indexes **every** Claude Code session (including the
+ones Claude Code has already deleted) into a SQLite database and makes them
+searchable. It is a verbatim archive: whole conversations, which repo/directory they
+belong to, and subagent transcripts. Use it to find what was actually said or done in
+an earlier session.
 
-Binären finns på PATH som `cerebro`. Om den saknas: `bun run /path/to/cerebro/src/cli.ts <kommando>`.
+The binary is on PATH as `cerebro`. If it is missing: `bun run /path/to/cerebro/src/cli.ts <command>`.
 
-> Exempelutdata nedan använder påhittad testdata.
+> Example output below uses made-up test data.
 
-## Arbetsflöde (viktigt: index-först, progressiv exponering)
+## Workflow (important: index first, progressive disclosure)
 
-Dränk inte kontextfönstret. Följ den här trappan:
+Do not drown the context window. Follow this ladder:
 
-1. **`cerebro index`** först om sökningen gäller nyligt arbete (indexet är inkrementellt och snabbt; sessioner som är öppna just nu kanske inte är fullständigt skrivna än).
-2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevans-rankat mot en prompt) eller **`cerebro sessions`** / **`cerebro recent`** för att hitta rätt tråd. Ger bara id + tidsstämpel + projekt + snippet.
-3. **`cerebro show <id>`** för en outline (en rad per meddelande) av den intressanta tråden.
-4. **`cerebro show <id> --range A..B`** för att läsa en ordagrann skiva runt en träff (`search` visar varje träffs `#N`-position). **`--full`** först när du behöver hela transkriptet; hämta det inte i onödan, trådar kan vara tusentals meddelanden.
+1. **`cerebro index`** first if the search concerns recent work (the index is
+   incremental and fast; sessions that are open right now may not be fully written yet).
+2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevance-ranked
+   against a prompt) or **`cerebro sessions`** / **`cerebro recent`** to find the right
+   thread. Gives you only id + timestamp + project + snippet.
+3. **`cerebro show <id>`** for an outline (one line per message) of the interesting thread.
+4. **`cerebro show <id> --range A..B`** to read a verbatim slice around a hit
+   (`search` shows each hit's `#N` position). **`--full`** only when you need the whole
+   transcript; do not pull it needlessly, threads can be thousands of messages.
 
-Id:n kan förkortas till prefixet (8 tecken) som listorna visar. Tvetydiga prefix ger fel. Läskommandona (`search`, `sessions`, `recent`, `relevant`, `show`, `stats`, `doctor`, `version`, `digest stale|search|show`) tar `--json` när du vill ha raderna som JSON i stället för den människoläsbara listan (tomt resultat ger `[]`, aldrig prosa).
+Ids can be abbreviated to the prefix (8 characters) the listings show. An ambiguous
+prefix errors. The reader commands (`search`, `sessions`, `recent`, `relevant`, `show`,
+`stats`, `doctor`, `version`, `digest stale|search|show`) take `--json` when you want
+the rows as JSON instead of the human-readable listing (an empty result gives `[]`,
+never prose).
 
-## Kommandon
+## Commands
 
 ### `cerebro index [--full] [--rebuild] [--dry-run]`
-Indexerar inkrementellt sedan förra körningen. Varje fil har en byte-cursor: oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Du behöver alltså **inte** köra `--full` i vardagen, bara `cerebro index`. `--full` nollar cursorerna och läser om allt (säkert tack vare dedup på meddelande-UUID, men långsammare och netto 0 nya på ett aktuellt arkiv; lagrad text rörs aldrig). `--rebuild` gör som `--full` men skriver dessutom om den lagrade texten för varje meddelande vars källfil finns kvar på disk (behövs efter en ändring i flattening-logiken); meddelanden vars källfil raderats behålls orörda. `--dry-run` rapporterar vad som skulle indexeras utan att skriva något.
+Indexes incrementally since the last run. Every file has a byte cursor: unchanged
+files are skipped entirely, files that grew are read only from the cursor onward. So
+you do **not** need `--full` day to day, just `cerebro index`. `--full` resets the
+cursors and re-reads everything (safe thanks to dedup on message UUID, but slower and
+net 0 new on an up-to-date archive; stored text is never touched). `--rebuild` does
+what `--full` does but additionally rewrites the stored text of every message whose
+source file is still on disk (needed after a change to the flattening logic); messages
+whose source file was deleted are left untouched. `--dry-run` reports what would be
+indexed without writing anything.
 
 ```
 $ cerebro index
@@ -51,9 +72,18 @@ Dry run (--full): would re-read all 210 file(s).
 ```
 
 ### `cerebro search <query> [--limit N] [--project P] [--since D] [--role R] [--prose] [--all]`
-Fulltextsök (FTS5), rankad med bm25, snippet-först. `[...]` markerar träffade termer. Flera ord = implicit AND; citattecken för fras. Default limit 20. Som standard visas **bästa träffen per tråd** (så att en pratig tråd inte fyller alla platser); `--all` ger varje matchande meddelande. `--project P` filtrerar på substring i projektsökvägen (trådens, så en resume utan egen cwd tappas inte bort), `--since 2026-01-31` på tidsstämpel.
+Full-text search (FTS5), ranked with bm25, snippet-first. `[...]` marks matched terms.
+Multiple words = implicit AND; quotes for a phrase. Default limit 20. By default it
+shows the **best hit per thread** (so a chatty thread does not fill every slot);
+`--all` gives every matching message. `--project P` filters on a substring of the
+project path (the thread's, so a resume without its own cwd is not lost),
+`--since 2026-01-31` on timestamp.
 
-Verktygsanrop är flattenade in i meddelandetexten (`[tool_use:Bash] …`, `[tool_result] …`), vilket är bra för att hitta kommandon och filnamn men dränker prosa. Två filter mot det: `--role user|assistant` och `--prose` (som utesluter meddelanden som *bara* är verktygsplumbing). Ett `tool_result` räknas som en `user`-turn, så **`--role user --prose` är frågan "vad har jag själv skrivit om X"**.
+Tool calls are flattened into the message text (`[tool_use:Bash] …`, `[tool_result] …`),
+which is good for finding commands and filenames but drowns prose. Two filters against
+that: `--role user|assistant` and `--prose` (which excludes messages that are *only*
+tool plumbing). A `tool_result` counts as a `user` turn, so **`--role user --prose` is
+the query "what have I written myself about X"**.
 
 ```
 $ cerebro search "rate limiter" --limit 2
@@ -74,7 +104,12 @@ $ cerebro search "rate limiter" --role user --prose --limit 1
 ```
 
 ### `cerebro sessions [--project P] [--since D] [--limit N]`
-Listar trådar, senast aktiva först. `--project P` filtrerar på substring i projektets sökväg, `--since 2026-01-31` på trådens senaste aktivitet (samma datumformat som `search --since`). Visar `+N resume(s)` för trådar som återupptagits och `[body deleted]` om källfilen är raderad men arkivet finns kvar. Default limit 30. Trådar utan indexerade turns (en session som öppnats och stängts direkt) listas inte, och räknas inte i `stats`, men går fortfarande att öppna med `cerebro show <id>`.
+Lists threads, most recently active first. `--project P` filters on a substring of the
+project path, `--since 2026-01-31` on the thread's last activity (same date format as
+`search --since`). Shows `+N resume(s)` for threads that were resumed and
+`[body deleted]` when the source file is gone but the archive remains. Default limit 30.
+Threads with no indexed turns (a session opened and closed right away) are not listed,
+and are not counted in `stats`, but can still be opened with `cerebro show <id>`.
 
 ```
 $ cerebro sessions --limit 4
@@ -97,7 +132,9 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app
 ```
 
 ### `cerebro recent [--cwd P] [--days D] [--limit N]`
-Senaste trådarna för ett repo (default: nuvarande katalog, 14 dagar, 5 trådar), scopat på git-roten. Varje tråd visas med sin öppnings-prompt. Bra för att orientera sig i vad som hänt i ett repo nyligen.
+The latest threads for one repo (default: the current directory, 14 days, 5 threads),
+scoped on the git root. Each thread is shown with its opening prompt. Good for getting
+oriented in what has happened in a repo lately.
 
 ```
 $ cerebro recent --limit 2
@@ -111,7 +148,16 @@ Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
 ```
 
 ### `cerebro relevant <prompt> [--limit N] [--cwd P]`
-Tidigare trådar mest relevanta för en prompt (FTS, bm25; svenska och engelska stoppord filtreras bort). Rankingen är recency-viktad: bm25-poängen decayas med trådens ålder (halveringstid 90 dagar), så vid likvärdig textmatch vinner det färska arbetet (`search` är ren bm25). Trådar i samma repo som `--cwd` (git-roten, annars exakt projektsökväg) får dessutom poängen multiplicerad med 1.5 i båda tiers, ungefär värt två månaders färskhet. Det är en boost, aldrig ett filter: en klart starkare match i ett annat repo syns fortfarande, vilket är poängen för delad infrastruktur. Utan `--cwd` (och utan cwd i hook-payloaden) rankas allt globalt. Varje träff har titel, öppnings-prompt och en matchande snippet. Default 3. Bra när du vill veta om något liknande gjorts förut.
+Past threads most relevant to a prompt (FTS, bm25; Swedish and English stopwords are
+filtered out). The ranking is recency-weighted: the bm25 score decays with the thread's
+age (90-day half-life), so on an equivalent text match the fresher work wins (`search`
+is pure bm25). Threads in the same repo as `--cwd` (the git root, otherwise the exact
+project path) additionally get their score multiplied by 1.5 in both tiers, worth
+roughly two months of freshness. It is a boost, never a filter: a clearly stronger match
+in another repo still shows up, which is the point for shared infrastructure. Without
+`--cwd` (and without a cwd in the hook payload) everything is ranked globally. Each hit
+has a title, an opening prompt and a matching snippet. Default 3. Good when you want to
+know whether something similar has been done before.
 
 ```
 $ cerebro relevant "how did we set up CI"
@@ -123,10 +169,17 @@ Related past sessions:
 To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
 ```
 
-`recent` och `relevant` tar `--context` (agent-vänligt block, tyst om inget matchar) och `relevant` tar `--stdin` (läser prompten och cwd:n ur en hooks JSON-payload). Det är vad de automatiska hookarna använder (se "Bra att veta").
+`recent` and `relevant` take `--context` (an agent-friendly block, silent when nothing
+matches) and `relevant` takes `--stdin` (reads the prompt and the cwd out of a hook's
+JSON payload). That is what the automated hooks use (see "Good to know").
 
 ### `cerebro show <session-id> [--full] [--range A..B]`
-Visar en hel logisk tråd (rot + alla resumes + subagent-turer), ordnad kronologiskt. Outline som standard, `--full` ger ordagranna transkriptet. `--range 12..18` (eller ett ensamt tal) ger en ordagrann skiva med samma numrering som outlinen och som `#N`-markörerna i `search`-träffar, så du kan hoppa rakt till en träff i en jättetråd utan att dra hela transkriptet. Subagent-turer taggas `[subagent]`.
+Shows a whole logical thread (root + all resumes + subagent turns), ordered
+chronologically. Outline by default, `--full` gives the verbatim transcript.
+`--range 12..18` (or a single number) gives a verbatim slice with the same numbering as
+the outline and as the `#N` markers in `search` hits, so you can jump straight to a hit
+in a huge thread without pulling the whole transcript. Subagent turns are tagged
+`[subagent]`.
 
 Outline:
 ```
@@ -143,7 +196,7 @@ Thread a1b2c3d4  162 message(s)
 Full transcript: cerebro show <id> --full
 ```
 
-Full (utdrag):
+Full (excerpt):
 ```
 $ cerebro show a1b2c3d4 --full
 Thread a1b2c3d4  162 message(s)
@@ -157,7 +210,8 @@ I'll start by finding the settings page and the theme provider.
 ```
 
 ### `cerebro stats`
-Arkivets nyckeltal: trådar (med summerings-täckning och stale-antal), sessioner, meddelanden, raderade källor, tidsspann, databasstorlek och toppprojekt.
+The archive's key numbers: threads (with summary coverage and stale count), sessions,
+messages, deleted sources, time span, database size and top projects.
 
 ```
 $ cerebro stats
@@ -170,8 +224,15 @@ Database size:    48.2 MB
 Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
 
-### `cerebro doctor [--full]` och `cerebro version`
-`doctor` är en read-only hälsorapport: SQLite- och FTS-integritet, schemaversion, föräldralösa index-cursors, tomma sessioner, WAL-storlek, digest-täckning, om den deployade binären drivit från repot, och om hookarna är inkopplade i `settings.json`. Den reparerar aldrig något, utan pekar ut kommandot som gör det. Exit 1 bara vid hårt fel (korruption eller ett schema den här builden inte kan läsa), så varningar som en digest-backlog gör den inte röd. `--full` kör hela `integrity_check` i stället för `quick_check`. `version` skriver bara byggidentiteten, vilket är det som gör drift-kontrollen möjlig.
+### `cerebro doctor [--full]` and `cerebro version`
+`doctor` is a read-only health report: SQLite and FTS integrity, the schema version,
+orphaned index cursors, empty sessions, WAL size, digest coverage, whether the deployed
+binary has drifted from the repo, and whether the hooks are wired in `settings.json`. It
+never repairs anything, it points out the command that does. Exit 1 only on a hard
+failure (corruption, or a schema this build cannot read), so a warning like a digest
+backlog does not turn it red. `--full` runs the complete `integrity_check` instead of
+`quick_check`. `version` prints just the build identity, which is what makes the drift
+check possible.
 
 ```
 $ cerebro doctor
@@ -200,8 +261,14 @@ Hooks
 All checks passed, 1 warning(s).
 ```
 
-### `cerebro backup [--to <path>] [--keep N]` och `cerebro maintain`
-Underhåll av arkivet. `backup` tar en konsistent snapshot av databasen (`VACUUM INTO`) till `<db-katalog>/backups/archive-<tidsstämpel>.sqlite`; `--to <path>` väljer explicit mål, `--keep N` rensar de äldsta default-namngivna backuperna utöver N. `maintain` optimerar FTS-indexen, uppdaterar query-plannerns statistik och trunkerar WAL-filen (den schemalagda digest-batchen kör den automatiskt). Du behöver sällan köra dessa själv, men de finns om användaren ber om backup eller om arkivet känns segt.
+### `cerebro backup [--to <path>] [--keep N]` and `cerebro maintain`
+Archive housekeeping. `backup` takes a consistent snapshot of the database
+(`VACUUM INTO`) into `<db-dir>/backups/archive-<timestamp>.sqlite`; `--to <path>` picks
+an explicit target, `--keep N` prunes the oldest default-named backups beyond N.
+`maintain` optimizes the FTS indexes, refreshes the query planner's statistics and
+truncates the WAL file (the scheduled digest batch runs it automatically). You rarely
+need to run these yourself, but they are there when the user asks for a backup or the
+archive feels sluggish.
 
 ```
 $ cerebro backup --keep 8
@@ -209,18 +276,38 @@ Backup written: /Users/you/.claude/cerebro/backups/archive-20260702-121530.sqlit
 ```
 
 ### `cerebro digest <action>`
-Ett kurerat lager ovanpå rådatan: en LLM-skriven sammanfattning per tråd, lagrad i samma databas med eget FTS-index. Sammanfattningarna är täta och ämnesinriktade, så att söka i dem hittar "vad jobbade jag med kring X" mycket bättre än bm25 mot råa transkript. cerebro äger prompten, storleks-tieringen och lagringsformatet, och summerar aldrig på eget initiativ: `digest run`/`digest drain` spawnar modellen bara när någon ber om det, och de composable verben (`input`/`prompt`/`write`) finns kvar för dig som vill vara modellen själv.
+A curated layer on top of the raw data: one LLM-written summary per thread, stored in
+the same database with its own FTS index. The summaries are dense and topical, so
+searching them finds "what was I working on around X" far better than bm25 against raw
+transcripts. cerebro owns the prompt, the size tiering and the storage format, and never
+summarizes on its own initiative: `digest run`/`digest drain` spawn the model only when
+someone asks for it, and the composable verbs (`input`/`prompt`/`write`) are still there
+for when you want to be the model yourself.
 
-**När du ombeds hitta mönster eller relaterat arbete:** börja med `cerebro digest search <query>` (täta sammanfattningar) och fördjupa sedan med `cerebro show <id>`. Faller den tillbaka för tunt, komplettera med `cerebro search` mot rådatan.
+**When asked to find patterns or related work:** start with `cerebro digest search <query>`
+(dense summaries) and then go deeper with `cerebro show <id>`. If that comes back too
+thin, complement it with `cerebro search` against the raw data.
 
-**Täckning är en latensfråga, inte bara en kvalitetsfråga.** `relevant` kör bara sin rådata-tier när summerings-tiern inte fyllde `--limit`, och rådata-tiern är en bred scan över meddelande-FTS-indexet (en rad per meddelande) där summerings-tiern läser en rad per tråd. Summeringar kortsluter alltså den dyra halvan av den kodväg som körs vid **varje prompt**: mätt med den kompilerade binären mot ett syntetiskt arkiv med 300 000 meddelanden (1200 sessioner, 148 MB) och noll summeringar tog `cerebro relevant "<prosa-prompt>" --limit 5` 386 ms, och det krymper när täckningen stiger. Är arkivet osummerat är `cerebro digest drain` värd att köra, inte bara för recall.
+**Coverage is a latency question, not just a quality question.** `relevant` only runs its
+raw-data tier when the summary tier did not fill `--limit`, and the raw tier is a broad
+scan over the message FTS index (one row per message) where the summary tier reads one row
+per thread. So summaries short-circuit the expensive half of the code path that runs on
+**every prompt**: measured with the compiled binary against a synthetic archive of
+300 000 messages (1200 sessions, 148 MB) and zero summaries, `cerebro relevant "<prose prompt>" --limit 5`
+took 386 ms, and that shrinks as coverage rises. If the archive is unsummarized,
+`cerebro digest drain` is worth running, and not only for recall.
 
-**Summeringen pekar på rådatan, oftast räcker den.** Varje summering är nycklad på trådens id, och varje `digest`-rad inleds med det id:t. Det är referensen tillbaka till rådatan: i de allra flesta fall är summeringen good enough för att svara, och du behöver inte öppna transkriptet. Hämta rådatan **bara vid behov**, i den här ordningen:
-- `cerebro show <id>` for en outline (en rad per meddelande) om du behöver se förloppet.
-- `cerebro show <id> --full` for det ordagranna transkriptet när du behöver exakta formuleringar, kod eller kommandon.
-- `cerebro search "<term>"` när du vill träffa ett specifikt meddelande någonstans i tråden (eller i arkivet).
+**The summary points at the raw data, and usually it is enough.** Each summary is keyed on
+the thread's id, and every `digest` row starts with that id. That is the reference back to
+the raw data: in the vast majority of cases the summary is good enough to answer with, and
+you do not need to open the transcript. Fetch the raw data **only when needed**, in this
+order:
+- `cerebro show <id>` for an outline (one line per message) when you need to see how it unfolded.
+- `cerebro show <id> --full` for the verbatim transcript when you need exact wording, code or commands.
+- `cerebro search "<term>"` when you want to hit one specific message somewhere in the thread (or in the archive).
 
-Dränk inte kontexten genom att dra `--full` reflexmässigt; summering → id → outline → full är trappan.
+Do not drown the context by reflexively pulling `--full`; summary -> id -> outline -> full
+is the ladder.
 
 ```
 $ cerebro digest stale --limit 3
@@ -256,29 +343,88 @@ Added a token-bucket rate limiter to the auth middleware in api-server. ...
 Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
 ```
 
-**Att producera en sammanfattning.** Tre vägar:
-- `cerebro digest run <id>` gör hela kedjan i ett steg: renderar transkriptet, väljer modell efter storleken, spawnar `claude -p --no-session-persistence`, vägrar lagra output som inte kan vara en summering, och skriver in den. Exit 0 bara när något faktiskt lagrades. `cerebro digest drain --limit N` gör samma sak för de N mest stale trådarna, nyast först, och låter en trasig tråd inte stoppa resten. Det är dessa hookarna kör. `CEREBRO_CLAUDE_BIN` styr vilken binär som spawnas.
-- Eller du som agent gör det inline: läs `cerebro digest input <id>`, sammanfatta enligt `cerebro digest prompt`, och skriv tillbaka med `cerebro digest write <id>` (sammanfattningen läses från stdin; `--model <namn>` loggar vilken modell som skrev den). Ingen subprocess inblandad, du är modellen.
-- Eller pipa stegen själv: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
+**Producing a summary.** Three routes:
+- `cerebro digest run <id>` does the whole chain in one step: renders the transcript,
+  picks the model by size, spawns `claude -p --no-session-persistence`, refuses to store
+  output that cannot be a summary, and writes it in. Exit 0 only when something was
+  actually stored. `cerebro digest drain --limit N` does the same for the N stalest
+  threads, newest first, and does not let one broken thread stop the rest. This is what
+  the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is spawned.
+- Or you as the agent do it inline: read `cerebro digest input <id>`, summarize per
+  `cerebro digest prompt`, and write it back with `cerebro digest write <id>` (the summary
+  is read from stdin; `--model <name>` records which model wrote it). No subprocess
+  involved, you are the model.
+- Or pipe the steps yourself: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
 
-`digest write` vägrar lagra text som inte kan vara en summering (för kort, eller något som ser ut som ett felmeddelande i stil med "Prompt is too long"/"API Error") och avslutar då med exit 1 — tråden förblir stale så att reconcilern försöker igen. Samma spärr sitter i `digest run`/`drain`.
+`digest write` refuses to store text that cannot be a summary (too short, or something
+that looks like an error message along the lines of "Prompt is too long"/"API Error") and
+exits 1 when it does, leaving the thread stale so the reconciler retries it. The same
+guard sits in `digest run`/`drain`.
 
-Använd `cerebro digest input <id>`, inte `show <id> --full`, som modell-input: det renderar samma transkript men storleksbegränsat så att det får plats i ett enda modellkontext. Korta trådar kommer ut ordagrant; en jättetråd kapas (water-fill: korta meddelanden behålls helt, de längsta essäerna trimmas först) så att inte ens ett 1M-kontext spräcks. cerebro äger modellvalet: `digest run`/`drain` mäter transkriptet där de renderar det och tierar på det, och `cerebro digest model <id>` (eller `--bytes <n>`) visar samma beslut för manuell koll. Små trådar → `claude-haiku-4-5` (billigast, vanligaste fallet), överstora → `claude-sonnet-4-6[1m]` i ett skott (1M-kontext, platt pris, ingen long-context-premie), så att en tråd på 400-600k tokens summeras hel istället för trunkerad. `[1m]`-suffixet krävs: det är så Claude Code väljer 1M-varianten; utan det får `claude -p` default-fönstret 200k och en jättetråd failar fortfarande med "Prompt is too long". Tröskel och modellnamn kan overridas via `CEREBRO_DIGEST_MODEL`, `CEREBRO_DIGEST_MODEL_LARGE` och `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
+Use `cerebro digest input <id>`, not `show <id> --full`, as model input: it renders the
+same transcript but size-bounded so it fits in a single model context. Short threads come
+out verbatim; a giant thread is trimmed (water-fill: short messages are kept whole, the
+longest essays are trimmed first) so that not even a 1M context is blown. cerebro owns the
+model choice: `digest run`/`drain` measure the transcript where they render it and tier on
+that, and `cerebro digest model <id>` (or `--bytes <n>`) shows the same decision for a
+manual check. Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
+-> `claude-sonnet-4-6[1m]` in one shot (1M context, flat pricing, no long-context premium),
+so that a thread of 400-600k tokens is summarized whole instead of truncated. The `[1m]`
+suffix is required: that is how Claude Code picks the 1M variant; without it `claude -p`
+gets the default 200k window and a giant thread still fails with "Prompt is too long".
+The threshold and the model names can be overridden via `CEREBRO_DIGEST_MODEL`,
+`CEREBRO_DIGEST_MODEL_LARGE` and `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
 
-`cerebro digest drain` är reconcilern: kör den då och då (eller schemalagt) så fångas allt osummerat eller inaktuellt, och `cerebro digest stale` visar backloggen utan att röra den. En tråd blir inaktuell igen när den får nya meddelanden eller när prompt-versionen (`DIGEST_PROMPT_VERSION`) höjs. `--ids` ger ett maskinläsbart läge (ett fullt tråd-id per rad, ingen formatering) som skript och hooks kan loopa över utan att skrapa den människoläsbara listan; tom output betyder att inget är stale.
+`cerebro digest drain` is the reconciler: run it now and then (or on a schedule) and
+everything unsummarized or out of date is caught, and `cerebro digest stale` shows the
+backlog without touching it. A thread becomes stale again when it gains new messages or
+when the prompt version (`DIGEST_PROMPT_VERSION`) is bumped. `--ids` gives a
+machine-readable mode (one full thread id per line, no formatting) that scripts and hooks
+can loop over without scraping the human-readable listing; empty output means nothing is
+stale.
 
-## Indexering (mental modell)
+## Indexing (mental model)
 
-- **`cerebro index` är allt du behöver i vardagen.** Den är inkrementell: varje fil har en byte-cursor (`index_state`) med hur långt vi läst plus filens mtime. Oförändrade filer hoppas över helt, filer som vuxit läses bara från cursorn och framåt. Att köra om är billigt.
-- **Kör `index` innan du söker i färskt arbete.** Den aktiva sessionen skrivs löpande till disk och fångas vid nästa indexering.
-- **`--full` behövs nästan aldrig.** Den nollar cursorerna och läser om allt från början. Dedup på meddelande-UUID gör det ofarligt (netto 0 nya på ett aktuellt arkiv), men det är långsammare. Använd bara vid misstänkt trasig cursor-state. Efter en ändring i hur meddelanden plattas till text är det `--rebuild` som gäller: den uppdaterar även lagrad text (för filer som finns kvar på disk).
-- **`--dry-run` skriver ingenting**, rapporterar bara vad en körning skulle göra (nya meddelanden, bytes, filuppdelning). Bra för att inspektera innan en stor `--full`.
-- **Dedup på UUID, inte fil eller session-id.** Samma meddelande som dyker upp i flera filer (resumes, subagent-ekon) lagras en gång. Därför ger `--full` aldrig dubbletter.
+- **`cerebro index` is all you need day to day.** It is incremental: every file has a
+  byte cursor (`index_state`) with how far we have read plus the file's mtime. Unchanged
+  files are skipped entirely, files that grew are read only from the cursor onward.
+  Re-running is cheap.
+- **Run `index` before searching fresh work.** The active session is written to disk
+  continuously and is picked up on the next indexing run.
+- **`--full` is almost never needed.** It resets the cursors and re-reads everything from
+  the start. Dedup on message UUID makes that harmless (net 0 new on an up-to-date
+  archive), but it is slower. Use it only on a suspected-broken cursor state. After a
+  change to how messages are flattened to text, `--rebuild` is the one you want: it also
+  updates the stored text (for files that are still on disk).
+- **`--dry-run` writes nothing**, it only reports what a run would do (new messages,
+  bytes, the file breakdown). Good for inspecting before a large `--full`.
+- **Dedup on UUID, not file or session id.** The same message appearing in several files
+  (resumes, subagent echoes) is stored once. That is why `--full` never produces
+  duplicates.
 
-## Bra att veta
+## Good to know
 
-- **Databas:** `~/.claude/cerebro/archive.sqlite` (override `--db <path>` eller `$CEREBRO_DB`). Den ligger medvetet utanför git-repot: den innehåller privata konversationer ordagrant och växer stort (tiotals MB+).
-- **Tidszon:** tidsstämplar lagras som ordagrann UTC och visas i `Europe/Stockholm`. `$CEREBRO_TZ` tar vilken IANA-zon som helst; en okänd zon faller tillbaka på default i stället för att krascha.
-- **tool_use / tool_result** plattas till greppbar text (`[tool_use:Bash] {...}`, `[tool_result] ...`), så du kan söka på kommandon och filinnehåll som faktiskt kördes. Varje sådant block kapas till första 1 KB (`[+N chars truncated]`-markör) eftersom huvudet rymmer det sökbara (tool-namn, file_path, kommando) medan resten är reproducerbart brus. Prosa och resonemang lagras ordagrant; fel (`[tool_result:error]`) kapas inte.
-- **Trådar fäller in resumes:** `sessions` visar bara rötter; återupptagna sessioner och subagent-arbete syns inne i `show`.
-- **Automatiska hooks:** en `UserPromptSubmit`-hook kör `cerebro relevant --stdin --context` per prompt och injicerar möjligen relevanta trådar som bakgrundskontext (taggade som sådant, ignorera om de inte hör hit). Payloaden bär cwd:n, så trådar från samma repo boostas i rankingen. `relevant` matchar **summeringarna först** (kurerat, hög signal) och faller tillbaka på rådata-bm25 for trådar som ännu inte summerats; en träff märkt `summary:` kommer från summeringen, `match:` från rådatan. En `SessionEnd`-hook vid `/clear` indexerar synkront och kör sedan `cerebro digest run --stdin` detachat för den just rensade sessionen (best-effort; `cerebro digest drain` är reconcilern som fångar det som missas). Du kan ändå proaktivt köra `relevant`/`search`/`digest search` när du vill gräva djupare.
+- **Database:** `~/.claude/cerebro/archive.sqlite` (override with `--db <path>` or
+  `$CEREBRO_DB`). It deliberately lives outside the git repo: it holds private
+  conversations verbatim and grows large (tens of MB+).
+- **Time zone:** timestamps are stored as verbatim UTC and displayed in
+  `Europe/Stockholm`. `$CEREBRO_TZ` takes any IANA zone; an unknown zone falls back to
+  the default rather than crashing.
+- **tool_use / tool_result** are flattened to greppable text (`[tool_use:Bash] {...}`,
+  `[tool_result] ...`), so you can search for commands and file contents that were
+  actually run. Each such block is capped at the first 1 KB (with a
+  `[+N chars truncated]` marker) because the head holds the searchable part (tool name,
+  file_path, command) while the rest is reproducible noise. Prose and reasoning are
+  stored verbatim; errors (`[tool_result:error]`) are not capped.
+- **Threads fold in resumes:** `sessions` shows roots only; resumed sessions and
+  subagent work appear inside `show`.
+- **Automated hooks:** a `UserPromptSubmit` hook runs `cerebro relevant --stdin --context`
+  per prompt and possibly injects relevant threads as background context (tagged as such,
+  ignore them when they do not belong). The payload carries the cwd, so threads from the
+  same repo are boosted in the ranking. `relevant` matches the **summaries first**
+  (curated, high signal) and falls back on raw-data bm25 for threads not yet summarized;
+  a hit marked `summary:` comes from the summary, `match:` from the raw data. A
+  `SessionEnd` hook on `/clear` indexes synchronously and then runs
+  `cerebro digest run --stdin` detached for the session just cleared (best-effort;
+  `cerebro digest drain` is the reconciler that catches what is missed). You can still
+  proactively run `relevant`/`search`/`digest search` when you want to dig deeper.
