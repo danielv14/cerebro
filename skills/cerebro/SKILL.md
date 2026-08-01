@@ -141,9 +141,9 @@ second agent up to speed): take the branch from `git branch --show-current`, lis
 threads with `cerebro sessions --branch <branch>`, then read up via
 `cerebro digest show <id>` (summary) or `cerebro show <id>` (outline).
 `cerebro search "<terms>" --branch <branch>` scopes a search the same way. A session
-stores one branch, following its latest indexed activity, so a mid-session branch
-switch moves the session to the new branch rather than matching both; treat the
-filter as a strong hint, not ground truth.
+stores one branch (whichever its most recent indexing run saw first), so a
+mid-session branch switch can move the session to the new branch rather than
+matching both; treat the filter as a strong hint, not ground truth.
 
 ```
 $ cerebro sessions --branch feat/dark-mode

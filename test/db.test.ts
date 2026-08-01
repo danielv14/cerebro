@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, SCHEMA_VERSION } from "../src/db.ts";
+import { openDb, SCHEMA_VERSION, threadsViewIsCurrent } from "../src/db.ts";
 
 // The version-gated schema (#46): the DDL runs once per SCHEMA_VERSION and the
 // stamp lets every later open (the per-prompt hook hot path) skip it entirely.
@@ -109,6 +109,16 @@ describe("openDb schema versioning", () => {
     const version = reopened.query("PRAGMA user_version").get() as { user_version: number };
     expect(version.user_version).toBe(SCHEMA_VERSION);
     reopened.close();
+  });
+
+  test("THREADS_VIEW_COLUMNS stays in lockstep with the view SCHEMA creates", () => {
+    // If a SCHEMA view change forgets to update the constant, upToDate() goes
+    // permanently false and every open silently re-runs the full DDL under the
+    // write lock, the exact hot-path cost the version gate exists to avoid. A
+    // fresh database must pass the shape check.
+    const db = openDb(path);
+    expect(threadsViewIsCurrent(db)).toBe(true);
+    db.close();
   });
 
   test("messages keeps the legacy line_no column for the deployed hook binary", () => {

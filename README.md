@@ -35,7 +35,8 @@ cerebro search <query> [--limit N] [--project P] [--branch B] [--since D] [--rol
                                             # ranked full-text search, snippet-first
                                             #   (best hit per thread; --all for every message)
                                             #   --role user|assistant, --prose: skip tool plumbing
-cerebro sessions [--project P] [--branch B] [--since D] [--limit N]  # list threads, newest activity first
+cerebro sessions [--project P] [--branch B] [--since D] [--limit N]
+                                            # list threads, newest activity first
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a prompt
                                             #   (threads in --cwd's repo rank higher)

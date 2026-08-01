@@ -218,7 +218,10 @@ const THREADS_VIEW_COLUMNS = [
   "body_available",
 ].join(",");
 
-const threadsViewIsCurrent = (db: Database): boolean => {
+// Exported for the lockstep test only: a fresh database must pass this check, or a
+// SCHEMA view change forgot to update THREADS_VIEW_COLUMNS and every open would
+// silently re-run the full DDL.
+export const threadsViewIsCurrent = (db: Database): boolean => {
   const columns = db.query("PRAGMA table_info(threads)").all() as { name: string }[];
   return columns.map((column) => column.name).join(",") === THREADS_VIEW_COLUMNS;
 };
@@ -253,9 +256,9 @@ export const openDb = (path: string): Database => {
   const upToDate = (): boolean => version() === SCHEMA_VERSION && threadsViewIsCurrent(db);
 
   if (!upToDate()) {
-    // DDL, migrations, and the version stamp commit as ONE transaction. Run
-    // unwrapped (as the DDL used to be), there is a window where the view and the
-    // stamp disagree: two binaries built for different SCHEMA_VERSIONs racing the
+    // DDL, migrations, and the version stamp commit as ONE transaction. Were the
+    // DDL run unwrapped (as it used to be), there would be a window where the view
+    // and the stamp disagree: two binaries built for different SCHEMA_VERSIONs racing the
     // first open after an upgrade could interleave to the current stamp over the
     // other build's view, which the version gate would then trust forever (the
     // view-shape re-check in upToDate is the second half of that defense, healing

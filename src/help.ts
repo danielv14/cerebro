@@ -58,9 +58,9 @@ Options:
                   so a resume is never dropped for lacking its own cwd)
   --branch <b>    sessions/search: filter by git branch substring. A thread matches
                   when any of its sessions was recorded on the branch. A session
-                  stores one branch, following its latest indexed activity, so a
-                  mid-session branch switch moves the session to the new branch
-                  rather than matching both
+                  stores one branch (whichever its most recent indexing run saw
+                  first), so a mid-session branch switch can move the session to
+                  the new branch rather than matching both
   --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31);
                   sessions: only threads last active at or after it
   --role <r>      search: only user or assistant turns. A tool_result is recorded as
