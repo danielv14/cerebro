@@ -83,8 +83,8 @@ describe("option declarations", () => {
   // flag quietly disappearing from a command (or appearing on the wrong one).
   const EXPECTED: Record<string, string[]> = {
     index: ["dry-run", "full", "rebuild"],
-    search: ["all", "json", "limit", "project", "prose", "role", "since"],
-    sessions: ["json", "limit", "project", "since"],
+    search: ["all", "branch", "json", "limit", "project", "prose", "role", "since"],
+    sessions: ["branch", "json", "limit", "project", "since"],
     recent: ["context", "cwd", "days", "json", "limit"],
     relevant: ["context", "cwd", "json", "limit", "stdin"],
     show: ["full", "json", "range"],

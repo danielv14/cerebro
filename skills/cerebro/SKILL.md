@@ -71,13 +71,14 @@ Dry run (--full): would re-read all 210 file(s).
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
 ```
 
-### `cerebro search <query> [--limit N] [--project P] [--since D] [--role R] [--prose] [--all]`
+### `cerebro search <query> [--limit N] [--project P] [--branch B] [--since D] [--role R] [--prose] [--all]`
 Full-text search (FTS5), ranked with bm25, snippet-first. `[...]` marks matched terms.
 Multiple words = implicit AND; quotes for a phrase. Default limit 20. By default it
 shows the **best hit per thread** (so a chatty thread does not fill every slot);
 `--all` gives every matching message. `--project P` filters on a substring of the
-project path (the thread's, so a resume without its own cwd is not lost),
-`--since 2026-01-31` on timestamp.
+project path (the thread's, so a resume without its own cwd is not lost), `--branch B`
+on a substring of the recorded git branch (thread-level too: a thread matches when any
+of its sessions was on the branch), `--since 2026-01-31` on timestamp.
 
 Tool calls are flattened into the message text (`[tool_use:Bash] …`, `[tool_result] …`),
 which is good for finding commands and filenames but drowns prose. Two filters against
@@ -103,32 +104,50 @@ $ cerebro search "rate limiter" --role user --prose --limit 1
 1 hit(s), best per thread (--all for every message). Open one with: cerebro show <id> (jump to a hit: --range <n>)
 ```
 
-### `cerebro sessions [--project P] [--since D] [--limit N]`
+### `cerebro sessions [--project P] [--branch B] [--since D] [--limit N]`
 Lists threads, most recently active first. `--project P` filters on a substring of the
-project path, `--since 2026-01-31` on the thread's last activity (same date format as
-`search --since`). Shows `+N resume(s)` for threads that were resumed and
-`[body deleted]` when the source file is gone but the archive remains. Default limit 30.
-Threads with no indexed turns (a session opened and closed right away) are not listed,
-and are not counted in `stats`, but can still be opened with `cerebro show <id>`.
+project path, `--branch B` on a substring of the recorded git branch (a thread matches
+when **any** of its sessions was on the branch, so work that started on master and
+moved to a branch in a resume is still found), `--since 2026-01-31` on the thread's
+last activity (same date format as `search --since`). Each row shows the thread's
+branch as an `@` suffix when one was recorded, `+N resume(s)` for threads that were
+resumed and `[body deleted]` when the source file is gone but the archive remains.
+Default limit 30. Threads with no indexed turns (a session opened and closed right
+away) are not listed, and are not counted in `stats`, but can still be opened with
+`cerebro show <id>`.
 
 ```
 $ cerebro sessions --limit 4
-a1b2c3d4  2026-02-12 16:48   162 msgs  my-app
+a1b2c3d4  2026-02-12 16:48   162 msgs  my-app @feat/dark-mode
     Add dark mode toggle
-5e6f7a8b  2026-02-10 09:31    88 msgs  api-server  +1 resume(s)
+5e6f7a8b  2026-02-10 09:31    88 msgs  api-server @main +1 resume(s)
     Fix flaky auth test
-9c0d1e2f  2026-02-08 14:02   240 msgs  web-shop
+9c0d1e2f  2026-02-08 14:02   240 msgs  web-shop @main
     Refactor checkout flow
-3a4b5c6d  2026-02-05 11:20    54 msgs  my-app  [body deleted]
+3a4b5c6d  2026-02-05 11:20    54 msgs  my-app @main  [body deleted]
     Set up CI pipeline
 ```
 
 ```
 $ cerebro sessions --project my-app --limit 2
-a1b2c3d4  2026-02-12 16:48   162 msgs  my-app
+a1b2c3d4  2026-02-12 16:48   162 msgs  my-app @feat/dark-mode
     Add dark mode toggle
-3a4b5c6d  2026-02-05 11:20    54 msgs  my-app  [body deleted]
+3a4b5c6d  2026-02-05 11:20    54 msgs  my-app @main  [body deleted]
     Set up CI pipeline
+```
+
+**Catching up on a branch** ("what have we done on this branch so far", getting a
+second agent up to speed): take the branch from `git branch --show-current`, list its
+threads with `cerebro sessions --branch <branch>`, then read up via
+`cerebro digest show <id>` (summary) or `cerebro show <id>` (outline).
+`cerebro search "<terms>" --branch <branch>` scopes a search the same way. The branch
+is recorded per session, so a mid-session branch switch is approximate; treat it as a
+strong hint, not ground truth.
+
+```
+$ cerebro sessions --branch feat/dark-mode
+a1b2c3d4  2026-02-12 16:48   162 msgs  my-app @feat/dark-mode
+    Add dark mode toggle
 ```
 
 ### `cerebro recent [--cwd P] [--days D] [--limit N]`
@@ -243,7 +262,7 @@ Build
   ok    deployed          a1b2c3d, matches this build
 
 Database
-  ok    schema            v4 (current)
+  ok    schema            v5 (current)
   ok    integrity         quick_check
   ok    messages_fts      ok
   ok    summaries_fts     ok

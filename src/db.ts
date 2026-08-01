@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 // the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
 // schema work. An old database (or a fresh one, user_version 0) runs the DDL +
 // migrations once and is stamped.
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // Per-connection pragmas: these run on every open, outside the version-gated DDL.
 // busy_timeout / foreign_keys do not persist in the file; journal_mode does, but it
@@ -136,7 +136,7 @@ END;
 -- from this view rather than re-deriving the GROUP BY, so the rollup shape is
 -- defined exactly once.
 --
--- project_path, git_root, and title use a root-preferring COALESCE: take the
+-- project_path, git_root, git_branch, and title use a root-preferring COALESCE: take the
 -- root session's value, and only fall back to MAX over the resumes when the root's
 -- is NULL. The aggregate must run over the unfiltered rows, so callers that scope by
 -- project filter the view's output AFTER the rollup. Filtering raw sessions before
@@ -172,6 +172,10 @@ CREATE VIEW IF NOT EXISTS threads AS
       MAX(CASE WHEN r.session_id = r.root_session_id THEN r.git_root END),
       MAX(r.git_root)
     ) AS git_root,
+    COALESCE(
+      MAX(CASE WHEN r.session_id = r.root_session_id THEN r.git_branch END),
+      MAX(r.git_branch)
+    ) AS git_branch,
     COALESCE(
       MAX(CASE WHEN r.session_id = r.root_session_id THEN r.title END),
       MAX(r.title)
