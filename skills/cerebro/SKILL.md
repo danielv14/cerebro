@@ -140,9 +140,10 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app @feat/dark-mode
 second agent up to speed): take the branch from `git branch --show-current`, list its
 threads with `cerebro sessions --branch <branch>`, then read up via
 `cerebro digest show <id>` (summary) or `cerebro show <id>` (outline).
-`cerebro search "<terms>" --branch <branch>` scopes a search the same way. The branch
-is recorded per session, so a mid-session branch switch is approximate; treat it as a
-strong hint, not ground truth.
+`cerebro search "<terms>" --branch <branch>` scopes a search the same way. A session
+stores one branch, following its latest indexed activity, so a mid-session branch
+switch moves the session to the new branch rather than matching both; treat the
+filter as a strong hint, not ground truth.
 
 ```
 $ cerebro sessions --branch feat/dark-mode

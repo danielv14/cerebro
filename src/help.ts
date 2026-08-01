@@ -6,7 +6,8 @@ Usage:
                          [--prose] [--all]
                                          Full-text search (ranked, best hit per thread;
                                          --all for every matching message)
-  cerebro sessions [--project P] [--branch B] [--since D] [--limit N]   List threads, newest first
+  cerebro sessions [--project P] [--branch B] [--since D] [--limit N]
+                                         List threads, newest first
   cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
   cerebro relevant <prompt> [--limit N] [--cwd P] [--context]
                                          Past threads relevant to a prompt (threads in
@@ -56,9 +57,10 @@ Options:
   --project <p>   sessions/search: filter by project path substring (the thread's,
                   so a resume is never dropped for lacking its own cwd)
   --branch <b>    sessions/search: filter by git branch substring. A thread matches
-                  when any of its sessions was recorded on the branch (a session
-                  stores its branch at indexing time, so mid-session switches are
-                  approximate)
+                  when any of its sessions was recorded on the branch. A session
+                  stores one branch, following its latest indexed activity, so a
+                  mid-session branch switch moves the session to the new branch
+                  rather than matching both
   --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31);
                   sessions: only threads last active at or after it
   --role <r>      search: only user or assistant turns. A tool_result is recorded as

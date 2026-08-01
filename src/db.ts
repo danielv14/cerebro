@@ -3,10 +3,11 @@ import fs from "node:fs";
 import { dirname } from "node:path";
 
 // Bump whenever SCHEMA or migrate() changes. openDb stamps it into PRAGMA
-// user_version and skips the whole DDL block when the stored version matches, so
-// the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
-// schema work. An old database (or a fresh one, user_version 0) runs the DDL +
-// migrations once and is stamped.
+// user_version and skips the whole DDL block when the stored version matches (and
+// the threads view has the expected shape, see THREADS_VIEW_COLUMNS), so the
+// per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any schema
+// work. An old database (or a fresh one, user_version 0) runs the DDL + migrations
+// once and is stamped.
 export const SCHEMA_VERSION = 5;
 
 // Per-connection pragmas: these run on every open, outside the version-gated DDL.
@@ -154,8 +155,9 @@ END;
 -- 'show' on such a session still resolves and the deleted-source stats (which
 -- read sessions) are unaffected.
 --
--- Replacing this definition needs a SCHEMA_VERSION bump AND the DROP below: on an
--- existing database CREATE VIEW IF NOT EXISTS silently keeps the old view.
+-- Replacing this definition needs a SCHEMA_VERSION bump AND the DROP below (on an
+-- existing database CREATE VIEW IF NOT EXISTS silently keeps the old view), AND an
+-- update to THREADS_VIEW_COLUMNS if the column list changed.
 DROP VIEW IF EXISTS threads;
 CREATE VIEW IF NOT EXISTS threads AS
   SELECT
@@ -197,6 +199,30 @@ const addColumnIfMissing = (db: Database, table: string, column: string, ddl: st
   }
 };
 
+// The threads view's column list, in view order. Keep in lockstep with the CREATE
+// VIEW in SCHEMA. openDb compares this against the live view on every open (one
+// PRAGMA, and only when the version stamp already matches): a binary built for a
+// different SCHEMA_VERSION racing this one through the first open after an upgrade
+// can leave a current-looking stamp over the other build's view, and version-gating
+// alone would then trust that forever while every reader of a missing column fails.
+const THREADS_VIEW_COLUMNS = [
+  "id",
+  "last_ts",
+  "first_ts",
+  "msgs",
+  "sessions_in_thread",
+  "project_path",
+  "git_root",
+  "git_branch",
+  "title",
+  "body_available",
+].join(",");
+
+const threadsViewIsCurrent = (db: Database): boolean => {
+  const columns = db.query("PRAGMA table_info(threads)").all() as { name: string }[];
+  return columns.map((column) => column.name).join(",") === THREADS_VIEW_COLUMNS;
+};
+
 // Idempotent migrations for databases created by an earlier schema version.
 const migrate = (db: Database): void => {
   addColumnIfMissing(db, "messages", "is_sidechain", "is_sidechain INTEGER NOT NULL DEFAULT 0");
@@ -224,19 +250,24 @@ export const openDb = (path: string): Database => {
   const version = (): number =>
     (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
 
-  if (version() !== SCHEMA_VERSION) {
-    // The DDL itself is idempotent (IF NOT EXISTS everywhere, plus the threads view's
-    // DROP IF EXISTS + CREATE pair; each statement takes the write lock, which
-    // busy_timeout serializes), so it can run unwrapped. The
-    // migrations are NOT: they are check-then-ALTER, and two processes racing the
-    // first open after an upgrade (a prompt hook plus an index hook) could both
-    // pass the column-existence check and the loser's ALTER would throw. BEGIN
-    // IMMEDIATE takes the write lock up front and the version is re-checked under
-    // it, so the loser sees the winner's stamp and skips.
-    db.exec(SCHEMA);
+  const upToDate = (): boolean => version() === SCHEMA_VERSION && threadsViewIsCurrent(db);
+
+  if (!upToDate()) {
+    // DDL, migrations, and the version stamp commit as ONE transaction. Run
+    // unwrapped (as the DDL used to be), there is a window where the view and the
+    // stamp disagree: two binaries built for different SCHEMA_VERSIONs racing the
+    // first open after an upgrade could interleave to the current stamp over the
+    // other build's view, which the version gate would then trust forever (the
+    // view-shape re-check in upToDate is the second half of that defense, healing
+    // a database an old unwrapped binary has already wedged). The migrations need
+    // the lock for their own reason: they are check-then-ALTER, and two racing
+    // processes could both pass the column-existence check and the loser's ALTER
+    // would throw. BEGIN IMMEDIATE takes the write lock up front and the state is
+    // re-checked under it, so the loser sees the winner's work and skips.
     db.exec("BEGIN IMMEDIATE");
     try {
-      if (version() !== SCHEMA_VERSION) {
+      if (!upToDate()) {
+        db.exec(SCHEMA);
         migrate(db);
         db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       }
