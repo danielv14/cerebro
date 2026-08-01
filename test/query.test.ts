@@ -182,6 +182,50 @@ describe("query (populated archive)", () => {
     ).toEqual(["RESUME", "ROOT"]);
   });
 
+  test("search --branch scopes hits to threads recorded on the branch, by substring", () => {
+    // The fixture default branch is "main"; FEAT overrides it.
+    writeSession(env.projects, "-repo", "MAIN", [
+      userMsg("MAIN", "u1", "limiter on main", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "FEAT", [
+      userMsg("FEAT", "u2", "limiter on the feature branch", {
+        gitBranch: "feat/limiter",
+        timestamp: ts(10),
+      }),
+    ]);
+    runIndex(db);
+    expect(search(db, "limiter", 10, { branch: "feat/limiter" }).map((h) => h.session_id)).toEqual([
+      "FEAT",
+    ]);
+    expect(search(db, "limiter", 10, { branch: "feat" }).map((h) => h.session_id)).toEqual([
+      "FEAT",
+    ]);
+    expect(search(db, "limiter", 10).length).toBe(2);
+    // The hit carries its own session's branch.
+    expect(search(db, "limiter", 10, { branch: "feat" })[0]!.git_branch).toBe("feat/limiter");
+  });
+
+  test("search --branch matches the whole thread when only a resume carries the branch", () => {
+    writeSession(env.projects, "-repo", "ROOT", [
+      userMsg("ROOT", "r1", "zebra in the root", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "r2", "zebra in the resume", {
+        gitBranch: "feat/zebra",
+        parentUuid: "r1",
+        timestamp: ts(10),
+      }),
+    ]);
+    runIndex(db);
+    // Any-session semantics: the root's hit (recorded on main) matches too, because
+    // the thread touched the branch in its resume.
+    expect(
+      search(db, "zebra", 10, { all: true, branch: "feat/zebra" })
+        .map((h) => h.session_id)
+        .sort(),
+    ).toEqual(["RESUME", "ROOT"]);
+  });
+
   test("search --role and --prose cut tool plumbing out of the hits (#87)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "how do we handle the limiter", { timestamp: ts(0) }),
@@ -334,6 +378,32 @@ describe("query (populated archive)", () => {
     expect(listThreads(db, {}).length).toBe(3);
   });
 
+  test("listThreads --branch matches any session in the thread; the row shows the root's", () => {
+    writeSession(env.projects, "-repo", "ROOT", [
+      userMsg("ROOT", "u1", "start", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "more", {
+        gitBranch: "feat/x",
+        parentUuid: "u1",
+        timestamp: ts(1),
+      }),
+    ]);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "u3", "elsewhere", { timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    const hits = listThreads(db, { branch: "feat/x" });
+    expect(hits.map((t) => t.id)).toEqual(["ROOT"]);
+    // Display is root-preferring even though the match came from the resume.
+    expect(hits[0]!.git_branch).toBe("main");
+    expect(
+      listThreads(db, { branch: "main" })
+        .map((t) => t.id)
+        .sort(),
+    ).toEqual(["OTHER", "ROOT"]);
+  });
+
   test("listThreads aggregates a resume's messages into the thread total", () => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { cwd: "/repo", timestamp: ts(0) }),
@@ -370,6 +440,7 @@ describe("query (populated archive)", () => {
     const resumePath = writeSession(env.projects, "-repo-resume", "RESUME", [
       userMsg("RESUME", "u2", "more", {
         cwd: "/repo-resume",
+        gitBranch: "resume-branch",
         parentUuid: "a1",
         timestamp: ts(2),
       }),
@@ -394,7 +465,7 @@ describe("query (populated archive)", () => {
 
     const thread = db
       .query(
-        `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
+        `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available
          FROM threads WHERE id = ?`,
       )
       .get("ROOT") as {
@@ -404,14 +475,17 @@ describe("query (populated archive)", () => {
       msgs: number;
       sessions_in_thread: number;
       project_path: string;
+      git_branch: string | null;
       title: string | null;
       body_available: number;
     };
 
     expect(thread.id).toBe("ROOT");
-    // Root-preferring: title and project_path come from the root, not the resume.
+    // Root-preferring: title, project_path, and git_branch come from the root, not
+    // the resume.
     expect(thread.title).toBe("Root title");
     expect(thread.project_path).toBe("/repo-root");
+    expect(thread.git_branch).toBe("main");
     // msgs is the sum across root (2) + resume (1) + folded subagent (2).
     expect(thread.msgs).toBe(5);
     // ROOT and RESUME are sessions rows; the subagent folds into ROOT.
@@ -701,6 +775,17 @@ describe("query (populated archive)", () => {
     // Unescaped, `my_app` would match `myXapp` via the `_` wildcard.
     expect(listThreads(db, { project: "my_app" }).length).toBe(0);
     expect(listThreads(db, { project: "myXapp" }).length).toBe(1);
+  });
+
+  test("--branch filter treats LIKE wildcards literally (#48)", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "branchy work", { gitBranch: "feature/myXapp" }),
+    ]);
+    runIndex(db);
+    expect(listThreads(db, { branch: "my_app" }).length).toBe(0);
+    expect(listThreads(db, { branch: "myXapp" }).length).toBe(1);
+    expect(search(db, "branchy", 10, { branch: "my_app" }).length).toBe(0);
+    expect(search(db, "branchy", 10, { branch: "myXapp" }).length).toBe(1);
   });
 
   test("stats excludes subagent-only stubs from deleted sources (#45)", () => {

@@ -8,6 +8,9 @@ export interface SearchHit {
   ts: string | null;
   role: string;
   project_path: string | null;
+  // The branch the matched message's own session was recorded on (a session stores
+  // one branch, so this is approximate for a session that switched branches mid-way).
+  git_branch: string | null;
   title: string | null;
   snippet: string;
   // 1-based position of the message within its thread's chronological order; the
@@ -20,6 +23,11 @@ export interface SearchOpts {
   // --project). Goes through the `threads` rollup rather than the matched message's
   // own session row, which is what makes those two commands agree; see the join below.
   project?: string;
+  // Substring filter on the git branch. Thread-level like `project`, but any-session
+  // rather than root-preferring: a thread counts as touching a branch when ANY of its
+  // sessions was recorded on it, because branch work often starts in a resume of a
+  // thread whose root sat on master.
+  branch?: string;
   // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
   // because stored timestamps are ISO-8601). Per message, deliberately: unlike
   // `project` this is a property of the turn, not of the thread it belongs to.
@@ -74,6 +82,16 @@ export const search = (
     filters.push("AND t.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
     filterParams.push(escapeLike(opts.project));
   }
+  if (opts.branch) {
+    // Any-session, not root-preferring (see SearchOpts.branch): an EXISTS over the
+    // thread's sessions rows, so a hit in the root still matches when only a resume
+    // carries the branch, and vice versa.
+    filters.push(
+      "AND EXISTS (SELECT 1 FROM sessions sb WHERE sb.root_session_id = s.root_session_id " +
+        "AND sb.git_branch LIKE '%' || ? || '%' ESCAPE '\\')",
+    );
+    filterParams.push(escapeLike(opts.branch));
+  }
   if (opts.since) {
     filters.push("AND m.ts >= ?");
     filterParams.push(opts.since);
@@ -105,7 +123,7 @@ export const search = (
   // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
   // thread ordering) runs once per *kept* hit below.
   const sql = `
-    SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.title,
+    SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.git_branch, s.title,
            s.root_session_id AS root,
            snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
     FROM messages_fts
@@ -190,25 +208,38 @@ export interface ThreadRow {
   msgs: number;
   sessions_in_thread: number;
   project_path: string | null;
+  // The thread's representative branch (root-preferring, from the `threads` view).
+  // Display-grade: a thread that spans branches shows its root's.
+  git_branch: string | null;
   title: string | null;
   body_available: number;
 }
 
 // List logical threads (roots), most-recently-active first, from the `threads`
-// view (see db.ts for the rollup). Both filters apply AFTER the rollup, on the
-// thread's own values: the project on its representative project_path, so a thread
-// is matched on its root's project even when a resume's project_path is NULL or
-// differs, and `since` on the thread's last activity, the same `last_ts >= ?`
-// comparison recentThreads uses (lexical, because stored timestamps are ISO-8601).
+// view (see db.ts for the rollup). The filters apply AFTER the rollup: the project
+// on the thread's representative project_path, so a thread is matched on its root's
+// project even when a resume's project_path is NULL or differs, and `since` on the
+// thread's last activity, the same `last_ts >= ?` comparison recentThreads uses
+// (lexical, because stored timestamps are ISO-8601). `branch` is any-session rather
+// than root-preferring (the same semantics and reasoning as search's, see
+// SearchOpts.branch): a thread matches when any of its sessions was recorded on the
+// branch, even though the listing displays the root's.
 export const listThreads = (
   db: Database,
-  opts: { project?: string; since?: string; limit?: number } = {},
+  opts: { project?: string; branch?: string; since?: string; limit?: number } = {},
 ): ThreadRow[] => {
   const params: (string | number)[] = [];
   const conditions: string[] = [];
   if (opts.project) {
     conditions.push("project_path LIKE '%' || ? || '%' ESCAPE '\\'");
     params.push(escapeLike(opts.project));
+  }
+  if (opts.branch) {
+    conditions.push(
+      "id IN (SELECT root_session_id FROM sessions " +
+        "WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')",
+    );
+    params.push(escapeLike(opts.branch));
   }
   if (opts.since) {
     conditions.push("last_ts >= ?");
@@ -219,7 +250,7 @@ export const listThreads = (
 
   return db
     .query(
-      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
+      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available
        FROM threads
        ${where}
        ORDER BY last_ts DESC
@@ -250,7 +281,7 @@ export const recentThreads = (
 
   return db
     .query(
-      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, title, body_available
+      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available
        FROM threads
        WHERE last_ts >= ? AND ${repoFilter}
        ORDER BY last_ts DESC

@@ -29,6 +29,7 @@ export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): 
 
 const options = {
   project: text(),
+  branch: text(),
   since: isoDate(),
   role: choice(SEARCH_ROLES),
   prose: flag(),
@@ -38,8 +39,8 @@ const options = {
 } satisfies OptionTable;
 
 // The `search` command: ranked full-text search, best hit per thread by default
-// (--all for every matching message), optionally filtered by --project / --since /
-// --role / --prose.
+// (--all for every matching message), optionally filtered by --project / --branch /
+// --since / --role / --prose.
 export const searchCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {
@@ -47,6 +48,7 @@ export const searchCommand = defineCommand({
     if (!query) throw new CliError("search: missing <query>");
     const hits = search(db, query, args.limit ?? 20, {
       project: args.project,
+      branch: args.branch,
       since: args.since,
       role: args.role,
       prose: args.prose,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, SCHEMA_VERSION } from "../src/db.ts";
+import { openDb, SCHEMA_VERSION, threadsViewIsCurrent } from "../src/db.ts";
 
 // The version-gated schema (#46): the DDL runs once per SCHEMA_VERSION and the
 // stamp lets every later open (the per-prompt hook hot path) skip it entirely.
@@ -81,6 +81,44 @@ describe("openDb schema versioning", () => {
     expect(reopened.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 0 });
     expect(reopened.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 1 });
     reopened.close();
+  });
+
+  test("a wrong-shaped threads view is replaced even when the stamp is current", () => {
+    // A binary built for a different SCHEMA_VERSION racing this one through the
+    // first open after an upgrade can leave the current stamp over its own (older)
+    // view. Version-gating alone would trust that forever and every reader of the
+    // missing column would fail; the open-time shape check must heal it. Simulate
+    // the wedged state: current stamp, pre-v5 view (no git_branch).
+    const db = openDb(path);
+    db.run("DROP VIEW threads");
+    db.run(
+      `CREATE VIEW threads AS
+         SELECT r.root_session_id AS id, MAX(r.last_ts) AS last_ts, MIN(r.first_ts) AS first_ts,
+                SUM(r.msg_count) AS msgs, COUNT(*) AS sessions_in_thread,
+                MAX(r.project_path) AS project_path, MAX(r.git_root) AS git_root,
+                MAX(r.title) AS title, MIN(r.body_available) AS body_available
+         FROM sessions r
+         GROUP BY r.root_session_id
+         HAVING SUM(r.msg_count) > 0`,
+    );
+    db.close();
+
+    const reopened = openDb(path);
+    const cols = reopened.query("PRAGMA table_info(threads)").all() as { name: string }[];
+    expect(cols.some((c) => c.name === "git_branch")).toBe(true);
+    const version = reopened.query("PRAGMA user_version").get() as { user_version: number };
+    expect(version.user_version).toBe(SCHEMA_VERSION);
+    reopened.close();
+  });
+
+  test("THREADS_VIEW_COLUMNS stays in lockstep with the view SCHEMA creates", () => {
+    // If a SCHEMA view change forgets to update the constant, upToDate() goes
+    // permanently false and every open silently re-runs the full DDL under the
+    // write lock, the exact hot-path cost the version gate exists to avoid. A
+    // fresh database must pass the shape check.
+    const db = openDb(path);
+    expect(threadsViewIsCurrent(db)).toBe(true);
+    db.close();
   });
 
   test("messages keeps the legacy line_no column for the deployed hook binary", () => {
