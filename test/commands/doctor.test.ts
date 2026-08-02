@@ -96,10 +96,8 @@ describe("runDoctor", () => {
     expect(check.remedy).toBe("bun run deploy");
   });
 
-  test("a missing settings.json degrades each hook check to unknown", () => {
-    for (const key of ["hook:UserPromptSubmit", "hook:SessionEnd"]) {
-      expect(byKey(runDoctor(db, ":memory:"), key).status).toBe("unknown");
-    }
+  test("a missing settings.json degrades the hook check to unknown", () => {
+    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("unknown");
   });
 
   test("an unparseable settings.json degrades instead of throwing", () => {
@@ -113,16 +111,25 @@ describe("runDoctor", () => {
     const path = join(env.claudeRoot, "settings.json");
     const settings = {
       hooks: {
-        UserPromptSubmit: [{ hooks: [{ type: "command", command: "cerebro relevant --stdin" }] }],
-        SessionEnd: [{ matcher: "clear", hooks: [{ type: "command", command: "/bin/true" }] }],
+        SessionEnd: [{ matcher: "clear", hooks: [{ type: "command", command: "cerebro index" }] }],
       },
     };
     fs.writeFileSync(path, JSON.stringify(settings));
-    const report = runDoctor(db, ":memory:");
-    expect(byKey(report, "hook:UserPromptSubmit").status).toBe("ok");
-    expect(byKey(report, "hook:SessionEnd").status).toBe("warn"); // wired, but not to cerebro
+    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("ok");
     // Read-only: the file is byte-identical afterwards.
     expect(fs.readFileSync(path, "utf8")).toBe(JSON.stringify(settings));
+  });
+
+  test("a SessionEnd hook wired to something other than cerebro warns", () => {
+    fs.writeFileSync(
+      join(env.claudeRoot, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [{ matcher: "clear", hooks: [{ type: "command", command: "/bin/true" }] }],
+        },
+      }),
+    );
+    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("warn");
   });
 
   test("digest coverage warns while a backlog exists and passes once it is drained", () => {

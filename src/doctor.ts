@@ -272,14 +272,12 @@ const deployedDrift = (running: BuildStamp): Check => {
       };
 };
 
-// Whether the hooks that drive the automated paths are wired at all. Reported, never
-// edited: doctor does not touch settings.json.
+// Whether the hook that drives the automated path is wired at all. Reported, never
+// edited: doctor does not touch settings.json. A list of one because cerebro ships one
+// hook; per-prompt relevance injection was removed (see docs/hooks.md).
 const hookWiring = (): Check[] => {
   const path = join(claudeDir(), "settings.json");
-  const wanted = [
-    { key: "UserPromptSubmit", label: "UserPromptSubmit", what: "relevant-thread injection" },
-    { key: "SessionEnd", label: "SessionEnd", what: "index + summarize on /clear" },
-  ];
+  const wanted = [{ key: "SessionEnd", label: "SessionEnd", what: "index + summarize on /clear" }];
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");

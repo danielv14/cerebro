@@ -1,18 +1,17 @@
-# Hooks (auto-index + context injection)
+# Hooks (auto-index on /clear)
 
-Wiring cerebro into Claude Code: the two hooks, what each does, and why they run
+Wiring cerebro into Claude Code: the one hook it ships, what it does, and why it runs
 a compiled binary. Kept out of the README so a flag change does not mean editing
 around a JSON block. See also [scheduling.md](scheduling.md) for the scheduled
 catch-up job and [digest-model-tiering.md](digest-model-tiering.md) for how the
 summary model is picked.
 
-cerebro only runs when asked, so two Claude Code hooks keep it current without a
-background process: one re-indexes when you clear a session, the other surfaces
-relevant past threads on each prompt. (Claude Code deletes session files after
-`cleanupPeriodDays`, default 30; raise it in `~/.claude/settings.json` and index
-before then.)
+cerebro only runs when asked, so one Claude Code hook keeps it current without a
+background process: it re-indexes when you clear a session. (Claude Code deletes
+session files after `cleanupPeriodDays`, default 30; raise it in
+`~/.claude/settings.json` and index before then.)
 
-Deploy a standalone binary so the hooks start fast (no `bun` spawn per event) and run
+Deploy a standalone binary so the hook starts fast (no `bun` spawn per event) and runs
 even where `bun` is not on `PATH`:
 
 ```sh
@@ -20,7 +19,7 @@ bun run deploy   # builds dist/cerebro, copies it + the hook scripts (summarize-
 ```
 
 The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
-tracks the repo live, but the hooks run this compiled copy, so a code
+tracks the repo live, but the hook runs this compiled copy, so a code
 change (or a digest-prompt change) does not reach the automated path until you re-run
 `bun run deploy`.
 
@@ -58,49 +57,32 @@ up as a bogus session. As a backstop the indexer also skips any transcript whose
 turn is the digest prompt, so even a digest run that predates this (or one written some
 other way) never enters the archive.
 
-## Relevant past threads per prompt
+## Why there is no per-prompt injection hook
 
-`cerebro recent` lists recent threads for a repo and `cerebro relevant <prompt>`
-returns the threads most relevant to a prompt. Relevance is text match weighted
-by age: a thread's match score fades as it gets older (halving every 90 days), so
-of two equally good matches the recent one wins; plain `search` ranks by text
-match alone. `relevant` checks the curated summaries first (high signal) and
-falls back to searching raw transcripts for threads not yet summarized; a snippet
-labelled `summary:` came from the summary, `match:` from the transcript. Both
-print compact, recognizable breadcrumbs (id, date, title, the opening prompt, and
-for `relevant` a matching snippet) rather than full text, so the model pulls
-detail on demand with `show` / `search`. `--context` prints a block addressed to
-the agent (and nothing at all when nothing matches); `--stdin` reads the prompt
-(and the cwd) from a hook's JSON payload.
+Recall is on demand. `cerebro relevant <prompt>` and `cerebro recent` are commands the
+`cerebro` skill runs when a question is worth answering from past work; nothing injects
+past threads into a conversation on its own.
 
-Ranking also knows which repo you are in: threads from the cwd's repo (its git root,
-else the exact project path) get their score multiplied by 1.5 in both tiers, roughly
-worth two months of recency, since a prompt typed in repo X usually relates to past
-work in repo X. It is a boost, never a filter, so a much stronger match in another
-repo still surfaces, which matters for shared-infrastructure work. The cwd comes from
-the hook payload under `--stdin`, or from `--cwd <path>` manually; with neither,
-ranking is global as before.
+cerebro used to ship a `UserPromptSubmit` hook that ran `relevant --stdin --context` on
+every prompt. It was removed because it did not pay for the context it cost. Three
+measurements, taken on a 540-thread archive:
 
-The two tiers differ in cost, so summary coverage is what keeps this fast: an
-archive without summaries falls through to the raw tier and pays for a scan of
-every message on every prompt (386 ms on a 300 000-message archive with no
-summaries, see "Curated summaries" in the [README](../README.md)). Keep the
-backlog worked down with the scheduled catch-up job (`digest-stale-batch.sh`,
-see [scheduling.md](scheduling.md)) and most prompts never reach the raw tier
-at all.
+- **It never stayed quiet.** 119 real prompts replayed through it produced 119 blocks
+  and zero silent runs. `relevantThreads` has no score floor, so it fills to `--limit`
+  from whatever bm25 returns: 14 of 15 contentless prompts (`hmm`, `ok do it`,
+  `commit and push`) got a full five rows.
+- **The cost accumulated.** Claude Code stores hook stdout as a transcript attachment,
+  so each block stayed in the conversation for the rest of the session. At ~434 tokens
+  a block that was ~1.7k tokens per session at the median and ~18.7k at the 99th
+  percentile, with 44% of rows repeating a thread already shown earlier in the
+  same session.
+- **Nothing followed the breadcrumbs.** Every measured recall event over two months
+  started from the skill, not from an injected block.
 
-A `UserPromptSubmit` hook injects matching past threads on each prompt, so the model
-picks up earlier work when your prompt overlaps it:
+Moving it to `SessionStart` was considered and rejected: that payload has no `prompt`,
+so relevance would come from cwd alone, which is `cerebro recent` under another name.
+And standing context belongs in the system prompt rather than the first conversation
+turn, which no hook event can write to.
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "~/.claude/cerebro/cerebro relevant --stdin --context --limit 5", "timeout": 15 } ] }
-    ]
-  }
-}
-```
-
-It never blocks (always exits 0) and stays silent when nothing matches. Remove a hook
-group to disable it.
+`relevant` still accepts `--context` and `--stdin`, so the block can be wired into a
+hook by hand. Nothing in cerebro does it for you.

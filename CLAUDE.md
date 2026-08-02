@@ -163,9 +163,8 @@ and carries real example output, so refresh the examples too).
 README is the user guide; the operational half lives in `docs/`, so a hook or
 scheduling change belongs there rather than on the front page:
 
-- `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) and
-  `UserPromptSubmit` (relevant-thread injection) wirings, and the deployed-binary
-  rationale.
+- `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
+  deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd
   plist and the cron equivalent.
 - `docs/digest-model-tiering.md` - the size-to-model tiering, its token budget, the

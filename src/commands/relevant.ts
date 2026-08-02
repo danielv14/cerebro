@@ -21,10 +21,11 @@ const relevantThreadLine = (thread: {
 const relevantSnippetLine = (snippet: string, fromSummary: boolean): string =>
   `      ${fromSummary ? "summary: " : "match:  "}${oneLine(snippet, 120)}`;
 
-// The agent-facing context block emitted under --context is cerebro's contract with
-// the consuming UserPromptSubmit hook: these exact bytes are injected into the model
-// on every prompt, so the intro/footer are exported for their own pinned tests. The
-// "Background only; ignore …" guardrail and the recall instructions are load-bearing.
+// The agent-facing context block emitted under --context: these exact bytes land in
+// the model's context, so the intro/footer are exported for their own pinned tests.
+// The "Background only; ignore …" guardrail and the recall instructions are
+// load-bearing. cerebro no longer ships a hook that emits this (see docs/hooks.md);
+// the block is for the skill and for anyone wiring one up by hand.
 
 export const relevantContextIntro = (): string =>
   "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
@@ -50,10 +51,10 @@ export const relevantBlock = (threads: RelevantThread[], opts: { context: boolea
   return lines;
 };
 
-// The accepted shape of the JSON a UserPromptSubmit hook pipes to `relevant
-// --stdin` (the hook sends { prompt, cwd, ... }). `prompt` is what gets searched and
-// `cwd` is the repo the prompt was typed in (a ranking boost, see relevantThreads);
-// extra keys are ignored.
+// The accepted shape of the JSON a Claude Code hook pipes to `relevant --stdin` (a
+// `UserPromptSubmit` payload is { prompt, cwd, ... }). `prompt` is what gets searched
+// and `cwd` is the repo the prompt was typed in (a ranking boost, see
+// relevantThreads); extra keys are ignored.
 const HookPayloadSchema = v.object({
   prompt: v.optional(v.string()),
   cwd: v.optional(v.string()),
@@ -85,13 +86,13 @@ const options = {
   json: flag(),
 } satisfies OptionTable;
 
-// The `relevant` command: past threads relevant to a prompt (summary tier first),
-// for per-prompt context injection.
+// The `relevant` command: past threads relevant to a prompt (summary tier first).
+// On-demand recall, run by the skill or by hand; nothing runs it per prompt.
 export const relevantCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {
-    // --stdin reads the prompt from a hook's JSON payload (UserPromptSubmit
-    // sends { prompt, cwd, ... } on stdin), so the hook needs no jq or wrapper.
+    // --stdin reads the prompt from a hook's JSON payload (a UserPromptSubmit
+    // payload is { prompt, cwd, ... }), so a hook needs no jq or wrapper.
     let prompt = rest.join(" ");
     // The directory the prompt was typed in, used only to boost same-repo threads.
     // An explicit --cwd wins over the payload's (manual use and tests); with neither,
@@ -121,7 +122,7 @@ export const relevantCommand = defineCommand({
       json: threads,
       lines: threads.length > 0 ? relevantBlock(threads, { context: args.context }) : [],
       empty: "No related past sessions.",
-      // Silent in --context mode so the UserPromptSubmit hook injects nothing.
+      // Silent in --context mode so a consuming hook injects nothing.
       silentWhenEmpty: args.context,
     };
   },

@@ -275,7 +275,6 @@ Archive
   warn  digest coverage   184/196 threads summarized, 12 stale  -> run the reconciler (hooks/digest-stale-batch.sh)
 
 Hooks
-  ok    UserPromptSubmit  relevant-thread injection
   ok    SessionEnd        index + summarize on /clear
 
 All checks passed, 1 warning(s).
@@ -311,8 +310,8 @@ thin, complement it with `cerebro search` against the raw data.
 **Coverage is a latency question, not just a quality question.** `relevant` only runs its
 raw-data tier when the summary tier did not fill `--limit`, and the raw tier is a broad
 scan over the message FTS index (one row per message) where the summary tier reads one row
-per thread. So summaries short-circuit the expensive half of the code path that runs on
-**every prompt**: measured with the compiled binary against a synthetic archive of
+per thread. So summaries short-circuit the expensive half of the lookup: measured with the
+compiled binary against a synthetic archive of
 300 000 messages (1200 sessions, 148 MB) and zero summaries, `cerebro relevant "<prose prompt>" --limit 5`
 took 386 ms, and that shrinks as coverage rises. If the archive is unsummarized,
 `cerebro digest drain` is worth running, and not only for recall.
@@ -438,13 +437,12 @@ stale.
   stored verbatim; errors (`[tool_result:error]`) are not capped.
 - **Threads fold in resumes:** `sessions` shows roots only; resumed sessions and
   subagent work appear inside `show`.
-- **Automated hooks:** a `UserPromptSubmit` hook runs `cerebro relevant --stdin --context`
-  per prompt and possibly injects relevant threads as background context (tagged as such,
-  ignore them when they do not belong). The payload carries the cwd, so threads from the
-  same repo are boosted in the ranking. `relevant` matches the **summaries first**
-  (curated, high signal) and falls back on raw-data bm25 for threads not yet summarized;
-  a hit marked `summary:` comes from the summary, `match:` from the raw data. A
-  `SessionEnd` hook on `/clear` indexes synchronously and then runs
+- **Recall is on demand, nothing is injected.** No hook feeds past threads into a
+  conversation; if earlier work is worth knowing about, run `relevant` / `search` /
+  `digest search` yourself. `relevant` matches the **summaries first** (curated, high
+  signal) and falls back on raw-data bm25 for threads not yet summarized; a hit marked
+  `summary:` comes from the summary, `match:` from the raw data. Pass `--cwd` to boost
+  threads from that repo.
+- **One automated hook:** `SessionEnd` on `/clear` indexes synchronously and then runs
   `cerebro digest run --stdin` detached for the session just cleared (best-effort;
-  `cerebro digest drain` is the reconciler that catches what is missed). You can still
-  proactively run `relevant`/`search`/`digest search` when you want to dig deeper.
+  `cerebro digest drain` is the reconciler that catches what is missed).
