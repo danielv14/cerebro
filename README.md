@@ -84,14 +84,14 @@ default-named backups beyond N. A natural place to hang it is the scheduled
 digest batch, e.g. append `~/.claude/cerebro/cerebro backup --keep 8` to
 `digest-stale-batch.sh`'s schedule or run it from the same launchd/cron entry.
 
-To restore one, stop whatever writes to the archive first (disable the hooks or
+To restore one, stop whatever writes to the archive first (disable the hook or
 the launchd agent), then:
 
 ```sh
 cp ~/.claude/cerebro/backups/archive-<timestamp>.sqlite ~/.claude/cerebro/archive.sqlite
 rm -f ~/.claude/cerebro/archive.sqlite-wal ~/.claude/cerebro/archive.sqlite-shm
 cerebro index      # catch up on everything written since the snapshot
-cerebro doctor     # confirm integrity and schema before re-enabling the hooks
+cerebro doctor     # confirm integrity and schema before re-enabling the hook
 ```
 
 Deleting the stale `-wal` / `-shm` files matters: they are SQLite working files
@@ -108,7 +108,7 @@ The scheduled digest batch runs it automatically at the end of each run.
 wrong: database and search-index integrity, the schema version, leftover index
 state, sessions with no messages, oversized working files, summary coverage and
 staleness, whether the deployed binary is out of date with the repo, and whether
-the hooks are wired in `settings.json` at all. It never repairs anything; each
+the hook is wired in `settings.json` at all. It never repairs anything; each
 finding names the command that does.
 
 ```sh
@@ -126,13 +126,12 @@ have.
 
 ## Automation
 
-cerebro only runs when asked, so Claude Code hooks and a scheduled job are what
+cerebro only runs when asked, so a Claude Code hook and a scheduled job are what
 keep it current -- there is no background process. Those are operational details
 rather than everyday usage, so they live in `docs/`:
 
 - **[docs/hooks.md](docs/hooks.md)** - the `SessionEnd` hook that indexes and
-  summarizes on `/clear`, the `UserPromptSubmit` hook that injects relevant past
-  threads on each prompt, and why both run a deployed binary rather than the source.
+  summarizes on `/clear`, and why it runs a deployed binary rather than the source.
 - **[docs/scheduling.md](docs/scheduling.md)** - `digest-stale-batch.sh`, the
   catch-up script that works through the summary backlog, with a launchd plist
   and the cron equivalent.
@@ -154,20 +153,19 @@ answers "what did I work on around X" far better than searching raw
 transcripts, and they are cheap for a Claude session to read when relating past
 work.
 
-Summaries also make things faster. `relevant` runs on every prompt (via a
-hook), and it only falls back to scanning raw transcripts when the summaries
-come up short of `--limit`. That raw scan is the expensive part: it touches one
-row per message, where the summary scan touches one row per thread. Measured
-with the compiled binary against a synthetic archive of 300 000 messages
-(1200 sessions, 148 MB) and no summaries at all, the worst case where every
-lookup falls through to the raw scan:
+Summaries also make things faster. `relevant` only falls back to scanning raw
+transcripts when the summaries come up short of `--limit`. That raw scan is the
+expensive part: it touches one row per message, where the summary scan touches
+one row per thread. Measured with the compiled binary against a synthetic archive
+of 300 000 messages (1200 sessions, 148 MB) and no summaries at all, the worst
+case where every lookup falls through to the raw scan:
 
 ```
 cerebro relevant "<prose prompt>" --limit 5    386 ms
 ```
 
-That cost sits in front of every prompt, and it shrinks as more threads get
-summarized.
+That is what a lookup costs on an archive with no summaries; it shrinks as more
+threads get summarized.
 
 cerebro owns the whole summarization step: the prompt, the choice of model by
 transcript size, the storage format, and a guard that refuses to store output
