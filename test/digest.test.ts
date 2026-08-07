@@ -352,6 +352,24 @@ describe("digest (summaries layer)", () => {
     expect(searchSummaries(db, "limiter").map((h) => h.id)).toEqual(["DENSE", "BURIED"]);
   });
 
+  test("searchSummaries still renders a hit whose sessions rows are gone (#118)", () => {
+    // The `threads` rollup carries HAVING SUM(msg_count) > 0 and searchSummaryRoots
+    // LEFT JOINs it, so a summary is the archive's only remaining copy of such a
+    // thread. Hydration must tolerate the missing rollup row: keep the snippet, show
+    // null metadata, never drop or throw.
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
+    runIndex(db);
+    writeSummary(db, "S", "Set up the rate limiter middleware. Keywords: limiter");
+    db.run("DELETE FROM sessions WHERE root_session_id = 'S'");
+
+    const hits = searchSummaries(db, "limiter");
+    expect(hits.map((h) => h.id)).toEqual(["S"]);
+    expect(hits[0]!.snippet).toContain("[limiter]");
+    expect(hits[0]!.title).toBeNull();
+    expect(hits[0]!.last_ts).toBeNull();
+    expect(hits[0]!.project_path).toBeNull();
+  });
+
   test("getSummary returns null when nothing is stored", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db);
