@@ -400,12 +400,25 @@ export interface ThreadMeta {
   project_path: string | null;
 }
 
-// Display metadata for a thread root, keyed by the root session id. Shared by the
-// summary-relevance and summary-search call sites so the hydrate query lives once.
-export const threadMeta = (db: Database, root: string): ThreadMeta | null =>
-  db
-    .query("SELECT title, last_ts, project_path FROM sessions WHERE session_id = ?")
-    .get(root) as ThreadMeta | null;
+// Display metadata for a set of thread roots, keyed by root session id. Read from
+// the `threads` rollup, not from the root's own sessions row (#118): for a thread
+// with resumes the root's row carries the first session's last_ts and often no title
+// at all, so reading it made `relevant` and `digest search` disagree with `sessions`
+// and `recent` on the same thread. One query for N roots, so the summary-relevance
+// and summary-search call sites stop hydrating per hit.
+//
+// A root with no rollup row is simply absent from the map. The view carries
+// HAVING SUM(msg_count) > 0 and searchSummaryRoots LEFT JOINs it deliberately, so a
+// summary whose sessions rows are gone must still render its hit; callers fall back
+// to null metadata rather than dropping it.
+export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, ThreadMeta> => {
+  if (roots.length === 0) return new Map();
+  const placeholders = roots.map(() => "?").join(", ");
+  const rows = db
+    .query(`SELECT id, title, last_ts, project_path FROM threads WHERE id IN (${placeholders})`)
+    .all(...roots) as (ThreadMeta & { id: string })[];
+  return new Map(rows.map(({ id, ...meta }) => [id, meta]));
+};
 
 export interface RelevantThread {
   id: string;
@@ -514,8 +527,9 @@ export const relevantThreads = (
     }
   }
 
+  const metaByRoot = hydrateThreadMeta(db, [...chosen.keys()]);
   return [...chosen.entries()].map(([root, info]) => {
-    const meta = threadMeta(db, root);
+    const meta = metaByRoot.get(root);
     return {
       id: root,
       last_ts: meta?.last_ts ?? null,

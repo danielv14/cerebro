@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest/index.ts";
+import { searchSummaries, writeSummary } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   decayedRank,
@@ -739,6 +739,44 @@ describe("query (populated archive)", () => {
     const scoped = relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" });
     expect(scoped.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
     expect(scoped.every((h) => h.fromSummary)).toBe(true);
+  });
+
+  test("every surface shows the same title, last activity and project for a resumed thread (#118)", () => {
+    // The root ran once and never carried a title event; the resume carried the title
+    // and ran a month later. Reading the root's own sessions row (as relevant and
+    // digest search used to) showed the root's date and "(untitled)"; all four
+    // surfaces must show the thread's rollup instead.
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo", "ROOT", [
+      userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
+      assistantMsg("ROOT", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "continue the limiter work", {
+        parentUuid: "a1",
+        timestamp: ts(month),
+      }),
+      { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
+    ]);
+    runIndex(db);
+    writeSummary(db, "ROOT", "Worked on the limiter. Keywords: limiter");
+    const now = Date.parse(ts(month));
+
+    const surfaces = {
+      sessions: listThreads(db)[0]!,
+      recent: recentThreads(db, { cwd: "/repo", since: ts(-1), limit: 5 })[0]!,
+      relevant: relevantThreads(db, "limiter", 3, now)[0]!,
+      digestSearch: searchSummaries(db, "limiter")[0]!,
+    };
+    for (const [name, surface] of Object.entries(surfaces)) {
+      expect({ name, ...surface }).toMatchObject({
+        name,
+        id: "ROOT",
+        title: "Fixing the search ranking",
+        last_ts: ts(month),
+        project_path: "/repo",
+      });
+    }
   });
 
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {

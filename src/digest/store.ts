@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { type SummaryRootHit, searchSummaryRoots, threadMeta, toMatchQuery } from "../query.ts";
+import {
+  hydrateThreadMeta,
+  type SummaryRootHit,
+  searchSummaryRoots,
+  toMatchQuery,
+} from "../query.ts";
 import { rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
@@ -107,8 +112,14 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
+  // Hydrated in one query over every hit's root; a hit whose rollup row is gone keeps
+  // its snippet and renders with null metadata (see hydrateThreadMeta).
+  const metaByRoot = hydrateThreadMeta(
+    db,
+    rows.map((row) => row.root),
+  );
   return rows.map((row) => {
-    const meta = threadMeta(db, row.root);
+    const meta = metaByRoot.get(row.root);
     return {
       id: row.root,
       last_ts: meta?.last_ts ?? null,
