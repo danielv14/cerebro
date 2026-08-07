@@ -112,8 +112,6 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
-  // Hydrated in one query over every hit's root; a hit whose rollup row is gone keeps
-  // its snippet and renders with null metadata (see hydrateThreadMeta).
   const metaByRoot = hydrateThreadMeta(
     db,
     rows.map((row) => row.root),

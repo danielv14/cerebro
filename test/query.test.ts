@@ -777,6 +777,18 @@ describe("query (populated archive)", () => {
         project_path: "/repo",
       });
     }
+
+    // The summary above made every relevant hit a tier-1 one. Drop it so the same
+    // assertion runs through the raw tier, which shares the one hydration but would
+    // not be covered by any assertion above if a future change split them again.
+    db.run("DELETE FROM summaries");
+    expect(relevantThreads(db, "limiter", 3, now)[0]!).toMatchObject({
+      id: "ROOT",
+      title: "Fixing the search ranking",
+      last_ts: ts(month),
+      project_path: "/repo",
+      fromSummary: false,
+    });
   });
 
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
