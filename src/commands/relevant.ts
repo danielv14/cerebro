@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { gitInfo } from "../git.ts";
-import { type RelevantThread, relevantThreads } from "../query.ts";
+import { type RelevantThread, relevantThreads } from "../relevance.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { CliError, flag, numeric, type OptionTable, text } from "./args.ts";
 import { defineCommand } from "./command.ts";

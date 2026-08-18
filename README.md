@@ -327,11 +327,15 @@ src/
   git.ts        gitInfo(cwd) with cache
   indexer.ts    runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
   thread.ts     rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
-  query.ts      search(), listThreads(), recentThreads(), relevantThreads(), ...
+  query.ts      data access: search(), listThreads(), recentThreads(),
+                resolveSession(), stats(), toMatchQuery(), hydrateThreadMeta()
+  relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo
+                boost)
   render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
   digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads() +
-                summaryCoverage() (stale.ts), writeSummary() + searchSummaries()
-                (store.ts), the summarize pipeline + the Summarizer seam (run.ts)
+                summaryCoverage() (stale.ts), writeSummary() + the summary
+                full-text search (store.ts), the summarize pipeline + the
+                Summarizer seam (run.ts)
   digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
                 digest-transcript skipping on it)
   backup.ts     runBackup() (VACUUM INTO snapshots + pruning)

@@ -1,10 +1,5 @@
 import type { Database } from "bun:sqlite";
-import {
-  hydrateThreadMeta,
-  type SummaryRootHit,
-  searchSummaryRoots,
-  toMatchQuery,
-} from "../query.ts";
+import { hydrateThreadMeta, toMatchQuery } from "../query.ts";
 import { rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
@@ -89,6 +84,50 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
   db
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
+
+export interface SummaryRootHit {
+  root: string;
+  snippet: string;
+  // bm25 of the summary match plus the thread's latest activity and repo, so
+  // `relevant` can recency-weight the tier and boost same-repo threads. `digest
+  // search` ignores all four.
+  score: number;
+  last_ts: string | null;
+  git_root: string | null;
+  project_path: string | null;
+}
+
+// The curated-summary FTS search, ranked by bm25, for an already-tokenized MATCH
+// query. Owned here, next to the writes: the module that stores a summary reads it
+// back too, instead of the seam running through the middle of the `summaries` table.
+// The single owner of the summaries_fts query shape, so `relevant`'s summary tier and
+// `digest search` cannot drift on the query, the join, or the snippet markup.
+// `snippetTokens` is a parameter because the two callers surface different amounts of
+// context (relevant is compact, digest search is roomier). The thread rollup (last_ts
+// and the repo fields) is joined in from the `threads` view, left so a summary whose
+// sessions rows are gone still returns its snippet. Throws on a malformed MATCH so
+// each caller keeps its own fallback (relevant falls through to raw transcripts;
+// digest search returns empty).
+export const searchSummaryRoots = (
+  db: Database,
+  match: string,
+  limit: number,
+  snippetTokens: number,
+): SummaryRootHit[] =>
+  db
+    .query(
+      `SELECT s.root_session_id AS root,
+              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
+              bm25(summaries_fts) AS score,
+              t.last_ts, t.git_root, t.project_path
+       FROM summaries_fts
+       JOIN summaries s ON s.rowid = summaries_fts.rowid
+       LEFT JOIN threads t ON t.id = s.root_session_id
+       WHERE summaries_fts MATCH ?
+       ORDER BY bm25(summaries_fts)
+       LIMIT ?`,
+    )
+    .all(snippetTokens, match, limit) as SummaryRootHit[];
 
 export interface SummaryHit {
   id: string;

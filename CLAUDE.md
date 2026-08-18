@@ -46,10 +46,11 @@ code.
   dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option
   tables, per-command rejection of foreign flags, and each command via an injected
   db and capturing sink), option coercion (`test/commands/args.test.ts`), the
-  digest layer (staleness, model tiering) and its summarize pipeline
-  (`test/digest-run.test.ts`: every failure mode through a fake Summarizer, plus
-  the real adapter against a stand-in `claude` script), and every query function.
-  Add tests when you touch these.
+  relevance ranking (`test/relevance.test.ts`: both FTS tiers, recency decay,
+  same-repo boost), the digest layer (staleness, model tiering) and its summarize
+  pipeline (`test/digest-run.test.ts`: every failure mode through a fake Summarizer,
+  plus the real adapter against a stand-in `claude` script), and every query
+  function. Add tests when you touch these.
 - Run locally: `bun run src/cli.ts <command>`, or the linked `cerebro` on PATH
   (`~/.local/bin/cerebro` -> `src/cli.ts`). The PATH symlink tracks the repo live.
 - **Rebuild the deployed binary after code changes.** The `SessionEnd`/clear hook
