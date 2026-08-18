@@ -12,11 +12,12 @@ import {
   pickDigestModel,
   rejectSummaryReason,
   searchSummaries,
+  searchSummaryRoots,
   staleThreads,
   writeSummary,
 } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
-import { relevantThreads, searchSummaryRoots } from "../src/query.ts";
+import { relevantThreads } from "../src/relevance.ts";
 import {
   appendRaw,
   assistantMsg,
