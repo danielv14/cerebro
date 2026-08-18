@@ -73,10 +73,12 @@ const options = {
 // cwd is inside a repo, else by exact project path), for session-start context.
 export const recentCommand = defineCommand({
   options,
-  run: ({ db, args }) => {
-    const cwd = args.cwd || process.cwd();
+  run: ({ db, args, now, cwd: invokedIn }) => {
+    // --cwd wins over the directory the command was invoked in; the window is measured
+    // from the dispatcher's instant, not from a second reading of the clock.
+    const cwd = args.cwd || invokedIn;
     const days = args.days ?? 14;
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const since = new Date(now - days * 86_400_000).toISOString();
     const repoRoot = gitInfo(cwd).root;
     const threads = recentThreads(db, { repoRoot, cwd, since, limit: args.limit ?? 5 });
     // The opening prompt is fetched here so the render stays db-free. JSON carries

@@ -167,6 +167,10 @@ describe("runCli", () => {
 
   const memDb = () => openDb(":memory:");
 
+  // The fixture timestamps sit at a fixed base (see ts()), so pinning the dispatcher's
+  // instant there is what lets these tests use the real default windows.
+  const NOW = Date.parse(ts(0));
+
   test("--help prints help, no error, exit 0, and never opens a db", () => {
     const cap = makeIO();
     let opened = false;
@@ -667,9 +671,10 @@ describe("runCli", () => {
       userMsg("SESS", "u1", "some work", { timestamp: ts(0) }),
     ]);
     const cap = makeIO();
-    // /repo is not a real git repo, so recent falls back to project_path matching;
-    // a huge --days window includes the fixture's fixed-base timestamp.
-    runCli(["recent", "--cwd", "/repo", "--days", "100000", "--context"], cap.io, seeded());
+    // /repo is not a real git repo, so recent falls back to project_path matching. The
+    // pinned instant is what makes the default 14-day window cover the fixture's
+    // fixed-base timestamps; no oversized --days needed.
+    runCli(["recent", "--cwd", "/repo", "--context"], cap.io, seeded(), { now: NOW });
     const out = cap.logs.join("\n");
     expect(out).toContain("Recent Claude Code sessions in this repo");
     expect(out).toContain("Background only; ignore if unrelated to the current task.");
@@ -680,10 +685,87 @@ describe("runCli", () => {
 
   test("recent --context is silent when there are no matching sessions", () => {
     const cap = makeIO();
-    runCli(["recent", "--cwd", "/repo", "--days", "100000", "--context"], cap.io, () => memDb());
+    runCli(["recent", "--cwd", "/repo", "--context"], cap.io, () => memDb(), { now: NOW });
     expect(cap.logs).toEqual([]);
     expect(cap.errs).toEqual([]);
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("recent's window is measured from the dispatcher's instant (#125)", () => {
+    // Two threads in the same project, three weeks apart. With the instant pinned to
+    // the fresh one, the default 14-day window has to include it and exclude the other.
+    writeSession(env.projects, "-repo", "FRESHTHREAD", [
+      userMsg("FRESHTHREAD", "u1", "fresh work", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "OLDTHREAD", [
+      userMsg("OLDTHREAD", "u2", "older work", { timestamp: ts(-21 * 86_400) }),
+    ]);
+    const cap = makeIO();
+    runCli(["recent", "--cwd", "/repo", "--json"], cap.io, seeded(), { now: NOW });
+    expect(JSON.parse(cap.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
+      "FRESHTHREAD",
+    ]);
+
+    // Widening the window brings the older thread back, from the same instant.
+    const wide = makeIO();
+    runCli(["recent", "--cwd", "/repo", "--days", "30", "--json"], wide.io, seeded(), { now: NOW });
+    expect(JSON.parse(wide.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
+      "FRESHTHREAD",
+      "OLDTHREAD",
+    ]);
+  });
+
+  test("recent falls back to the invoked directory, and --cwd still wins (#125)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "some work", { timestamp: ts(0) }),
+    ]);
+    const ambient = makeIO();
+    runCli(["recent", "--json"], ambient.io, seeded(), { now: NOW, cwd: "/repo" });
+    expect(JSON.parse(ambient.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
+      "SESS",
+    ]);
+
+    // The flag beats the ambient value, in both directions.
+    const flagWins = makeIO();
+    runCli(["recent", "--cwd", "/repo", "--json"], flagWins.io, seeded(), {
+      now: NOW,
+      cwd: "/elsewhere",
+    });
+    expect(JSON.parse(flagWins.logs.join("\n")).length).toBe(1);
+
+    const flagMisses = makeIO();
+    runCli(["recent", "--cwd", "/elsewhere", "--json"], flagMisses.io, seeded(), {
+      now: NOW,
+      cwd: "/repo",
+    });
+    expect(JSON.parse(flagMisses.logs.join("\n"))).toEqual([]);
+  });
+
+  test("relevant ranks globally on the ambient cwd, and boosts only on --cwd (#125)", () => {
+    // relevant deliberately does not adopt the invoked directory: a manual call must
+    // rank the same wherever it is typed. Two identical matches, one a month newer in
+    // another repo, so only the boost can change the order.
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo-mine", "MINETHREAD", [
+      userMsg("MINETHREAD", "u1", "the limiter work", { cwd: "/repo-mine", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo-other", "OTHERTHREAD", [
+      userMsg("OTHERTHREAD", "u2", "the limiter work", {
+        cwd: "/repo-other",
+        timestamp: ts(month),
+      }),
+    ]);
+    const ids = (cap: ReturnType<typeof makeIO>): string[] =>
+      JSON.parse(cap.logs.join("\n")).map((row: { id: string }) => row.id);
+    const now = Date.parse(ts(month));
+
+    const ambient = makeIO();
+    runCli(["relevant", "limiter", "--json"], ambient.io, seeded(), { now, cwd: "/repo-mine" });
+    expect(ids(ambient)).toEqual(["OTHERTHREAD", "MINETHREAD"]);
+
+    const scoped = makeIO();
+    runCli(["relevant", "limiter", "--cwd", "/repo-mine", "--json"], scoped.io, seeded(), { now });
+    expect(ids(scoped)).toEqual(["MINETHREAD", "OTHERTHREAD"]);
   });
 
   test("recent --days must be a positive number", () => {

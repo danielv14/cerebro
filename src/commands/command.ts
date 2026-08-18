@@ -10,6 +10,15 @@ export interface CommandInput<A> {
   db: Database;
   // The command's own validated options.
   args: A;
+  // The instant the command runs at, and the directory it was invoked in, both
+  // supplied by the dispatcher. A command reads the clock and the cwd from here
+  // rather than from the process, so its window arithmetic is a function of its input
+  // and a test can pin an instant instead of widening a window until the real clock
+  // cannot affect the assertion. A command with its own --cwd flag still lets the flag
+  // win (`recent`), and `relevant` deliberately does not fall back to `cwd` at all:
+  // without a flag or a hook payload it ranks globally.
+  now: number;
+  cwd: string;
   // Positionals after the command name (and after the sub-action for a group), so
   // a command never indexes past its own arguments.
   rest: string[];

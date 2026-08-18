@@ -109,6 +109,14 @@ const PARSER_OPTIONS = parserOptions();
 const parseCliArgs = (args: string[]) =>
   parseArgs({ args, allowPositionals: true, tokens: true, options: PARSER_OPTIONS });
 
+// The ambient values the dispatcher hands every command (see CommandInput). Both are
+// injectable so a test can pin the clock and the working directory; production reads
+// them off the process.
+export interface CliEnv {
+  now?: number;
+  cwd?: string;
+}
+
 // Parse args, dispatch the command, and report through `io`. `makeDb` is injected
 // so tests can supply an in-memory database; production passes openDb. runCli owns
 // the database lifetime (open after the help/parse fast-paths, close in finally),
@@ -118,6 +126,7 @@ export const runCli = (
   args: string[],
   io: CliIO,
   makeDb: (path: string) => Database = openDb,
+  env: CliEnv = {},
 ): void => {
   const fail = (message: string): void => {
     io.error(message);
@@ -196,6 +205,9 @@ export const runCli = (
   }
 
   const dbPath = (typeof values.db === "string" && values.db) || defaultDbPath();
+  // Read once per run, so every command in one dispatch sees the same instant.
+  const now = env.now ?? Date.now();
+  const cwd = env.cwd ?? process.cwd();
 
   // Emit whatever the command produced: raw stdout, or JSON when the command
   // declares --json and it was asked for, or the rendered lines, or the empty
@@ -216,6 +228,8 @@ export const runCli = (
         args: commandArgs,
         rest,
         dbPath,
+        now,
+        cwd,
         progress: io.log,
       }),
     );
@@ -233,7 +247,7 @@ export const runCli = (
   }
 
   try {
-    emit(command.run({ db, args: commandArgs, rest, dbPath, progress: io.log }));
+    emit(command.run({ db, args: commandArgs, rest, dbPath, now, cwd, progress: io.log }));
   } catch (error) {
     // A CliError (a bad argument, an unresolvable id), an ambiguous session prefix,
     // or an unexpected SQL error: show the message, not a stack trace.
