@@ -313,7 +313,8 @@ CI runs `biome ci` on every PR alongside typecheck, tests, and a compile build.
 ```
 src/
   cli.ts        parseArgs + the dispatch table + option checking + db lifetime
-                + rendering (a command returns data; runCli prints it)
+                + the ambient clock/cwd + rendering (a command returns data;
+                runCli prints it)
   help.ts       the HELP text
   commands/     one module per command: its declared options, its run step, and
                 its output formatting

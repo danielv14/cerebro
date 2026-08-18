@@ -180,7 +180,15 @@ describe("runDoctor", () => {
     expect(rootOf(db, "RESUME")).toBe("ORIG");
 
     const threadsLine = statsCommand
-      .run({ db, args: { json: false }, rest: [], dbPath: ":memory:", progress: () => {} })
+      .run({
+        db,
+        args: { json: false },
+        rest: [],
+        dbPath: ":memory:",
+        now: Date.parse(ts(0)),
+        cwd: "/repo",
+        progress: () => {},
+      })
       .lines!.find((line) => line.startsWith("Threads:"));
     expect(threadsLine).toBe("Threads:          1 (0 summarized, 1 stale)");
     expect(byKey(runDoctor(db, ":memory:"), "digest").detail).toBe(

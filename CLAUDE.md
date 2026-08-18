@@ -82,8 +82,9 @@ between JSON and a listing, and cannot read a flag it did not declare.
 
 `runCli` owns the rest: parsing, rejecting a flag the command did not declare
 (this is why `cerebro sessions --keep 3` errors instead of being ignored),
-coercing and validating the declared ones, opening and closing the database, and
-rendering the result. A bad argument is a `CliError` thrown from wherever the rule
+coercing and validating the declared ones, opening and closing the database,
+supplying the ambient clock and working directory (`now`/`cwd` on the command
+input, injectable so a test can pin an instant), and rendering the result. A bad argument is a `CliError` thrown from wherever the rule
 lives; runCli turns it into one message plus exit 1.
 
 When adding a command: declare its options, return data, and add it to the

@@ -90,13 +90,13 @@ const options = {
 // On-demand recall, run by the skill or by hand; nothing runs it per prompt.
 export const relevantCommand = defineCommand({
   options,
-  run: ({ db, args, rest }) => {
+  run: ({ db, args, rest, now }) => {
     // --stdin reads the prompt from a hook's JSON payload (a UserPromptSubmit
     // payload is { prompt, cwd, ... }), so a hook needs no jq or wrapper.
     let prompt = rest.join(" ");
     // The directory the prompt was typed in, used only to boost same-repo threads.
     // An explicit --cwd wins over the payload's (manual use and tests); with neither,
-    // ranking stays global. Deliberately NOT defaulted to process.cwd(): a manual
+    // ranking stays global. Deliberately NOT defaulted to the input's cwd: a manual
     // `relevant "..."` must rank exactly as it did before.
     let cwd = args.cwd || null;
     if (args.stdin) {
@@ -114,7 +114,7 @@ export const relevantCommand = defineCommand({
     }
     // Same repo resolution as `recent`: the git root when the cwd is inside a repo,
     // else the exact path. gitInfo tolerates a null cwd (and a deleted directory).
-    const threads = relevantThreads(db, prompt, args.limit ?? 3, Date.now(), {
+    const threads = relevantThreads(db, prompt, args.limit ?? 3, now, {
       repoRoot: gitInfo(cwd).root,
       cwd,
     });
