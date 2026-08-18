@@ -7,6 +7,8 @@ export interface SearchHit {
   session_id: string;
   ts: string | null;
   role: string;
+  // The thread's project and title, from the `threads` rollup (#120), so a hit agrees
+  // with every other surface no matter which session inside the thread it landed in.
   project_path: string | null;
   // The branch the matched message's own session was recorded on (a session stores
   // one branch, so this is approximate for a session that switched branches mid-way).
@@ -190,10 +192,28 @@ export const search = (
     }
   }
 
-  return kept.map(({ root, ...hit }) => ({
-    ...hit,
-    ordinal: messageOrdinal(db, root ?? hit.session_id, hit.id),
-  }));
+  // Title and project are the *thread's*, read from the `threads` rollup rather than
+  // the matched message's own session row (#120). A resumed thread usually splits the
+  // two across its sessions (the root carries the cwd and no title event, the resume
+  // carries the title and no cwd), so reading the session made `search` disagree with
+  // sessions, recent, relevant and digest search on the same thread, and let a hit
+  // that matched --project render its project as (unknown). One query over the kept
+  // hits (at most `limit`), deliberately not a join inside the ranking window, which
+  // grows to 128 000 rows. `ts` and `git_branch` stay the matched message's own.
+  const roots = kept.map((hit) => hit.root ?? hit.session_id);
+  const metaByRoot = hydrateThreadMeta(db, [...new Set(roots)]);
+
+  return kept.map(({ root, ...hit }) => {
+    // A thread with no rollup row (its sessions rows are gone) falls back to what the
+    // matched session carries, rather than dropping the hit.
+    const meta = metaByRoot.get(root ?? hit.session_id);
+    return {
+      ...hit,
+      project_path: meta ? meta.project_path : hit.project_path,
+      title: meta ? meta.title : hit.title,
+      ordinal: messageOrdinal(db, root ?? hit.session_id, hit.id),
+    };
+  });
 };
 
 // Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
