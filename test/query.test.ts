@@ -14,7 +14,7 @@ import {
   stats,
   toMatchQuery,
 } from "../src/query.ts";
-import { countThreads, threadMessages } from "../src/thread.ts";
+import { countThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -402,6 +402,45 @@ describe("query (populated archive)", () => {
         .map((t) => t.id)
         .sort(),
     ).toEqual(["OTHER", "ROOT"]);
+  });
+
+  test("search --branch and sessions --branch agree on which threads touch a branch (#123)", () => {
+    // Both readers compose threadOnBranch now; before, the same any-session rule was
+    // spelled as two different subqueries and only a comment said they matched.
+    writeSession(env.projects, "-repo", "ROOT", [
+      userMsg("ROOT", "u1", "the limiter work", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "more limiter work", {
+        gitBranch: "feat/x",
+        parentUuid: "u1",
+        timestamp: ts(1),
+      }),
+    ]);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "u3", "limiter elsewhere", { timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+
+    const searched = (branch: string): string[] =>
+      [
+        ...new Set(
+          search(db, "limiter", 20, { all: true, branch }).map((hit) => rootOf(db, hit.session_id)),
+        ),
+      ].sort();
+    const listed = (branch: string): string[] =>
+      listThreads(db, { branch })
+        .map((thread) => thread.id)
+        .sort();
+
+    // "feat/x" is the interesting one: only the resume carries it, so the rule has to
+    // reach the whole thread from either side.
+    for (const branch of ["feat/x", "feat", "main", "nope"]) {
+      expect({ branch, roots: searched(branch) }).toEqual({ branch, roots: listed(branch) });
+    }
+    expect(listed("feat/x")).toEqual(["ROOT"]);
+    expect(listed("main")).toEqual(["OTHER", "ROOT"]);
+    expect(listed("nope")).toEqual([]);
   });
 
   test("listThreads aggregates a resume's messages into the thread total", () => {
