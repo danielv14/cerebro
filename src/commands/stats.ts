@@ -1,5 +1,5 @@
 import { dbFileSize } from "../db.ts";
-import { countStaleThreads } from "../digest/index.ts";
+import { type SummaryCoverage, summaryCoverage } from "../digest/index.ts";
 import { type Stats, stats } from "../query.ts";
 import { humanBytes, projectName, shortDate } from "../render.ts";
 import { flag, type OptionTable } from "./args.ts";
@@ -8,14 +8,14 @@ import { defineCommand } from "./command.ts";
 // `stats` output: the archive counts, labels left-aligned to a shared column.
 // `extras` carries what the query layer cannot know: the database file size
 // (measured on the path by the command; null for :memory: or a missing file) and
-// the stale-thread count (owned by the digest layer, since it depends on the
-// prompt version).
+// the summary coverage, which the digest layer owns because it depends on the
+// prompt version.
 export const statsReport = (
   s: Stats,
-  extras: { dbBytes: number | null; staleThreads: number } = { dbBytes: null, staleThreads: 0 },
+  extras: { dbBytes: number | null; coverage: SummaryCoverage },
 ): string[] => {
   const lines = [
-    `Threads:          ${s.threads} (${s.summarizedThreads} summarized, ${extras.staleThreads} stale)`,
+    `Threads:          ${s.threads} (${extras.coverage.summarized} summarized, ${extras.coverage.stale} stale)`,
     `Sessions:         ${s.sessions}`,
     `Messages:         ${s.messages}`,
     `Deleted sources:  ${s.deletedSources}`,
@@ -40,14 +40,19 @@ export const statsCommand = defineCommand({
   options,
   run: ({ db, dbPath }) => {
     // The file size lives outside the query layer (and is meaningless for the
-    // in-memory databases tests use); the stale count is the digest layer's,
-    // since staleness depends on DIGEST_PROMPT_VERSION.
+    // in-memory databases tests use); the coverage numbers are the digest layer's,
+    // the same reader doctor's coverage check calls.
     const dbBytes = dbFileSize(dbPath);
-    const staleThreads = countStaleThreads(db);
+    const coverage = summaryCoverage(db);
     const counts = stats(db);
     return {
-      json: { ...counts, dbBytes, staleThreads },
-      lines: statsReport(counts, { dbBytes, staleThreads }),
+      json: {
+        ...counts,
+        dbBytes,
+        summarizedThreads: coverage.summarized,
+        staleThreads: coverage.stale,
+      },
+      lines: statsReport(counts, { dbBytes, coverage }),
     };
   },
 });

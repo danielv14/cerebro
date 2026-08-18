@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
-import { countStaleThreads } from "./digest/index.ts";
+import { summaryCoverage } from "./digest/index.ts";
 import { claudeDir, discoverSessionFiles } from "./paths.ts";
 
 // The health report `cerebro doctor` renders. Read-only by construction: doctor
@@ -173,14 +173,7 @@ const emptySessions = (db: Database): Check => {
 };
 
 const digestCoverage = (db: Database): Check => {
-  const { threads, summarized } = db
-    .query(
-      `SELECT (SELECT COUNT(*) FROM threads) AS threads,
-              (SELECT COUNT(*) FROM summaries su JOIN threads t ON t.id = su.root_session_id)
-                AS summarized`,
-    )
-    .get() as { threads: number; summarized: number };
-  const stale = countStaleThreads(db);
+  const { threads, summarized, stale } = summaryCoverage(db);
   const detail = `${summarized}/${threads} threads summarized, ${stale} stale`;
   // Coverage is not just a quality metric: relevant's summary tier short-circuits
   // the raw-transcript scan, so a backlog is per-prompt hook latency.

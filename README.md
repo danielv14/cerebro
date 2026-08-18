@@ -328,9 +328,9 @@ src/
   thread.ts     rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
   query.ts      search(), listThreads(), recentThreads(), relevantThreads(), ...
   render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
-  digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads()
-                (stale.ts), writeSummary() + searchSummaries() (store.ts),
-                the summarize pipeline + the Summarizer seam (run.ts)
+  digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads() +
+                summaryCoverage() (stale.ts), writeSummary() + searchSummaries()
+                (store.ts), the summarize pipeline + the Summarizer seam (run.ts)
   digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
                 digest-transcript skipping on it)
   backup.ts     runBackup() (VACUUM INTO snapshots + pruning)
