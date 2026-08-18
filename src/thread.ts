@@ -16,6 +16,27 @@ import type { Database } from "bun:sqlite";
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
 
+// The `threads` view columns a thread listing reads, in view order. One projection
+// for the thread listing and the repo-scoped recent listing, so a column added to a
+// ThreadRow reaches both readers instead of one. git_root is in the view but
+// deliberately not projected: recent filters on it, no listing shows it.
+export const THREAD_ROW_COLUMNS =
+  "id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available";
+
+// The branch filter, expressed exactly once: a thread touches a branch when ANY of
+// its sessions was recorded on it, not only its root, because branch work often
+// starts in a resume of a thread whose root sat on master. `search --branch` and
+// `sessions --branch` compose this instead of spelling out two subqueries that a
+// comment claims are the same rule.
+//
+// `rootExpr` is how the caller's row names the thread root (`id` on the threads view,
+// `s.root_session_id` on a joined sessions row): a fixed literal the codebase owns,
+// safe to interpolate. The branch fragment stays a bound `?` and is LIKE-escaped by
+// the caller, which is where the ESCAPE clause below expects it.
+export const threadOnBranch = (rootExpr: string): string =>
+  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
+  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
+
 // Resolve any session id (a root, a resume, or a subagent's parent) to its thread
 // root. Falls back to the given id when the session row is absent or
 // root_session_id is NULL (a not-yet-relinked session). The single home of root

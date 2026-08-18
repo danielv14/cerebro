@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-import { countThreads, messageOrdinal, threadOpeningPrompt } from "./thread.ts";
+import {
+  countThreads,
+  messageOrdinal,
+  THREAD_ROW_COLUMNS,
+  threadOnBranch,
+  threadOpeningPrompt,
+} from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -28,7 +34,8 @@ export interface SearchOpts {
   // Substring filter on the git branch. Thread-level like `project`, but any-session
   // rather than root-preferring: a thread counts as touching a branch when ANY of its
   // sessions was recorded on it, because branch work often starts in a resume of a
-  // thread whose root sat on master.
+  // thread whose root sat on master. The predicate itself is threadOnBranch
+  // (thread.ts), shared with the thread listing.
   branch?: string;
   // ISO date/datetime cutoff: only messages with ts >= since (lexical compare works
   // because stored timestamps are ISO-8601). Per message, deliberately: unlike
@@ -85,13 +92,10 @@ export const search = (
     filterParams.push(escapeLike(opts.project));
   }
   if (opts.branch) {
-    // Any-session, not root-preferring (see SearchOpts.branch): an EXISTS over the
-    // thread's sessions rows, so a hit in the root still matches when only a resume
-    // carries the branch, and vice versa.
-    filters.push(
-      "AND EXISTS (SELECT 1 FROM sessions sb WHERE sb.root_session_id = s.root_session_id " +
-        "AND sb.git_branch LIKE '%' || ? || '%' ESCAPE '\\')",
-    );
+    // Any-session, not root-preferring (see SearchOpts.branch), expressed relative to
+    // the matched message's own session row: the same predicate `sessions --branch`
+    // composes, owned by thread.ts.
+    filters.push(`AND ${threadOnBranch("s.root_session_id")}`);
     filterParams.push(escapeLike(opts.branch));
   }
   if (opts.since) {
@@ -221,6 +225,8 @@ export const search = (
 export const escapeLike = (fragment: string): string =>
   fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
+// One row of the `threads` view as the listings read it; the projection that fills it
+// is THREAD_ROW_COLUMNS (thread.ts), shared by both readers.
 export interface ThreadRow {
   id: string;
   last_ts: string | null;
@@ -255,10 +261,7 @@ export const listThreads = (
     params.push(escapeLike(opts.project));
   }
   if (opts.branch) {
-    conditions.push(
-      "id IN (SELECT root_session_id FROM sessions " +
-        "WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')",
-    );
+    conditions.push(threadOnBranch("id"));
     params.push(escapeLike(opts.branch));
   }
   if (opts.since) {
@@ -270,7 +273,7 @@ export const listThreads = (
 
   return db
     .query(
-      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available
+      `SELECT ${THREAD_ROW_COLUMNS}
        FROM threads
        ${where}
        ORDER BY last_ts DESC
@@ -301,7 +304,7 @@ export const recentThreads = (
 
   return db
     .query(
-      `SELECT id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available
+      `SELECT ${THREAD_ROW_COLUMNS}
        FROM threads
        WHERE last_ts >= ? AND ${repoFilter}
        ORDER BY last_ts DESC
