@@ -3,10 +3,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { join } from "node:path";
 import { doctorReport } from "../../src/commands/doctor.ts";
+import { statsCommand } from "../../src/commands/stats.ts";
 import { openDb, SCHEMA_VERSION } from "../../src/db.ts";
+import { writeSummary } from "../../src/digest/index.ts";
 import { type Check, type DoctorReport, deployedBinaryPath, runDoctor } from "../../src/doctor.ts";
 import { runIndex } from "../../src/indexer.ts";
-import { makeClaudeDir, type TempClaude, userMsg, writeSession } from "../fixtures.ts";
+import { rootOf } from "../../src/thread.ts";
+import {
+  assistantMsg,
+  makeClaudeDir,
+  type TempClaude,
+  ts,
+  userMsg,
+  writeSession,
+} from "../fixtures.ts";
 
 const byKey = (report: DoctorReport, key: string): Check => {
   const check = report.checks.find((c) => c.key === key);
@@ -138,6 +148,34 @@ describe("runDoctor", () => {
     const stale = byKey(runDoctor(db, ":memory:"), "digest");
     expect(stale.status).toBe("warn");
     expect(stale.detail).toBe("0/1 threads summarized, 1 stale");
+  });
+
+  test("stats and doctor agree once a relink moves a summarized root (#121)", () => {
+    // RESUME is indexed and summarized while it is its own thread root, then the
+    // original transcript arrives and relinkThreads reroots it under ORIG. The
+    // summary is left keyed on an id no thread is rooted at, which is where the two
+    // commands used to disagree: stats counted every `summaries` row, doctor counted
+    // only the ones joining the threads view.
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    runIndex(db);
+    writeSummary(db, "RESUME", "Summary written before the original showed up.");
+
+    writeSession(env.projects, "-repo", "ORIG", [
+      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    runIndex(db);
+    expect(rootOf(db, "RESUME")).toBe("ORIG");
+
+    const threadsLine = statsCommand
+      .run({ db, args: { json: false }, rest: [], dbPath: ":memory:", progress: () => {} })
+      .lines!.find((line) => line.startsWith("Threads:"));
+    expect(threadsLine).toBe("Threads:          1 (0 summarized, 1 stale)");
+    expect(byKey(runDoctor(db, ":memory:"), "digest").detail).toBe(
+      "0/1 threads summarized, 1 stale",
+    );
   });
 });
 

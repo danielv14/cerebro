@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { countThreads } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 export interface StaleThread {
@@ -47,3 +48,25 @@ export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
 export const countStaleThreads = (db: Database): number =>
   (db.query(`SELECT COUNT(*) AS c ${STALE_FROM_WHERE}`).get(DIGEST_PROMPT_VERSION) as { c: number })
     .c;
+
+export interface SummaryCoverage {
+  threads: number;
+  // Summaries that still key on a current thread root. A relink (relinkThreads can
+  // move a root) leaves a summary keyed on an id that is no longer one, and such a
+  // row is not coverage: `relevant` will never reach it through the threads view.
+  summarized: number;
+  stale: number;
+}
+
+// The one summary-coverage reading, owned here next to the staleness predicate it
+// includes. stats and doctor both call this instead of counting `summaries`
+// themselves, so the number they print cannot drift apart.
+export const summaryCoverage = (db: Database): SummaryCoverage => ({
+  threads: countThreads(db),
+  summarized: (
+    db
+      .query(`SELECT COUNT(*) AS c FROM summaries su JOIN threads t ON t.id = su.root_session_id`)
+      .get() as { c: number }
+  ).c,
+  stale: countStaleThreads(db),
+});

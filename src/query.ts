@@ -572,8 +572,6 @@ export interface Stats {
   // Oldest and newest message timestamps: how far back the archive reaches.
   firstTs: string | null;
   lastTs: string | null;
-  // Digest coverage: summaries are tier 1 of `relevant`, so this is recall quality.
-  summarizedThreads: number;
   // Threads per project, largest first (top 5).
   topProjects: { project_path: string; threads: number }[];
 }
@@ -599,7 +597,6 @@ export const stats = (db: Database): Stats => {
     ),
     firstTs: span.mn,
     lastTs: span.mx,
-    summarizedThreads: one("SELECT COUNT(*) AS c FROM summaries"),
     topProjects: db
       .query(
         `SELECT project_path, COUNT(*) AS threads FROM threads
