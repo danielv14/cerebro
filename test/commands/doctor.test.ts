@@ -59,6 +59,16 @@ describe("runDoctor", () => {
     expect(byKey(report, "fts:summaries_fts").status).toBe("ok");
   });
 
+  test("every check reports under its own key exactly once (#124)", () => {
+    // The failure the builder rules out: a check whose branches disagree on their own
+    // key, handing --json consumers two entries for one check.
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
+    runIndex(db);
+    const keys = runDoctor(db, ":memory:").checks.map((c) => c.key);
+    expect(keys.length).toBe(new Set(keys).size);
+    expect(keys.every((key) => key.length > 0)).toBe(true);
+  });
+
   test("--full runs the complete integrity_check instead of quick_check", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
