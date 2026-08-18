@@ -791,6 +791,80 @@ describe("query (populated archive)", () => {
     });
   });
 
+  test("search hits show the thread's title and project, not the matched session's (#120)", () => {
+    // The ordinary shape of a resumed thread: the root carries the cwd and never got a
+    // title event, the resume carries the title and no cwd at all. Reading each hit's
+    // own sessions row showed "(untitled)" for the root's hit and "(unknown)" for the
+    // resume's, on a thread that has both.
+    const month = 30 * 86_400;
+    writeSession(env.projects, "-repo", "ROOT", [
+      userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
+      assistantMsg("ROOT", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+    ]);
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "continue the limiter work", {
+        parentUuid: "a1",
+        cwd: undefined,
+        timestamp: ts(month),
+      }),
+      { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
+    ]);
+    runIndex(db);
+    // The premise: the resume's own row really is missing the project.
+    expect(
+      (
+        db.query("SELECT project_path FROM sessions WHERE session_id = 'RESUME'").get() as {
+          project_path: string | null;
+        }
+      ).project_path,
+    ).toBeNull();
+
+    const thread = listThreads(db)[0]!;
+    const hits = search(db, "limiter", 20, { all: true });
+    expect(hits.map((h) => h.session_id).sort()).toEqual(["RESUME", "ROOT"]);
+    for (const hit of hits) {
+      // Whichever session the hit landed in, it agrees with the thread listing.
+      expect({ id: hit.session_id, title: hit.title, project_path: hit.project_path }).toEqual({
+        id: hit.session_id,
+        title: thread.title,
+        project_path: thread.project_path,
+      });
+    }
+
+    // The sharp edge: a hit that matched --project must never render (unknown).
+    const scoped = search(db, "limiter", 20, { all: true, project: "repo" });
+    expect(scoped.map((h) => h.session_id).sort()).toEqual(["RESUME", "ROOT"]);
+    expect(scoped.every((h) => h.project_path === "/repo")).toBe(true);
+
+    // Per-message fields are untouched: ts stays the matched turn's, not the thread's.
+    const resumeHit = hits.find((h) => h.session_id === "RESUME")!;
+    expect(resumeHit.ts).toBe(ts(month));
+    expect(resumeHit.git_branch).toBe("main");
+    expect(resumeHit.ordinal).toBe(3);
+  });
+
+  test("a search hit whose thread is absent from the rollup falls back to its own row (#120)", () => {
+    // The `threads` view drops a thread whose sessions sum to zero messages, so a row
+    // with a stale msg_count is one way the hydration comes back empty. Contrived, but
+    // it pins the fallback: the hit renders on its own session row instead of losing
+    // its title and project (or being dropped) because the rollup had nothing to say.
+    writeSession(env.projects, "-repo", "STALE", [
+      userMsg("STALE", "u1", "the limiter work", { timestamp: ts(0) }),
+      { type: "custom-title", customTitle: "Rate limiting", sessionId: "STALE" },
+    ]);
+    runIndex(db);
+    db.run("UPDATE sessions SET msg_count = 0 WHERE session_id = 'STALE'");
+    expect(listThreads(db).length).toBe(0);
+
+    const hits = search(db, "limiter", 20, { all: true });
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toMatchObject({
+      session_id: "STALE",
+      title: "Rate limiting",
+      project_path: "/repo",
+    });
+  });
+
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "database migration work")]);
     runIndex(db);
