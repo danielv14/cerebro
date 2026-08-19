@@ -42,6 +42,7 @@ cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a p
                                             #   (threads in --cwd's repo rank higher)
 cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
 cerebro stats                               # archive counts
+cerebro skills [--since D] [--limit N]      # how often each skill was invoked (see "Skill usage")
 cerebro doctor [--full]                     # read-only health report (see "Health checks")
 cerebro version                             # build identity of this binary
 cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
@@ -51,7 +52,7 @@ cerebro digest <action>                     # curated session summaries (see "Cu
 
 `show` and `search` accept abbreviated session ids (the 8-char prefix shown in
 listings); an ambiguous prefix errors. The reader commands (`search`, `sessions`,
-`recent`, `relevant`, `show`, `stats`, `doctor`, `version`,
+`recent`, `relevant`, `show`, `stats`, `skills`, `doctor`, `version`,
 `digest stale|search|show`) take `--json` to print the results as JSON instead of
 the human listing -- the stable format for scripts and agents.
 
@@ -101,6 +102,40 @@ them onto the snapshot.
 `cerebro maintain` is the other housekeeping command: it compacts the search
 indexes, refreshes SQLite's internal statistics, and trims the working files.
 The scheduled digest batch runs it automatically at the end of each run.
+
+### Skill usage
+
+`cerebro skills` answers how often each skill was actually invoked, counted out of
+the archive:
+
+```
+$ cerebro skills --limit 4
+top 4 of 78 skills, 2026-05-11 .. 2026-08-19 (sub = the part of total from subagent turns)
+name                                slash  model    sub  total  last
+clear                                 531      0     20    531  2026-08-19
+commit                                 60     86      0    146  2026-08-19
+exit                                  137      0      1    137  2026-08-18
+changelog                              65      1      2     66  2026-08-19
+```
+
+A skill call leaves no field of its own in the session JSONL, so the count comes
+from two markers in the turn text, and both are needed: `slash` is the expansion of
+a typed `/name` in the user turn, `model` is a Skill tool call the model made. One
+of the two is *cerebro's own* rendering of a tool block, which is the reason this
+command exists rather than a one-line grep in whatever wants the numbers: a caller
+matching that string is coupled to this repo's flattener, and would report every
+skill as unused the day it changes. Counting also takes a role filter (a transcript
+that quotes a marker, this README included, must not count itself) and a payload
+match rather than a parse (a call with arguments is truncated mid-JSON in the
+archive).
+
+There is no default limit, because the question is usually which skills are
+*unused* and a trimmed tail would turn a rarely called skill into a missing one.
+`--since D` narrows the window; the window itself is printed, so "never called"
+stays distinguishable from "called before the archive begins". Names are reported
+exactly as they were seen: Claude Code's own commands (`/clear`, `/model`) are in
+the list, and a renamed skill appears under both names. Deciding which of those to
+merge or ignore is the caller's business, not the archive's.
 
 ### Health checks
 
@@ -331,6 +366,8 @@ src/
                 resolveSession(), stats(), toMatchQuery(), hydrateThreadMeta()
   relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo
                 boost)
+  skills.ts     skillUsage(): the two skill-call markers and the counting rules
+                (roles, occurrences, subagent turns)
   render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
   digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads() +
                 summaryCoverage() (stale.ts), writeSummary() + the summary

@@ -31,7 +31,7 @@ Do not drown the context window. Follow this ladder:
 
 Ids can be abbreviated to the prefix (8 characters) the listings show. An ambiguous
 prefix errors. The reader commands (`search`, `sessions`, `recent`, `relevant`, `show`,
-`stats`, `doctor`, `version`, `digest stale|search|show`) take `--json` when you want
+`stats`, `skills`, `doctor`, `version`, `digest stale|search|show`) take `--json` when you want
 the rows as JSON instead of the human-readable listing (an empty result gives `[]`,
 never prose).
 
@@ -243,6 +243,28 @@ Span:             2025-11-02 .. 2026-07-01
 Database size:    48.2 MB
 Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
+
+### `cerebro skills [--since D] [--limit N]`
+How often each skill was invoked. `slash` is a typed `/name`, `model` is a Skill tool
+call the model made, and both are needed: counting only one of them undercounts by a
+factor. `sub` is the part of `total` that came from a subagent turn, already included
+in it. No default limit, so a rarely used skill is never trimmed into looking unused.
+
+```
+$ cerebro skills --limit 4
+top 4 of 78 skills, 2026-05-11 .. 2026-08-19 (sub = the part of total from subagent turns)
+name                                slash  model    sub  total  last
+clear                                 531      0     20    531  2026-08-19
+commit                                 60     86      0    146  2026-08-19
+exit                                  137      0      1    137  2026-08-18
+changelog                              65      1      2     66  2026-08-19
+```
+
+Names come out exactly as they were seen, so Claude Code's built-ins (`/clear`,
+`/model`) are in the list and a renamed skill appears twice. Do not read a low number
+as "unused" on its own: the window in the header is the whole visible history, so
+anything called before the archive begins is invisible, and a skill only used in one
+season looks dead the rest of the year.
 
 ### `cerebro doctor [--full]` and `cerebro version`
 `doctor` is a read-only health report: SQLite and FTS integrity, the schema version,
