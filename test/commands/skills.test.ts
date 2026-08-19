@@ -24,20 +24,34 @@ describe("skillsListing", () => {
     distinct: 2,
     from: "2026-05-11T08:00:00Z",
     to: "2026-08-19T08:00:00Z",
-    scanned: 120,
   };
 
-  test("renders the window, the column header, and one aligned row per skill", () => {
+  test("renders the window, the column header, and one aligned row per name", () => {
     expect(skillsListing(usage)).toEqual([
-      "2 skills, 2026-05-11 .. 2026-08-19 (sub = the part of total from subagent turns)",
-      "name                                slash  model    sub  total  last",
-      "commit                                 60     86      0    146  2026-08-18",
-      "changelog                               8     39      2     47  2026-08-01",
+      "2 names, 2026-05-11 .. 2026-08-19 (built-in commands included; sub is the subagent part of total)",
+      "name                                slash  model  total    sub  last",
+      "commit                                 60     86    146      0  2026-08-18",
+      "changelog                               8     39     47      2  2026-08-01",
     ]);
+  });
+
+  test("truncates a name to its column so the counts stay aligned", () => {
+    const long = {
+      ...usage,
+      rows: [{ ...usage.rows[0]!, name: "a-plugin:a-very-long-skill-name-that-runs-on" }],
+      distinct: 1,
+    };
+    const [, , row] = skillsListing(long);
+    expect(row).toBe("a-plugin:a-very-long-skill-name-t…     60     86    146      0  2026-08-18");
+  });
+
+  test("says name in the singular when only one was seen", () => {
+    const one = { ...usage, rows: usage.rows.slice(0, 1), distinct: 1 };
+    expect(skillsListing(one)[0]).toStartWith("1 name,");
   });
 
   test("says the list was trimmed when a limit dropped names", () => {
     const trimmed = { ...usage, rows: usage.rows.slice(0, 1), distinct: 12 };
-    expect(skillsListing(trimmed)[0]).toContain("top 1 of 12 skills");
+    expect(skillsListing(trimmed)[0]).toContain("top 1 of 12 names");
   });
 });

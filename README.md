@@ -110,32 +110,39 @@ the archive:
 
 ```
 $ cerebro skills --limit 4
-top 4 of 78 skills, 2026-05-11 .. 2026-08-19 (sub = the part of total from subagent turns)
-name                                slash  model    sub  total  last
-clear                                 531      0     20    531  2026-08-19
-commit                                 60     86      0    146  2026-08-19
-exit                                  137      0      1    137  2026-08-18
-changelog                              65      1      2     66  2026-08-19
+top 4 of 78 names, 2026-05-11 .. 2026-08-19 (built-in commands included; sub is the subagent part of total)
+name                                slash  model  total    sub  last
+clear                                 493      0    493      0  2026-08-19
+commit                                 60     86    146      0  2026-08-19
+exit                                  136      0    136      0  2026-08-18
+changelog                              61      1     62      0  2026-08-18
 ```
 
 A skill call leaves no field of its own in the session JSONL, so the count comes
 from two markers in the turn text, and both are needed: `slash` is the expansion of
-a typed `/name` in the user turn, `model` is a Skill tool call the model made. One
-of the two is *cerebro's own* rendering of a tool block, which is the reason this
-command exists rather than a one-line grep in whatever wants the numbers: a caller
-matching that string is coupled to this repo's flattener, and would report every
-skill as unused the day it changes. Counting also takes a role filter (a transcript
-that quotes a marker, this README included, must not count itself) and a payload
-match rather than a parse (a call with arguments is truncated mid-JSON in the
-archive).
+a typed `/name` in the user turn, `model` is a Skill tool call the model made, and
+`sub` is the part of `total` that came from a subagent turn (a subagent using a skill
+is using it). One of the two markers is *cerebro's own* rendering of a tool block,
+which is the reason this command exists rather than a one-line grep in whatever wants
+the numbers: a caller matching that string is coupled to this repo's flattener, and
+would report every skill as unused the day it changes.
 
-There is no default limit, because the question is usually which skills are
-*unused* and a trimmed tail would turn a rarely called skill into a missing one.
-`--since D` narrows the window; the window itself is printed, so "never called"
-stays distinguishable from "called before the archive begins". Names are reported
-exactly as they were seen: Claude Code's own commands (`/clear`, `/model`) are in
-the list, and a renamed skill appears under both names. Deciding which of those to
-merge or ignore is the caller's business, not the archive's.
+Counting takes three more rules, all of them learned from wrong numbers. Roles: a
+transcript that quotes a marker, this README included, must not count itself. Line
+starts: a real marker opens a line, while cerebro's own `show` output collapses a
+quoted call onto one line, so recall would otherwise inflate the counts it just
+reported. And a shape bound on the name, because the text between two markers is
+foreign input and an unclosed tag would otherwise print an arbitrary slice of a
+transcript as a skill name.
+
+The header says *names*, not skills, because the slash marker is Claude Code's
+expansion of any `/name`: its own commands (`/clear`, `/model`) are in the list, and
+a renamed skill appears under both names. Deciding which of those to merge or ignore
+is the caller's business, not the archive's. There is no default limit, because the
+question is usually which skills are *unused* and a trimmed tail would turn a rarely
+called skill into a missing one. `--since D` narrows the window; the window itself is
+printed, so "never called" stays distinguishable from "called before the archive
+begins".
 
 ### Health checks
 

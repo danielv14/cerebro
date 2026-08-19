@@ -245,26 +245,27 @@ Top projects:     my-app (58), api-server (33), web-shop (21)
 ```
 
 ### `cerebro skills [--since D] [--limit N]`
-How often each skill was invoked. `slash` is a typed `/name`, `model` is a Skill tool
-call the model made, and both are needed: counting only one of them undercounts by a
-factor. `sub` is the part of `total` that came from a subagent turn, already included
-in it. No default limit, so a rarely used skill is never trimmed into looking unused.
+How often each named command was invoked. `slash` is a typed `/name`, `model` is a Skill
+tool call the model made, `slash + model = total`, and `sub` is the part of `total` that
+came from a subagent turn. Both markers are needed: counting only one of them
+undercounts by a factor. No default limit, so a rarely used skill is never trimmed into
+looking unused.
 
 ```
 $ cerebro skills --limit 4
-top 4 of 78 skills, 2026-05-11 .. 2026-08-19 (sub = the part of total from subagent turns)
-name                                slash  model    sub  total  last
-clear                                 531      0     20    531  2026-08-19
-commit                                 60     86      0    146  2026-08-19
-exit                                  137      0      1    137  2026-08-18
-changelog                              65      1      2     66  2026-08-19
+top 4 of 78 names, 2026-05-11 .. 2026-08-19 (built-in commands included; sub is the subagent part of total)
+name                                slash  model  total    sub  last
+clear                                 493      0    493      0  2026-08-19
+commit                                 60     86    146      0  2026-08-19
+exit                                  136      0    136      0  2026-08-18
+changelog                              61      1     62      0  2026-08-18
 ```
 
-Names come out exactly as they were seen, so Claude Code's built-ins (`/clear`,
-`/model`) are in the list and a renamed skill appears twice. Do not read a low number
-as "unused" on its own: the window in the header is the whole visible history, so
-anything called before the archive begins is invisible, and a skill only used in one
-season looks dead the rest of the year.
+Names come out as they were seen, so Claude Code's built-ins (`/clear`, `/model`) are in
+the list and a renamed skill appears twice. `--json` returns an object, not a bare array:
+the rows plus `from`/`to`, the window the counts cover. Read a low number with that
+window in mind rather than as "unused": anything called before the archive begins is
+invisible, and a skill only used in one season looks dead the rest of the year.
 
 ### `cerebro doctor [--full]` and `cerebro version`
 `doctor` is a read-only health report: SQLite and FTS integrity, the schema version,

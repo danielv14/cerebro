@@ -355,9 +355,8 @@ describe("runCli", () => {
     const cap = makeIO();
     runCli(["skills"], cap.io, seeded());
     const out = cap.logs.join("\n");
-    expect(out).toContain("1 skills");
-    expect(out).toContain("name");
-    expect(out).toMatch(/commit\s+1\s+1\s+0\s+2/);
+    expect(out).toContain("1 name,");
+    expect(out).toMatch(/commit\s+1\s+1\s+2\s+0/);
     expect(cap.exitCode).toBe(0);
 
     const jsonCap = makeIO();

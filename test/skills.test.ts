@@ -111,6 +111,49 @@ describe("skillUsage", () => {
     expect(byName("X")).toBeUndefined();
   });
 
+  test("a marker quoted inside cerebro's own output does not count", () => {
+    // `show` and `recent` collapse a turn onto one line, so a recall of a session that
+    // used a skill puts the marker mid-line inside a tool_result. Counting it would
+    // make every recall inflate the numbers it just reported.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg(
+        "S",
+        "u1",
+        [
+          {
+            type: "tool_result",
+            content: `1. user  2026-06-18 22:41  ${slashCall("standup")}`,
+          },
+        ],
+        { timestamp: ts(0) },
+      ),
+    ]);
+    runIndex(db);
+    expect(byName("standup")).toBeUndefined();
+  });
+
+  test("an unclosed marker does not swallow the next real call", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", `<command-name> oops\n${slashCall("commit")}`, { timestamp: ts(0) }),
+    ]);
+    runIndex(db);
+    expect(byName("commit")?.slash).toBe(1);
+    expect(skillUsage(db).rows.length).toBe(1);
+  });
+
+  test("text that cannot be a name is not reported as one", () => {
+    // The slice between two markers is foreign input: an opening tag whose nearest
+    // closing tag is far away would otherwise print an arbitrary chunk of someone's
+    // transcript as a skill name.
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "<command-name>a name\nwith a newline and a secret</command-name>", {
+        timestamp: ts(0),
+      }),
+    ]);
+    runIndex(db);
+    expect(skillUsage(db).rows).toEqual([]);
+  });
+
   test("a call with arguments counts (the payload is prefix-matched, not parsed)", () => {
     writeSession(env.projects, "-repo", "S", [
       assistantMsg("S", "a1", skillTool("changelog", "the last two weeks"), {
