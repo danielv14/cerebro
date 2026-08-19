@@ -16,6 +16,9 @@ Usage:
                                          Show a thread (outline, full transcript, or
                                          a verbatim slice in outline numbering)
   cerebro stats                          Archive counts
+  cerebro skills [--since D] [--limit N] [--json]
+                                         How often each skill was invoked (both the
+                                         typed /name and the model's Skill calls)
   cerebro doctor [--full] [--json]       Read-only health report (integrity, schema,
                                          digest backlog, deployed-binary drift, hooks);
                                          exit 1 only on a hard failure
@@ -53,7 +56,8 @@ Options:
                   message still on disk (needed after a flattening/parser change;
                   messages whose source file is deleted are kept untouched)
   --dry-run       index: report what would be indexed, write nothing
-  --limit <n>     Max rows to return
+  --limit <n>     Max rows to return (skills: no limit by default, so a rarely used
+                  skill is never trimmed into looking unused)
   --project <p>   sessions/search: filter by project path substring (the thread's,
                   so a resume is never dropped for lacking its own cwd)
   --branch <b>    sessions/search: filter by git branch substring. A thread matches
@@ -62,7 +66,8 @@ Options:
                   first), so a mid-session branch switch can move the session to
                   the new branch rather than matching both
   --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31);
-                  sessions: only threads last active at or after it
+                  sessions: only threads last active at or after it; skills: only
+                  calls at or after it
   --role <r>      search: only user or assistant turns. A tool_result is recorded as
                   a user turn, so --role user --prose is the "only my own prompts" query
   --prose         search: drop messages that are nothing but flattened tool plumbing
@@ -82,7 +87,7 @@ Options:
   --model <name>  digest write: record which model produced the summary
   --bytes <n>     digest model: tier by an already-measured transcript byte count
                   (skips re-rendering the transcript; used by the hooks)
-  --json          search/sessions/recent/relevant/show/stats/doctor/version/
+  --json          search/sessions/recent/relevant/show/stats/skills/doctor/version/
                   digest stale|search|show: emit the rows as JSON instead of the
                   human listing. A command that does not list it here rejects it,
                   as it does any other flag that is not its own.

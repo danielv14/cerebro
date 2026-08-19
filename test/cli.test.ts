@@ -89,6 +89,7 @@ describe("option declarations", () => {
     relevant: ["context", "cwd", "json", "limit", "stdin"],
     show: ["full", "json", "range"],
     stats: ["json"],
+    skills: ["json", "limit", "since"],
     doctor: ["full", "json"],
     maintain: [],
     backup: ["keep", "to"],
@@ -336,6 +337,35 @@ describe("runCli", () => {
     expect(out).toContain("Threads:");
     expect(out).toContain("Messages:");
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("skills counts both markers and --json carries the window", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "<command-name>/commit</command-name>", { timestamp: ts(0) }),
+      assistantMsg(
+        "SESS",
+        "a1",
+        [{ type: "tool_use", name: "Skill", input: { skill: "commit" } }],
+        {
+          parentUuid: "u1",
+          timestamp: ts(1),
+        },
+      ),
+    ]);
+    const cap = makeIO();
+    runCli(["skills"], cap.io, seeded());
+    const out = cap.logs.join("\n");
+    expect(out).toContain("1 name,");
+    expect(out).toMatch(/commit\s+1\s+1\s+2\s+0/);
+    expect(cap.exitCode).toBe(0);
+
+    const jsonCap = makeIO();
+    runCli(["skills", "--json"], jsonCap.io, seeded());
+    const usage = JSON.parse(jsonCap.logs.join("\n"));
+    expect(usage.rows).toHaveLength(1);
+    expect(usage.distinct).toBe(1);
+    expect(usage.from).toBe(ts(0));
+    expect(usage.to).toBe(ts(1));
   });
 
   test("--json emits parseable rows for search, sessions, and stats (#54)", () => {

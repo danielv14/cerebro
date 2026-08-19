@@ -20,6 +20,7 @@ import { relevantCommand } from "./commands/relevant.ts";
 import { searchCommand } from "./commands/search.ts";
 import { sessionsCommand } from "./commands/sessions.ts";
 import { showCommand } from "./commands/show.ts";
+import { skillsCommand } from "./commands/skills.ts";
 import { statsCommand } from "./commands/stats.ts";
 import { openDb } from "./db.ts";
 import { HELP } from "./help.ts";
@@ -77,6 +78,7 @@ export const commands = new Map<string, CommandNode>([
   ["show", showCommand],
   ["digest", digestCommand],
   ["stats", statsCommand],
+  ["skills", skillsCommand],
   ["doctor", doctorCommand],
   ["maintain", maintainCommand],
   ["backup", backupCommand],

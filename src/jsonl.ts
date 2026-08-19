@@ -109,6 +109,12 @@ const capToolText = (rendered: string): string =>
     ? rendered
     : `${rendered.slice(0, TOOL_TEXT_CAP)} [+${rendered.length - TOOL_TEXT_CAP} chars truncated]`;
 
+// The head of a flattened tool_use block. This tag is cerebro's own rendering, not
+// anything Claude Code writes, so anyone counting tool calls in the archive is
+// counting on this exact string: `skills` derives its marker from here rather than
+// spelling it out a second place that could drift.
+export const toolUseTag = (name: string): string => `[tool_use:${name}]`;
+
 // Flatten a message's `content` into greppable plain text. Strings pass through;
 // block arrays concatenate text/thinking and tag tool_use / tool_result compactly
 // so they stay searchable without drowning the prose. Each block is validated by
@@ -134,7 +140,7 @@ export const flattenContent = (content: unknown): string => {
         break;
       case "tool_use": {
         const input = b.input && typeof b.input === "object" ? JSON.stringify(b.input) : "";
-        parts.push(capToolText(`[tool_use:${b.name ?? "?"}] ${input}`.trimEnd()));
+        parts.push(capToolText(`${toolUseTag(b.name ?? "?")} ${input}`.trimEnd()));
         break;
       }
       case "tool_result": {
