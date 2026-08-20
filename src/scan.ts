@@ -107,6 +107,22 @@ export const planFileRead = (
   return { start, status: state ? "grown" : "new", shouldRead: true };
 };
 
+// index_state cursors whose source file is absent, given the discovered file set.
+// The one owner of the orphan predicate: the indexer's presence reconciliation
+// deletes through this and doctor counts through it, so the diagnostic can never
+// disagree with what `cerebro index` would actually prune. Returns null on an
+// empty scan: that almost always means a transient readdir failure, not that every
+// session was deleted, so "unknown" must stay distinguishable from "no orphans"
+// (the prune bails instead of wiping every cursor; doctor reports unknown).
+export const orphanedCursorPaths = (db: Database, files: SessionFile[]): string[] | null => {
+  if (files.length === 0) return null;
+  const present = new Set(files.map((file) => file.path));
+  const cursors = db.query("SELECT source_file FROM index_state").all() as {
+    source_file: string;
+  }[];
+  return cursors.map((row) => row.source_file).filter((path) => !present.has(path));
+};
+
 export interface ScannedFile {
   file: SessionFile;
   plan: FileReadPlan;

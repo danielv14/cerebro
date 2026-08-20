@@ -3,7 +3,7 @@ import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
-import { eachIndexableFile } from "./scan.ts";
+import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 
 interface FileMeta {
   sessionId: string;
@@ -242,10 +242,11 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
 // cursors for files that no longer exist. A temp table keeps both correct and cheap
 // regardless of how many files there are.
 const reconcilePresence = (db: Database, files: SessionFile[]): void => {
-  // An empty scan almost always means a transient readdir failure, not that every
-  // session was deleted. Bail rather than flag the whole archive body-unavailable
-  // and wipe every cursor.
-  if (files.length === 0) return;
+  // null = an empty scan, which orphanedCursorPaths treats as a transient readdir
+  // failure. Bail rather than flag the whole archive body-unavailable and wipe
+  // every cursor.
+  const orphans = orphanedCursorPaths(db, files);
+  if (orphans === null) return;
 
   db.run("DROP TABLE IF EXISTS _present");
   db.run("CREATE TEMP TABLE _present (p TEXT PRIMARY KEY)");
@@ -260,16 +261,21 @@ const reconcilePresence = (db: Database, files: SessionFile[]): void => {
     `UPDATE sessions
        SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
   );
+  db.run("DROP TABLE _present");
   // Unlike sessions and messages, where the row *is* the archive (invariant #4), an
   // index_state row for a file that is gone carries no information: it is a byte
   // cursor into something unreadable. Claude Code deletes session files on its own
   // schedule, so without this the one table that is meant to be a working cursor set
-  // grows forever. Only rows whose file is absent go, so an is_digest flag on a file
-  // that still exists is never lost. A pruned file that later reappears is simply
-  // re-read from byte 0 and UUID dedup makes that a no-op, so this cannot resurrect
-  // or duplicate anything.
-  db.run("DELETE FROM index_state WHERE source_file NOT IN (SELECT p FROM _present)");
-  db.run("DROP TABLE _present");
+  // grows forever. The rows to drop come from orphanedCursorPaths (the same reader
+  // doctor counts through), so only rows whose file is absent go and an is_digest
+  // flag on a file that still exists is never lost. A pruned file that later
+  // reappears is simply re-read from byte 0 and UUID dedup makes that a no-op, so
+  // this cannot resurrect or duplicate anything.
+  const drop = db.query("DELETE FROM index_state WHERE source_file = ?");
+  const prune = db.transaction(() => {
+    for (const path of orphans) drop.run(path);
+  });
+  prune();
 };
 
 // Build logical threads across resumes. A resume's first message has a parentUuid
