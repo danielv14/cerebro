@@ -33,3 +33,10 @@ via `CEREBRO_DIGEST_MODEL` (small model, default Haiku),
 `CEREBRO_DIGEST_MODEL_LARGE` (large model, default `claude-sonnet-4-6[1m]`), and
 `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 330000) in the
 hook's environment.
+
+Each model call also carries a timeout: a hung `claude -p` would otherwise hang
+`digest run` (and every drain behind it) forever. After
+`CEREBRO_DIGEST_TIMEOUT_MS` (default 600000, ten minutes) the child is killed
+and the call is reported as an ordinary failure, so the thread stays stale and
+the next drain retries it. The default is generous on purpose: a large thread
+on the big model legitimately takes minutes.
