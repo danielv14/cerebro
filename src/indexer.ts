@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-import fs from "node:fs";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
+import { eachIndexableFile } from "./scan.ts";
 
 interface FileMeta {
   sessionId: string;
@@ -14,60 +14,6 @@ interface FileMeta {
   title: string | null;
   titlePriority: number;
 }
-
-// Read raw bytes [start, size) synchronously. We work on bytes (not characters)
-// because the per-file cursor is a byte offset; 0x0A (\n) never appears inside a
-// UTF-8 multibyte sequence, so splitting the byte buffer on newline is safe.
-const readRange = (path: string, start: number, size: number): Buffer => {
-  const length = size - start;
-  if (length <= 0) return Buffer.alloc(0);
-
-  const fd = fs.openSync(path, "r");
-  try {
-    const buf = Buffer.alloc(length);
-    let offset = 0;
-    let position = start;
-    while (offset < length) {
-      const read = fs.readSync(fd, buf, offset, length - offset, position);
-      if (read === 0) break;
-      offset += read;
-      position += read;
-    }
-    return offset === length ? buf : buf.subarray(0, offset);
-  } finally {
-    fs.closeSync(fd);
-  }
-};
-
-// Split a byte buffer read at `start` into complete JSONL lines plus the new
-// cursor. The cursor only advances past a trailing '\n' (or a final line that
-// parses cleanly without one), so a half-written last line is left for next time.
-// Shared by the real indexer and the dry-run analyzer so both agree exactly on
-// what counts as indexable.
-export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
-  if (buf.length === 0) return { lines: [], cursor: start };
-
-  const lastNewline = buf.lastIndexOf(0x0a);
-  if (lastNewline >= 0) {
-    const lines = buf.subarray(0, lastNewline).toString("utf8").split("\n");
-    let cursor = start + lastNewline + 1;
-    const tail = buf
-      .subarray(lastNewline + 1)
-      .toString("utf8")
-      .trim();
-    if (tail && parseLine(tail) !== undefined) {
-      lines.push(tail);
-      cursor = start + buf.length;
-    }
-    return { lines, cursor };
-  }
-
-  const tail = buf.toString("utf8").trim();
-  if (tail && parseLine(tail) !== undefined) return { lines: [tail], cursor: start + buf.length };
-
-  // Mid-write, no complete line yet. Wait for the next run.
-  return { lines: [], cursor: start };
-};
 
 // Insert any new messages from a file's freshly-split lines and harvest the
 // metadata for its session row. The bytes were already read and split by
@@ -402,108 +348,6 @@ export interface IndexResult {
   relinked: boolean;
 }
 
-type FileStatus = "new" | "grown" | "truncated" | "unchanged";
-
-interface FileReadPlan {
-  start: number; // byte offset to read from
-  status: FileStatus;
-  shouldRead: boolean; // false only when unchanged (and not full)
-}
-
-// The single source of truth for the per-file cursor/skip/truncate decision in
-// front of splitBuffer. runIndex and dryRunIndex both consume this so they cannot
-// drift on what counts as indexable (invariant #2: dry-run must report exactly
-// what a real run would process). `full` forces a re-read from byte 0 and never
-// short-circuits as unchanged; in full mode the status is always "grown"/"new"
-// and callers ignore it for categorization.
-export const planFileRead = (
-  state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
-  file: SessionFile,
-  full: boolean,
-): FileReadPlan => {
-  // A file flagged as cerebro's own digest summarization transcript is permanently
-  // excluded, even when it grows: the content guard (isDigestRunTranscript) only
-  // inspects reads that start at byte 0, so without this flag a digest transcript
-  // still being written when first detected would leak its later lines into the
-  // archive on the next incremental run. Checked before `full` on purpose: a real
-  // --full run has already cleared index_state (no flag survives, the file is
-  // re-read and re-detected from byte 0), so honoring the flag here only affects
-  // a --full *dry run*, which must report the file as skipped to match.
-  if (state?.is_digest) {
-    return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
-  }
-
-  if (full) {
-    return { start: 0, status: state ? "grown" : "new", shouldRead: true };
-  }
-
-  const start = state ? state.bytes_indexed : 0;
-  if (start > file.size) {
-    // truncated / rotated -> re-read from the start
-    return { start: 0, status: "truncated", shouldRead: true };
-  }
-
-  if (state && start === file.size && state.mtime_ms === file.mtimeMs) {
-    return { start, status: "unchanged", shouldRead: false };
-  }
-
-  return { start, status: state ? "grown" : "new", shouldRead: true };
-};
-
-interface ScannedFile {
-  file: SessionFile;
-  plan: FileReadPlan;
-  lines: string[];
-  cursor: number;
-}
-
-// The single scan shared by runIndex and dryRunIndex: for each discovered file,
-// look up its cursor state, decide via planFileRead whether to read, and for the
-// ones to read, pull the new bytes and split them into complete lines. Hosting the
-// discover-state-plan-read-split sequence here (not in two parallel loops) is what
-// keeps invariant #2 structural: both consumers see exactly the same lines/cursor
-// for a given file. What to do with the result (write vs count) and how to treat a
-// mid-write file whose cursor did not advance is left to `handle`.
-//
-// `onUnchanged` is invoked for files planFileRead skips (so the dry run can count
-// them). `onError` isolates a per-file read/handle failure (a vanished or corrupt
-// file) so one bad file does not abort the whole run; without it the error
-// propagates, which is what the dry run wants.
-const eachIndexableFile = (
-  db: Database,
-  files: SessionFile[],
-  full: boolean,
-  handle: (scanned: ScannedFile) => void,
-  opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
-): void => {
-  const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms, is_digest FROM index_state WHERE source_file = ?",
-  );
-
-  for (const file of files) {
-    const state = getState.get(file.path) as {
-      bytes_indexed: number;
-      mtime_ms: number;
-      is_digest: number;
-    } | null;
-
-    const plan = planFileRead(state, file, full);
-    if (!plan.shouldRead) {
-      opts.onUnchanged?.();
-      continue;
-    }
-
-    try {
-      const buf = readRange(file.path, plan.start, file.size);
-      const { lines, cursor } = splitBuffer(buf, plan.start);
-      handle({ file, plan, lines, cursor });
-    } catch (error) {
-      if (!opts.onError) throw error;
-      opts.onError(file, error as Error);
-    }
-  }
-};
-
 // True when these lines are cerebro's own headless summarization run rather than a
 // real session. The SessionEnd hook pipes a transcript through
 // `claude -p "$(cerebro digest prompt)"`, which Claude Code records as an ordinary
@@ -538,7 +382,20 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 // A run that indexes nothing is O(files discovered), not O(archive): the relink
 // pass is skipped (see below), which is what keeps the synchronous /clear hook
 // cheap on a large archive.
-export const runIndex = (db: Database, full = false, rebuild = false): IndexResult => {
+export interface IndexOptions {
+  // Where the per-file skip message goes when a file cannot be read or ingested
+  // (the run continues without it). The CLI injects its output sink; a direct
+  // library caller that omits it accepts silent skips, which IndexResult's
+  // filesIndexed vs filesScanned still exposes.
+  onSkip?: (line: string) => void;
+}
+
+export const runIndex = (
+  db: Database,
+  full = false,
+  rebuild = false,
+  opts: IndexOptions = {},
+): IndexResult => {
   const readAll = full || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
@@ -582,7 +439,7 @@ export const runIndex = (db: Database, full = false, rebuild = false): IndexResu
     {
       // Isolate per-file failures (an unreadable or corrupt file) so one bad file
       // does not abort the whole run and skip relinkThreads / reconcilePresence.
-      onError: (file, error) => console.error(`cerebro: skipped ${file.path}: ${error.message}`),
+      onError: (file, error) => opts.onSkip?.(`cerebro: skipped ${file.path}: ${error.message}`),
     },
   );
 
