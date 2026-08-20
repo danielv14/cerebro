@@ -4,16 +4,9 @@ import fs from "node:fs";
 import { openDb } from "../src/db.ts";
 import { searchSummaries, writeSummary } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
-import {
-  listThreads,
-  recentThreads,
-  resolveSession,
-  search,
-  stats,
-  toMatchQuery,
-} from "../src/query.ts";
+import { resolveSession, search, stats, toMatchQuery } from "../src/query.ts";
 import { relevantThreads } from "../src/relevance.ts";
-import { countThreads, rootOf, threadMessages } from "../src/thread.ts";
+import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,

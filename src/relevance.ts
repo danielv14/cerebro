@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/index.ts";
 import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { hydrateThreadMeta, toMatchQuery } from "./query.ts";
-import { threadOpeningPrompt } from "./thread.ts";
+import { toMatchQuery } from "./query.ts";
+import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
 
 // Relevance ranking: the one deep thing that used to sit among query.ts' plain data
 // access. `relevant` answers "what past work relates to this prompt", which is a

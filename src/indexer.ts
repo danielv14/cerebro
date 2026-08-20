@@ -4,6 +4,7 @@ import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
+import { relinkThreads } from "./thread.ts";
 
 interface FileMeta {
   sessionId: string;
@@ -276,73 +277,6 @@ const reconcilePresence = (db: Database, files: SessionFile[]): void => {
     for (const path of orphans) drop.run(path);
   });
   prune();
-};
-
-// Build logical threads across resumes. A resume's first message has a parentUuid
-// owned by an earlier session; chaining those parents up gives each thread's root.
-// Cost is linear in archive size (a window scan over messages plus an UPDATE of
-// every sessions row), which is why runIndex only calls it when a file was read.
-// The accepted consequence: a run that crashed after ingest but before this call
-// leaves stale links that a later no-op run no longer repairs. The repair path is
-// `cerebro index --full`, which always reads files and so always relinks.
-export const relinkThreads = (db: Database): void => {
-  // Pass 1: direct parent session, in one query. The inner subquery finds the
-  // earliest main-chain message per session, with its parentUuid. Sidechain rows
-  // are excluded: the resume link lives on the first main-chain turn, and a folded
-  // subagent turn can never carry it (a pure-subagent stub then has no candidate
-  // row, which is correct: it has no parent link to find). Ordering is by id, not
-  // ts: for a session's main-chain messages, insertion order equals file order
-  // equals conversational order on every path (files scan oldest-first, appends get
-  // higher ids, re-reads dedup onto the original rows), so the lowest id is the
-  // true first turn regardless of missing or unordered timestamps — either ts-based
-  // ordering can be shadowed by a tolerated NULL ts.
-  //
-  // The join resolves which session owns the referenced parentUuid (uuid is UNIQUE,
-  // so at most one owner per first-message); a NULL parent_uuid simply never joins,
-  // and the <> guard drops in-session parents, so only cross-session resume links
-  // survive.
-  const links = db
-    .query(
-      `SELECT f.session_id AS session, m.session_id AS parent
-       FROM (
-         SELECT session_id, parent_uuid,
-                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id) AS rn
-         FROM messages
-         WHERE is_sidechain = 0
-       ) f
-       JOIN messages m ON m.uuid = f.parent_uuid
-       WHERE f.rn = 1 AND m.session_id <> f.session_id`,
-    )
-    .all() as { session: string; parent: string }[];
-
-  const parentSession = new Map<string, string>(links.map((l) => [l.session, l.parent]));
-
-  // Pass 2: walk to the root, guarding against cycles.
-  const rootOf = (session: string): string => {
-    const seen = new Set<string>();
-    let cur = session;
-    while (true) {
-      seen.add(cur);
-      const parent = parentSession.get(cur);
-      if (!parent || seen.has(parent)) break;
-      cur = parent;
-    }
-    return cur;
-  };
-
-  const allSessions = (
-    db.query("SELECT session_id FROM sessions").all() as { session_id: string }[]
-  ).map((r) => r.session_id);
-
-  const update = db.query(
-    `UPDATE sessions SET parent_session_id = ?, root_session_id = ? WHERE session_id = ?`,
-  );
-  const tx = db.transaction(() => {
-    for (const session of allSessions) {
-      update.run(parentSession.get(session) ?? null, rootOf(session), session);
-    }
-  });
-  tx();
 };
 
 export interface IndexResult {

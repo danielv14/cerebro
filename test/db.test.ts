@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, SCHEMA_VERSION, threadsViewIsCurrent } from "../src/db.ts";
+import { openDb, SCHEMA_VERSION } from "../src/db.ts";
+import { threadsViewIsCurrent } from "../src/thread.ts";
 
 // The version-gated schema (#46): the DDL runs once per SCHEMA_VERSION and the
 // stamp lets every later open (the per-prompt hook hot path) skip it entirely.
@@ -111,11 +112,12 @@ describe("openDb schema versioning", () => {
     reopened.close();
   });
 
-  test("THREADS_VIEW_COLUMNS stays in lockstep with the view SCHEMA creates", () => {
-    // If a SCHEMA view change forgets to update the constant, upToDate() goes
-    // permanently false and every open silently re-runs the full DDL under the
-    // write lock, the exact hot-path cost the version gate exists to avoid. A
-    // fresh database must pass the shape check.
+  test("the shape check agrees with the view the DDL creates", () => {
+    // Both are built from the same column declaration in thread.ts, so drift is
+    // impossible by construction; this pins the wiring end to end (a mismatch
+    // would make upToDate() permanently false and every open would silently
+    // re-run the full DDL under the write lock, the exact hot-path cost the
+    // version gate exists to avoid). A fresh database must pass the shape check.
     const db = openDb(path);
     expect(threadsViewIsCurrent(db)).toBe(true);
     db.close();

@@ -1,5 +1,5 @@
-import { listThreads, type ThreadRow } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
+import { listThreads, type ThreadRow } from "../thread.ts";
 import { flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 

@@ -1,7 +1,6 @@
 import { gitInfo } from "../git.ts";
-import { recentThreads, type ThreadRow } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
-import { threadOpeningPrompt } from "../thread.ts";
+import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts";
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 

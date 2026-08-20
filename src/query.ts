@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
 import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { countThreads, messageOrdinal, THREAD_ROW_COLUMNS, threadOnBranch } from "./thread.ts";
+import { countThreads, hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
 
 export interface SearchHit {
   id: number;
@@ -199,94 +199,6 @@ export const search = (
 export const escapeLike = (fragment: string): string =>
   fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
-// One row of the `threads` view as the listings read it; the projection that fills it
-// is THREAD_ROW_COLUMNS (thread.ts), shared by both readers.
-export interface ThreadRow {
-  id: string;
-  last_ts: string | null;
-  first_ts: string | null;
-  msgs: number;
-  sessions_in_thread: number;
-  project_path: string | null;
-  // The thread's representative branch (root-preferring, from the `threads` view).
-  // Display-grade: a thread that spans branches shows its root's.
-  git_branch: string | null;
-  title: string | null;
-  body_available: number;
-}
-
-// List logical threads (roots), most-recently-active first, from the `threads`
-// view (see db.ts for the rollup). The filters apply AFTER the rollup: the project
-// on the thread's representative project_path, so a thread is matched on its root's
-// project even when a resume's project_path is NULL or differs, and `since` on the
-// thread's last activity, the same `last_ts >= ?` comparison recentThreads uses
-// (lexical, because stored timestamps are ISO-8601). `branch` is any-session rather
-// than root-preferring (the same semantics and reasoning as search's, see
-// SearchOpts.branch): a thread matches when any of its sessions was recorded on the
-// branch, even though the listing displays the root's.
-export const listThreads = (
-  db: Database,
-  opts: { project?: string; branch?: string; since?: string; limit?: number } = {},
-): ThreadRow[] => {
-  const params: (string | number)[] = [];
-  const conditions: string[] = [];
-  if (opts.project) {
-    conditions.push("project_path LIKE '%' || ? || '%' ESCAPE '\\'");
-    params.push(escapeLike(opts.project));
-  }
-  if (opts.branch) {
-    conditions.push(threadOnBranch("id"));
-    params.push(escapeLike(opts.branch));
-  }
-  if (opts.since) {
-    conditions.push("last_ts >= ?");
-    params.push(opts.since);
-  }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(opts.limit ?? 30);
-
-  return db
-    .query(
-      `SELECT ${THREAD_ROW_COLUMNS}
-       FROM threads
-       ${where}
-       ORDER BY last_ts DESC
-       LIMIT ?`,
-    )
-    .all(...params) as ThreadRow[];
-};
-
-// Recent threads scoped to one repo, for session-start context injection. Matches
-// on the thread's git_root when the cwd is in a git repo, else on the exact
-// project_path. `since` is an ISO cutoff (only threads active at or after it).
-export const recentThreads = (
-  db: Database,
-  opts: { repoRoot?: string | null; cwd?: string; since: string; limit?: number },
-): ThreadRow[] => {
-  let repoFilter: string;
-  const params: (string | number)[] = [opts.since];
-  if (opts.repoRoot) {
-    repoFilter = "git_root = ?";
-    params.push(opts.repoRoot);
-  } else if (opts.cwd) {
-    repoFilter = "project_path = ?";
-    params.push(opts.cwd);
-  } else {
-    return [];
-  }
-  params.push(opts.limit ?? 5);
-
-  return db
-    .query(
-      `SELECT ${THREAD_ROW_COLUMNS}
-       FROM threads
-       WHERE last_ts >= ? AND ${repoFilter}
-       ORDER BY last_ts DESC
-       LIMIT ?`,
-    )
-    .all(...params) as ThreadRow[];
-};
-
 // Turn a natural-language prompt into an FTS5 OR-of-tokens query, ranked by bm25.
 // Implicit-AND (the default) would require every word to co-occur and usually
 // return nothing for a prose prompt. Common Swedish/English words are dropped via
@@ -298,32 +210,6 @@ export const toMatchQuery = (text: string): string | null => {
   const unique = [...new Set(meaningful)].slice(0, 40);
   if (unique.length === 0) return null;
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
-};
-
-export interface ThreadMeta {
-  title: string | null;
-  last_ts: string | null;
-  project_path: string | null;
-}
-
-// Display metadata for a set of thread roots, keyed by root session id. Read from
-// the `threads` rollup, not from the root's own sessions row (#118): for a thread
-// with resumes the root's row carries the first session's last_ts and often no title
-// at all, so reading it made `relevant` and `digest search` disagree with `sessions`
-// and `recent` on the same thread. One query for N roots, so the summary-relevance
-// and summary-search call sites stop hydrating per hit.
-//
-// A root with no rollup row is simply absent from the map. The view carries
-// HAVING SUM(msg_count) > 0 and searchSummaryRoots LEFT JOINs it deliberately, so a
-// summary whose sessions rows are gone must still render its hit; callers fall back
-// to null metadata rather than dropping it.
-export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, ThreadMeta> => {
-  if (roots.length === 0) return new Map();
-  const placeholders = roots.map(() => "?").join(", ");
-  const rows = db
-    .query(`SELECT id, title, last_ts, project_path FROM threads WHERE id IN (${placeholders})`)
-    .all(...roots) as (ThreadMeta & { id: string })[];
-  return new Map(rows.map(({ id, ...meta }) => [id, meta]));
 };
 
 // Resolve an exact id or a unique prefix to a full session id. Throws on an

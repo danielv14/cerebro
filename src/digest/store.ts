@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { hydrateThreadMeta, toMatchQuery } from "../query.ts";
-import { rootOf, threadLastTs } from "../thread.ts";
+import { toMatchQuery } from "../query.ts";
+import { hydrateThreadMeta, rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Failure output that must never be stored as a summary. The hooks already gate on
