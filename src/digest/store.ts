@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { toMatchQuery } from "../query.ts";
+import { toMatchQuery } from "../fts.ts";
 import { hydrateThreadMeta, rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 

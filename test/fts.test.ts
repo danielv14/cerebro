@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { bestHitPerRoot } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
-import { search } from "../src/query.ts";
 import { relevantThreads } from "../src/relevance.ts";
+import { search } from "../src/search.ts";
 import { makeClaudeDir, type TempClaude, ts, userMsg, writeSession } from "./fixtures.ts";
 
 describe("bestHitPerRoot", () => {

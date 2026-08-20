@@ -1,7 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { eng, removeStopwords, swe } from "stopword";
-import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { countThreads, hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
+import { bestHitPerRoot, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
+import { hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
+
+// Full-text search over the raw transcripts, as the `search` command runs it:
+// the user-facing filters, the sanitized-fallback MATCH handling, the deduped
+// over-fetch window policy, and display hydration. The query shape itself lives
+// in the FTS layer (rankedMessageHits).
 
 export interface SearchHit {
   id: number;
@@ -192,94 +196,4 @@ export const search = (
       ordinal: messageOrdinal(db, hit.root, hit.id),
     };
   });
-};
-
-// Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
-// Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
-export const escapeLike = (fragment: string): string =>
-  fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-
-// Turn a natural-language prompt into an FTS5 OR-of-tokens query, ranked by bm25.
-// Implicit-AND (the default) would require every word to co-occur and usually
-// return nothing for a prose prompt. Common Swedish/English words are dropped via
-// the `stopword` package (not a hand-kept list) so a conversational prompt does
-// not match unrelated threads on filler like "vi/kan/den/the/and".
-export const toMatchQuery = (text: string): string | null => {
-  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
-  const meaningful = removeStopwords(tokens, [...swe, ...eng]);
-  const unique = [...new Set(meaningful)].slice(0, 40);
-  if (unique.length === 0) return null;
-  return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
-};
-
-// Resolve an exact id or a unique prefix to a full session id. Throws on an
-// ambiguous prefix, returns null when nothing matches.
-export const resolveSession = (db: Database, idOrPrefix: string): string | null => {
-  const exact = db
-    .query("SELECT session_id FROM sessions WHERE session_id = ?")
-    .get(idOrPrefix) as { session_id: string } | null;
-  if (exact) return exact.session_id;
-
-  const matches = db
-    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' ESCAPE '\\' LIMIT 10")
-    .all(escapeLike(idOrPrefix)) as { session_id: string }[];
-
-  if (matches.length === 0) return null;
-  if (matches.length > 1) {
-    throw new Error(
-      `Ambiguous session prefix "${idOrPrefix}" matches ${matches.length}: ` +
-        matches.map((m) => m.session_id.slice(0, 12)).join(", "),
-    );
-  }
-  return matches[0]!.session_id;
-};
-
-export interface Stats {
-  threads: number;
-  sessions: number;
-  messages: number;
-  deletedSources: number;
-  // Oldest and newest message timestamps: how far back the archive reaches.
-  firstTs: string | null;
-  lastTs: string | null;
-  // Threads per project, largest first (top 5).
-  topProjects: { project_path: string; threads: number }[];
-}
-
-// The archive's first and last timestamp. Read from the small sessions table, not a
-// full scan of messages (ts is unindexed there): first_ts/last_ts are recomputed from
-// messages on every session touch, so the aggregates are equivalent. Two readers want
-// it (`stats` and `skills`, the latter to say which window its counts cover), so it
-// lives here rather than as the same query written twice.
-export const archiveSpan = (db: Database): { first: string | null; last: string | null } => {
-  const span = db.query("SELECT MIN(first_ts) AS mn, MAX(last_ts) AS mx FROM sessions").get() as {
-    mn: string | null;
-    mx: string | null;
-  };
-  return { first: span.mn, last: span.mx };
-};
-
-export const stats = (db: Database): Stats => {
-  const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
-  const span = archiveSpan(db);
-  return {
-    threads: countThreads(db),
-    sessions: one("SELECT COUNT(*) AS c FROM sessions"),
-    messages: one("SELECT COUNT(*) AS c FROM messages"),
-    // "Deleted" means the source was on disk and is now gone. A NULL source_file is
-    // a subagent-only parent stub whose top-level transcript was never seen; it is
-    // body-unavailable but nothing was deleted, so it must not inflate this count.
-    deletedSources: one(
-      "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
-    ),
-    firstTs: span.first,
-    lastTs: span.last,
-    topProjects: db
-      .query(
-        `SELECT project_path, COUNT(*) AS threads FROM threads
-         WHERE project_path IS NOT NULL
-         GROUP BY project_path ORDER BY threads DESC, project_path LIMIT 5`,
-      )
-      .all() as { project_path: string; threads: number }[],
-  };
 };

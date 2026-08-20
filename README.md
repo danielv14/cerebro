@@ -362,15 +362,23 @@ src/
                 its output formatting
     args.ts     options as data (flag/text/numeric/isoDate/choice/range) + CliError
     command.ts  defineCommand, CommandInput/CommandOutput, the group shape
-    helpers.ts  readStdin() + resolveOrThrow()
+    helpers.ts  readStdin() + resolveSession()/resolveOrThrow()
   db.ts         openDb() + schema/migrations + dbFileSize()
   paths.ts      session-file discovery (top-level + subagents)
   jsonl.ts      parseLine() + classify() + flattenContent()
   git.ts        gitInfo(cwd) with cache
-  indexer.ts    runIndex(), dryRunIndex(), eachIndexableFile(), relinkThreads()
-  thread.ts     rootOf(), threadMessages(), threadOpeningPrompt(), threadLastTs()
-  query.ts      data access: search(), listThreads(), recentThreads(),
-                resolveSession(), stats(), toMatchQuery(), hydrateThreadMeta()
+  scan.ts       the source-file scan layer: splitBuffer(), planFileRead(),
+                eachIndexableFile(), orphanedCursorPaths()
+  indexer.ts    runIndex() + dryRunIndex() (ingest, session rows, presence
+                reconciliation)
+  thread.ts     what a thread is, end to end: the threads view DDL + row shape,
+                rootOf(), threadMessages(), listThreads(), recentThreads(),
+                hydrateThreadMeta(), relinkThreads()
+  fts.ts        the message-FTS layer: rankedMessageHits(), bestHitPerRoot(),
+                escapeLike(), toMatchQuery()
+  search.ts     search(): the search command's filters, window policy and
+                display hydration
+  stats.ts      stats() + archiveSpan()
   relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo
                 boost)
   skills.ts     skillUsage(): the two skill-call markers and the counting rules

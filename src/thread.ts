@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { escapeLike } from "./query.ts";
+import { escapeLike } from "./fts.ts";
 
 // The thread module owns what a thread is, end to end: identity and membership,
 // the `threads` rollup view (its DDL and the row shape the listings read), the

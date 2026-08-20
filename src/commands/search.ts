@@ -1,5 +1,5 @@
-import { SEARCH_ROLES, type SearchHit, search } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
+import { SEARCH_ROLES, type SearchHit, search } from "../search.ts";
 import { CliError, choice, flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 

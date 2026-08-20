@@ -1,4 +1,26 @@
 import type { Database } from "bun:sqlite";
+import { eng, removeStopwords, swe } from "stopword";
+
+// The SQL/FTS query-language utilities live with the FTS layer: every LIKE built
+// from user input and every MATCH built from prose goes through here.
+
+// Escape LIKE wildcards in user-supplied fragments so `_` and `%` match literally.
+// Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
+export const escapeLike = (fragment: string): string =>
+  fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+// Turn a natural-language prompt into an FTS5 OR-of-tokens query, ranked by bm25.
+// Implicit-AND (the default) would require every word to co-occur and usually
+// return nothing for a prose prompt. Common Swedish/English words are dropped via
+// the `stopword` package (not a hand-kept list) so a conversational prompt does
+// not match unrelated threads on filler like "vi/kan/den/the/and".
+export const toMatchQuery = (text: string): string | null => {
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
+  const meaningful = removeStopwords(tokens, [...swe, ...eng]);
+  const unique = [...new Set(meaningful)].slice(0, 40);
+  if (unique.length === 0) return null;
+  return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
+};
 
 // The message-FTS layer: one owner of the ranked-hit query shape over
 // messages_fts. `search` and `relevantThreads` used to carry their own copy of

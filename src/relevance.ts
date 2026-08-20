@@ -1,18 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/index.ts";
-import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { toMatchQuery } from "./query.ts";
+import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
 import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
 
-// Relevance ranking: the one deep thing that used to sit among query.ts' plain data
-// access. `relevant` answers "what past work relates to this prompt", which is a
-// ranking question (two FTS tiers, recency decay, a same-repo boost) rather than a
-// lookup, so it lives here with the weights it depends on. query.ts stays search,
-// listings, resolution and stats.
+// Relevance ranking. `relevant` answers "what past work relates to this prompt",
+// which is a ranking question (two FTS tiers, recency decay, a same-repo boost)
+// rather than a lookup, so it lives here with the weights it depends on.
 //
 // The dependency direction is one-way and cycle-free: this module reads the digest
-// layer's summary search and query.ts' tokenizer and thread-metadata hydrator, and
-// neither of those knows about ranking.
+// layer's summary search, the FTS layer's tokenizer and hit primitive, and the
+// thread module's metadata hydrator, and none of those knows about ranking.
 
 // Recency weighting for `relevant`. bm25 is negative (lower = more relevant);
 // multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0,

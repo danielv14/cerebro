@@ -1,11 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import { resolveSession } from "../src/commands/helpers.ts";
 import { openDb } from "../src/db.ts";
 import { searchSummaries, writeSummary } from "../src/digest/index.ts";
+import { toMatchQuery } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
-import { resolveSession, search, stats, toMatchQuery } from "../src/query.ts";
 import { relevantThreads } from "../src/relevance.ts";
+import { search } from "../src/search.ts";
+import { stats } from "../src/stats.ts";
 import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
