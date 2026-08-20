@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
+import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
 import { countThreads, messageOrdinal, THREAD_ROW_COLUMNS, threadOnBranch } from "./thread.ts";
 
 export interface SearchHit {
@@ -72,15 +73,15 @@ export const search = (
   const filters: string[] = [];
   const filterParams: string[] = [];
   // The project filter is thread-level, so it reads the root's representative
-  // project_path out of the `threads` view rather than the matched message's own
-  // session row (#86). Filtering on the session would silently drop every hit in a
-  // resume whose lines carry no cwd, or a cwd that differs from the root's (a
-  // subdirectory, a worktree, a moved repo), even though the thread belongs to the
-  // project. The view's root-preferring COALESCE is the same value `sessions
-  // --project` matches on, so the two commands agree by construction. The join is
-  // conditional because the view is a GROUP BY over sessions: an unfiltered search
-  // must not pay for a rollup it never reads.
-  const joins = opts.project ? "JOIN threads t ON t.id = s.root_session_id" : "";
+  // project_path out of the `threads` rollup the hit query attaches, rather than
+  // the matched message's own session row (#86). Filtering on the session would
+  // silently drop every hit in a resume whose lines carry no cwd, or a cwd that
+  // differs from the root's (a subdirectory, a worktree, a moved repo), even
+  // though the thread belongs to the project. The view's root-preferring COALESCE
+  // is the same value `sessions --project` matches on, so the two commands agree
+  // by construction. The rollup join is a LEFT JOIN, so a NULL t.project_path
+  // (no rollup row) fails the LIKE and drops the hit, exactly as the old inner
+  // join did.
   if (opts.project) {
     filters.push("AND t.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
     filterParams.push(escapeLike(opts.project));
@@ -109,10 +110,9 @@ export const search = (
     filters.push("AND m.text NOT LIKE '[tool\\_%' ESCAPE '\\'");
   }
 
-  // FTS5 aux functions (snippet, bm25) must live in the SELECT that owns the MATCH,
-  // which rules out a window-function dedup in SQL. Instead the ranked hits are
-  // over-fetched in one deep query and the first (= best) hit per thread root is kept
-  // in JS, mirroring how relevantThreads dedups its raw tier. One deep fetch rather
+  // The ranked hits are over-fetched in one deep query (rankedMessageHits, the
+  // shared owner of the FTS join shape) and the best hit per thread root is kept
+  // via bestHitPerRoot, the same dedup relevantThreads uses. One deep fetch rather
   // than LIMIT/OFFSET paging: `ORDER BY bm25(...) LIMIT n` uses a bounded top-N
   // sorter, so a deeper n is nearly free, while every extra page re-ranks the whole
   // match set and pays that cost again (#81). A fixed window alone is not enough
@@ -122,30 +122,18 @@ export const search = (
   // deliberately NOT computed here: it would run a thread-wide COUNT for every
   // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
   // thread ordering) runs once per *kept* hit below.
-  const sql = `
-    SELECT m.id, m.session_id, m.ts, m.role, s.project_path, s.git_branch, s.title,
-           s.root_session_id AS root,
-           snippet(messages_fts, 0, '[', ']', ' … ', 12) AS snippet
-    FROM messages_fts
-    JOIN messages m  ON m.id = messages_fts.rowid
-    JOIN sessions s  ON s.session_id = m.session_id
-    ${joins}
-    WHERE messages_fts MATCH ?
-    ${filters.join("\n    ")}
-    ORDER BY bm25(messages_fts)
-    LIMIT ?`;
-  const stmt = db.query(sql);
-
-  interface RawHit extends Omit<SearchHit, "ordinal"> {
-    root: string | null;
-  }
-  const fetchWindow = (match: string, windowSize: number): RawHit[] =>
-    stmt.all(match, ...filterParams, windowSize) as RawHit[];
+  const fetchWindow = (match: string, windowSize: number): RankedMessageHit[] =>
+    rankedMessageHits(db, match, {
+      limit: windowSize,
+      snippetTokens: 12,
+      filters,
+      params: filterParams,
+    });
 
   // Resolve the effective MATCH query on the first fetch; deeper fetches reuse it.
   let match = query;
   let windowSize = opts.all ? limit : Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR);
-  let rows: RawHit[];
+  let rows: RankedMessageHit[];
   try {
     rows = fetchWindow(match, windowSize);
   } catch {
@@ -159,24 +147,11 @@ export const search = (
     rows = fetchWindow(match, windowSize);
   }
 
-  const bestPerRoot = (hits: RawHit[]): RawHit[] => {
-    const seen = new Set<string>();
-    const best: RawHit[] = [];
-    for (const hit of hits) {
-      const key = hit.root ?? hit.session_id;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      best.push(hit);
-      if (best.length >= limit) break;
-    }
-    return best;
-  };
-
-  let kept: RawHit[];
+  let kept: RankedMessageHit[];
   if (opts.all) {
     kept = rows;
   } else {
-    kept = bestPerRoot(rows);
+    kept = bestHitPerRoot(rows).slice(0, limit);
     // Grow only when the window was genuinely exhausted: fewer distinct roots than
     // asked for AND a full window came back, so deeper rows can still exist.
     for (
@@ -186,7 +161,7 @@ export const search = (
     ) {
       windowSize *= SEARCH_WINDOW_GROWTH;
       rows = fetchWindow(match, windowSize);
-      kept = bestPerRoot(rows);
+      kept = bestHitPerRoot(rows).slice(0, limit);
     }
   }
 
@@ -195,21 +170,26 @@ export const search = (
   // two across its sessions (the root carries the cwd and no title event, the resume
   // carries the title and no cwd), so reading the session made `search` disagree with
   // sessions, recent, relevant and digest search on the same thread, and let a hit
-  // that matched --project render its project as (unknown). One query over the kept
-  // hits (at most `limit`), deliberately not a join inside the ranking window, which
-  // grows to 128 000 rows. `ts` and `git_branch` stay the matched message's own.
-  const roots = kept.map((hit) => hit.root ?? hit.session_id);
-  const metaByRoot = hydrateThreadMeta(db, [...new Set(roots)]);
+  // that matched --project render its project as (unknown). Hydrated in one query
+  // over the kept hits (at most `limit`), so display metadata has a single reader
+  // shared with relevant and digest search. `ts` and `git_branch` stay the matched
+  // message's own.
+  const metaByRoot = hydrateThreadMeta(db, [...new Set(kept.map((hit) => hit.root))]);
 
-  return kept.map(({ root, ...hit }) => {
+  return kept.map((hit) => {
     // A thread with no rollup row (its sessions rows are gone) falls back to what the
     // matched session carries, rather than dropping the hit.
-    const meta = metaByRoot.get(root ?? hit.session_id);
+    const meta = metaByRoot.get(hit.root);
     return {
-      ...hit,
-      project_path: meta ? meta.project_path : hit.project_path,
-      title: meta ? meta.title : hit.title,
-      ordinal: messageOrdinal(db, root ?? hit.session_id, hit.id),
+      id: hit.id,
+      session_id: hit.session_id,
+      ts: hit.ts,
+      role: hit.role,
+      project_path: meta ? meta.project_path : hit.session_project_path,
+      git_branch: hit.session_git_branch,
+      title: meta ? meta.title : hit.session_title,
+      snippet: hit.snippet,
+      ordinal: messageOrdinal(db, hit.root, hit.id),
     };
   });
 };
