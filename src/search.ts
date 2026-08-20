@@ -74,8 +74,7 @@ export const search = (
   limit = 20,
   opts: SearchOpts = {},
 ): SearchHit[] => {
-  const filters: string[] = [];
-  const filterParams: string[] = [];
+  const filters: { sql: string; params: string[] }[] = [];
   // The project filter is thread-level, so it reads the root's representative
   // project_path out of the `threads` rollup the hit query attaches, rather than
   // the matched message's own session row (#86). Filtering on the session would
@@ -87,23 +86,22 @@ export const search = (
   // (no rollup row) fails the LIKE and drops the hit, exactly as the old inner
   // join did.
   if (opts.project) {
-    filters.push("AND t.project_path LIKE '%' || ? || '%' ESCAPE '\\'");
-    filterParams.push(escapeLike(opts.project));
+    filters.push({
+      sql: "t.project_path LIKE '%' || ? || '%' ESCAPE '\\'",
+      params: [escapeLike(opts.project)],
+    });
   }
   if (opts.branch) {
     // Any-session, not root-preferring (see SearchOpts.branch), expressed relative to
     // the matched message's own session row: the same predicate `sessions --branch`
     // composes, owned by thread.ts.
-    filters.push(`AND ${threadOnBranch("s.root_session_id")}`);
-    filterParams.push(escapeLike(opts.branch));
+    filters.push({ sql: threadOnBranch("s.root_session_id"), params: [escapeLike(opts.branch)] });
   }
   if (opts.since) {
-    filters.push("AND m.ts >= ?");
-    filterParams.push(opts.since);
+    filters.push({ sql: "m.ts >= ?", params: [opts.since] });
   }
   if (opts.role) {
-    filters.push("AND m.role = ?");
-    filterParams.push(opts.role);
+    filters.push({ sql: "m.role = ?", params: [opts.role] });
   }
   if (opts.prose) {
     // A prefix heuristic, not a parser: flattenContent renders a tool-only message
@@ -111,7 +109,7 @@ export const search = (
     // but plumbing always starts with "[tool_". The known miss is deliberate: a
     // message that opens with prose and calls a tool further down is kept, because
     // that prose is real content. No LIKE parameter, so nothing to escape.
-    filters.push("AND m.text NOT LIKE '[tool\\_%' ESCAPE '\\'");
+    filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
   }
 
   // The ranked hits are over-fetched in one deep query (rankedMessageHits, the
@@ -127,12 +125,7 @@ export const search = (
   // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
   // thread ordering) runs once per *kept* hit below.
   const fetchWindow = (match: string, windowSize: number): RankedMessageHit[] =>
-    rankedMessageHits(db, match, {
-      limit: windowSize,
-      snippetTokens: 12,
-      filters,
-      params: filterParams,
-    });
+    rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
 
   // Resolve the effective MATCH query on the first fetch; deeper fetches reuse it.
   let match = query;

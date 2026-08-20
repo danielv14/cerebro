@@ -62,12 +62,12 @@ export interface RankedHitWindow {
   limit: number;
   // Tokens of context in the FTS snippet (callers surface different amounts).
   snippetTokens: number;
-  // Extra AND fragments composed by the caller against the query's fixed aliases
-  // (m = matched message, s = its session row, t = the thread rollup), each `?`
-  // bound from `params` in order. The fragments are literals the codebase owns;
-  // user input stays in params.
-  filters?: string[];
-  params?: (string | number)[];
+  // Extra predicates composed by the caller against the query's fixed aliases
+  // (m = matched message, s = its session row, t = the thread rollup). Each
+  // predicate carries its own bound values, so a fragment and its params cannot
+  // drift apart by ordering; the ANDing and the flattening are owned here. The
+  // sql fragments are literals the codebase owns; user input stays in params.
+  filters?: { sql: string; params: (string | number)[] }[];
 }
 
 // Ranked message hits for an FTS5 MATCH, with the thread rollup attached. Throws
@@ -93,12 +93,17 @@ export const rankedMessageHits = (
     JOIN sessions s ON s.session_id = m.session_id
     LEFT JOIN threads t ON t.id = s.root_session_id
     WHERE messages_fts MATCH ?
-    ${filters.join("\n    ")}
+    ${filters.map((filter) => `AND ${filter.sql}`).join("\n    ")}
     ORDER BY bm25(messages_fts)
     LIMIT ?`;
   return db
     .query(sql)
-    .all(window.snippetTokens, match, ...(window.params ?? []), window.limit) as RankedMessageHit[];
+    .all(
+      window.snippetTokens,
+      match,
+      ...filters.flatMap((filter) => filter.params),
+      window.limit,
+    ) as RankedMessageHit[];
 };
 
 // The best-per-thread-root rule, expressed exactly once: keep the lowest-ranked

@@ -323,6 +323,9 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 // pass is skipped (see below), which is what keeps the synchronous /clear hook
 // cheap on a large archive.
 export interface IndexOptions {
+  full?: boolean;
+  // Implies full.
+  rebuild?: boolean;
   // Where the per-file skip message goes when a file cannot be read or ingested
   // (the run continues without it). The CLI injects its output sink; a direct
   // library caller that omits it accepts silent skips, which IndexResult's
@@ -330,13 +333,9 @@ export interface IndexOptions {
   onSkip?: (line: string) => void;
 }
 
-export const runIndex = (
-  db: Database,
-  full = false,
-  rebuild = false,
-  opts: IndexOptions = {},
-): IndexResult => {
-  const readAll = full || rebuild;
+export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => {
+  const rebuild = opts.rebuild ?? false;
+  const readAll = (opts.full ?? false) || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;

@@ -291,7 +291,7 @@ describe("runIndex", () => {
     ]);
     runIndex(db);
     const before = countMessages(db);
-    const result = runIndex(db, true);
+    const result = runIndex(db, { full: true });
     expect(result.newMessages).toBe(0);
     expect(countMessages(db)).toBe(before);
   });
@@ -302,7 +302,7 @@ describe("runIndex", () => {
     // Simulate an old flattening generation: stored text differs from a fresh parse.
     db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
     db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
-    runIndex(db, false, true);
+    runIndex(db, { rebuild: true });
     const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
     expect(row.text).toBe("the real searchable text");
     // The update trigger kept the FTS index in sync with the refreshed text.
@@ -317,7 +317,7 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "uk", "still here")]);
     runIndex(db);
     require("node:fs").rmSync(path);
-    const result = runIndex(db, false, true);
+    const result = runIndex(db, { rebuild: true });
     expect(result.newMessages).toBe(0);
     // The deleted session's only copy survives the rebuild.
     const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
@@ -338,7 +338,7 @@ describe("runIndex", () => {
       userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
     ]);
     runIndex(db);
-    runIndex(db, false, true);
+    runIndex(db, { rebuild: true });
     const row = db.query("SELECT session_id FROM messages WHERE uuid='u1'").get() as {
       session_id: string;
     };
@@ -516,7 +516,7 @@ describe("runIndex", () => {
     require("node:fs").chmodSync(badPath, 0o000);
 
     const skips: string[] = [];
-    const result = runIndex(db, false, false, { onSkip: (line) => skips.push(line) });
+    const result = runIndex(db, { onSkip: (line) => skips.push(line) });
 
     // The good file made it in; the bad one was skipped, not fatal.
     expect(countMessages(db)).toBe(1);
