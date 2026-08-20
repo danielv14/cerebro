@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { escapeLike } from "./fts.ts";
 import { toolUseTag } from "./jsonl.ts";
-import { archiveSpan, escapeLike } from "./query.ts";
+import { archiveSpan } from "./stats.ts";
 
 // How often each named command was invoked, counted out of the archive.
 //

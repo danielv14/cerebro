@@ -5,6 +5,7 @@ import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
 import { summaryCoverage } from "./digest/index.ts";
 import { claudeDir, discoverSessionFiles } from "./paths.ts";
+import { orphanedCursorPaths } from "./scan.ts";
 
 // The health report `cerebro doctor` renders. Read-only by construction: doctor
 // never repairs, prunes, optimizes or deploys, it reports and names the command
@@ -114,23 +115,23 @@ const schemaCheck = (db: Database): Check => {
 
 // index_state rows whose source file is gone. The indexer prunes these (#84), so a
 // non-zero count here means no index run has happened since those files were
-// deleted, not that anything is broken.
+// deleted, not that anything is broken. Counted through orphanedCursorPaths, the
+// same reader the prune deletes through, so this check can never disagree with
+// what `cerebro index` would actually remove. Read-only: the counting form issues
+// no writes.
 const orphanedCursors = (db: Database): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
-  const cursors = (
-    db.query("SELECT source_file FROM index_state").all() as { source_file: string }[]
-  ).map((r) => r.source_file);
-  if (cursors.length === 0) return check.ok("0 rows");
-  const present = new Set(discoverSessionFiles().map((f) => f.path));
-  // An empty scan is the transient-failure case the indexer also guards against:
+  const cursors = (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
+  if (cursors === 0) return check.ok("0 rows");
+  // null = empty scan, the transient-failure case the reader guards against:
   // report unknown rather than declaring every cursor orphaned.
-  if (present.size === 0) {
+  const orphans = orphanedCursorPaths(db, discoverSessionFiles());
+  if (orphans === null) {
     return check.unknown("no session files discovered; cannot tell orphans from a failed scan");
   }
-  const orphans = cursors.filter((path) => !present.has(path)).length;
-  return orphans === 0
-    ? check.ok(`${cursors.length} rows, no orphans`)
-    : check.warn(`${orphans} of ${cursors.length} point at files that are gone`, "cerebro index");
+  return orphans.length === 0
+    ? check.ok(`${cursors} rows, no orphans`)
+    : check.warn(`${orphans.length} of ${cursors} point at files that are gone`, "cerebro index");
 };
 
 // Sessions with no user/assistant turns. They are hidden from the listings by the

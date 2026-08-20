@@ -1,17 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/index.ts";
-import { hydrateThreadMeta, toMatchQuery } from "./query.ts";
-import { threadOpeningPrompt } from "./thread.ts";
+import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
+import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
 
-// Relevance ranking: the one deep thing that used to sit among query.ts' plain data
-// access. `relevant` answers "what past work relates to this prompt", which is a
-// ranking question (two FTS tiers, recency decay, a same-repo boost) rather than a
-// lookup, so it lives here with the weights it depends on. query.ts stays search,
-// listings, resolution and stats.
+// Relevance ranking. `relevant` answers "what past work relates to this prompt",
+// which is a ranking question (two FTS tiers, recency decay, a same-repo boost)
+// rather than a lookup, so it lives here with the weights it depends on.
 //
 // The dependency direction is one-way and cycle-free: this module reads the digest
-// layer's summary search and query.ts' tokenizer and thread-metadata hydrator, and
-// neither of those knows about ranking.
+// layer's summary search, the FTS layer's tokenizer and hit primitive, and the
+// thread module's metadata hydrator, and none of those knows about ranking.
 
 // Recency weighting for `relevant`. bm25 is negative (lower = more relevant);
 // multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0,
@@ -118,53 +116,26 @@ export const relevantThreads = (
 
   // Tier 2: raw transcripts, for threads not already covered by a summary match.
   if (chosen.size < limit) {
-    interface Hit {
-      root: string | null;
-      snippet: string;
-      score: number;
-      last_ts: string | null;
-      git_root: string | null;
-      project_path: string | null;
-    }
-    let hits: Hit[] = [];
+    // rankedMessageHits attaches the thread rollup (last_ts + repo) from the
+    // `threads` view, not the matched message's own session row: a resume can
+    // carry a NULL git_root, and the view is root-preferring, so the boost sees
+    // the thread's repo.
+    let hits: RankedMessageHit[] = [];
     try {
-      // The thread rollup (last_ts + repo) comes from the `threads` view, not from the
-      // matched message's own session row: a resume can carry a NULL git_root, and the
-      // view is root-preferring, so the boost sees the thread's repo.
-      hits = db
-        .query(
-          `SELECT s.root_session_id AS root,
-                  snippet(messages_fts, 0, '[', ']', ' … ', 10) AS snippet,
-                  bm25(messages_fts) AS score,
-                  t.last_ts, t.git_root, t.project_path
-           FROM messages_fts
-           JOIN messages m ON m.id = messages_fts.rowid
-           JOIN sessions s ON s.session_id = m.session_id
-           LEFT JOIN threads t ON t.id = s.root_session_id
-           WHERE messages_fts MATCH ?
-           ORDER BY bm25(messages_fts)
-           LIMIT 80`,
-        )
-        .all(match) as Hit[];
+      hits = rankedMessageHits(db, match, { limit: 80, snippetTokens: 10 });
     } catch {
       hits = [];
     }
 
     // Best (lowest decayed rank) raw hit per thread root, then fill remaining slots.
-    const byRoot = new Map<string, Hit & { rank: number }>();
-    for (const hit of hits) {
-      if (!hit.root) continue;
-      const ranked = {
-        ...hit,
-        rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
-      };
-      const existing = byRoot.get(hit.root);
-      if (!existing || ranked.rank < existing.rank) byRoot.set(hit.root, ranked);
-    }
-    for (const hit of [...byRoot.values()].sort((a, b) => a.rank - b.rank)) {
+    const ranked = hits.map((hit) => ({
+      ...hit,
+      rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
+    }));
+    for (const hit of bestHitPerRoot(ranked, (h) => h.rank)) {
       if (chosen.size >= limit) break;
-      if (!chosen.has(hit.root!)) {
-        chosen.set(hit.root!, { snippet: hit.snippet, fromSummary: false });
+      if (!chosen.has(hit.root)) {
+        chosen.set(hit.root, { snippet: hit.snippet, fromSummary: false });
       }
     }
   }

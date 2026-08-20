@@ -54,10 +54,13 @@ const options = {
 // index-cmd.ts, not index.ts, so the file never doubles as a directory index import.
 export const indexCommand = defineCommand({
   options,
-  run: ({ db, args }) => {
+  run: ({ db, args, progress }) => {
     // A rebuild reads exactly what --full reads; the dry run reports that plan.
     if (args["dry-run"]) return { lines: dryRunReport(dryRunIndex(db, args.full || args.rebuild)) };
-    if (args.rebuild) return { lines: rebuildResult(runIndex(db, false, true)) };
-    return { lines: indexResult(runIndex(db, args.full)) };
+    // Skip messages stream through the injected sink as they happen: a skipped
+    // file is worth a line even when the rest of the run succeeds.
+    if (args.rebuild)
+      return { lines: rebuildResult(runIndex(db, { rebuild: true, onSkip: progress })) };
+    return { lines: indexResult(runIndex(db, { full: args.full, onSkip: progress })) };
   },
 });

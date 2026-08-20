@@ -1,7 +1,7 @@
 import { dbFileSize } from "../db.ts";
 import { type SummaryCoverage, summaryCoverage } from "../digest/index.ts";
-import { type Stats, stats } from "../query.ts";
 import { humanBytes, projectName, shortDate } from "../render.ts";
+import { type Stats, stats } from "../stats.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 

@@ -36,19 +36,40 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
+// How long one model call may run before the child is killed. A hung `claude -p`
+// (a wedged API stream, a stuck MCP handshake) would otherwise hang `digest run`
+// and every drain behind it forever. Generous on purpose: a large thread on the
+// big model legitimately takes minutes, and a timeout that fires on a slow-but-
+// alive call wastes a finished summary. Overridable for tests and for operators
+// with slower links.
+const DIGEST_TIMEOUT_MS_DEFAULT = 10 * 60 * 1000;
+export const digestTimeoutMs = (): number => {
+  const parsed = Number(process.env.CEREBRO_DIGEST_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DIGEST_TIMEOUT_MS_DEFAULT;
+};
+
 // The real adapter. The transcript goes on the child's stdin and the prompt as an
 // argv, which is exactly how the hooks invoked it. --no-session-persistence keeps
 // Claude Code from writing this one-shot into ~/.claude/projects, where the indexer
 // would pick it up as a bogus session whose first turn is the digest prompt.
 export const claudeSummarizer: Summarizer = ({ input, model, prompt }) => {
   const bin = process.env.CEREBRO_CLAUDE_BIN || "claude";
+  const timeoutMs = digestTimeoutMs();
   try {
     const proc = Bun.spawnSync([bin, "-p", "--no-session-persistence", "--model", model, prompt], {
       stdin: Buffer.from(input, "utf8"),
       stdout: "pipe",
       stderr: "pipe",
+      timeout: timeoutMs,
     });
     const text = proc.stdout.toString().trim();
+    // Checked before the exit-code branch: a timed-out child also reports a null
+    // exitCode plus a signal, and "was killed by SIGTERM" hides the actual cause.
+    // A timeout is an ordinary failure, not fatal: the thread stays stale and the
+    // next drain retries it.
+    if (proc.exitedDueToTimeout) {
+      return { ok: false, text, detail: `${bin} timed out after ${timeoutMs}ms and was killed` };
+    }
     if (proc.exitCode !== 0) {
       const firstErrorLine = proc.stderr.toString().trim().split("\n")[0] ?? "";
       // A killed child (OOM, a teardown SIGTERM) has a null exitCode and a signal

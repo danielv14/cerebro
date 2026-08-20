@@ -184,14 +184,18 @@ describe("runDigest", () => {
 describe("claudeSummarizer", () => {
   let dir: string;
   let saved: string | undefined;
+  let savedTimeout: string | undefined;
 
   beforeEach(() => {
     dir = fs.mkdtempSync(join(tmpdir(), "cerebro-claude-"));
     saved = process.env.CEREBRO_CLAUDE_BIN;
+    savedTimeout = process.env.CEREBRO_DIGEST_TIMEOUT_MS;
   });
   afterEach(() => {
     if (saved === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
     else process.env.CEREBRO_CLAUDE_BIN = saved;
+    if (savedTimeout === undefined) delete process.env.CEREBRO_DIGEST_TIMEOUT_MS;
+    else process.env.CEREBRO_DIGEST_TIMEOUT_MS = savedTimeout;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -226,6 +230,19 @@ describe("claudeSummarizer", () => {
   test("reports empty output as a failure", () => {
     fakeClaude("exit 0");
     expect(claudeSummarizer({ input: "T", model: "m", prompt: "P" }).ok).toBe(false);
+  });
+
+  test("a call that exceeds the timeout is killed and reported, not hung", () => {
+    // The stand-in sleeps far past the timeout; without the kill this test (and a
+    // real drain) would hang.
+    fakeClaude("sleep 30");
+    process.env.CEREBRO_DIGEST_TIMEOUT_MS = "250";
+    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("timed out after 250ms");
+    // An ordinary failure, not fatal: the next drain retries the thread.
+    expect(result.fatal).toBeUndefined();
   });
 
   test("a binary that cannot be run at all is fatal", () => {
@@ -291,6 +308,26 @@ describe("runDrain", () => {
     expect(result.outcomes.length).toBe(3);
     // The failed one is still stale, the other two are not.
     expect(staleThreads(db, 10).length).toBe(1);
+  });
+
+  test("a timed-out call fails that thread and the drain moves on", () => {
+    // The timeout arrives through the Summarizer seam as an ordinary non-fatal
+    // failure, so a drain treats it like any other failed thread: count it, leave
+    // it stale, keep going.
+    let call = 0;
+    const summarize: Summarizer = () => {
+      call++;
+      return call === 1
+        ? { ok: false, text: "", detail: "claude timed out after 250ms and was killed" }
+        : { ok: true, text: GOOD_SUMMARY, detail: "" };
+    };
+    const result = runDrain(db, 8, { summarize });
+
+    expect(result.failed).toBe(1);
+    expect(result.summarized).toBe(2);
+    expect(result.aborted).toBeUndefined();
+    expect(result.outcomes[0]!.reason).toContain("timed out");
+    expect(staleThreads(db, 10).length).toBe(1); // the timed-out thread is retried later
   });
 
   test("an unexpected throw takes down one thread, not the run", () => {

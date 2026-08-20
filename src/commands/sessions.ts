@@ -1,6 +1,6 @@
-import { listThreads, type ThreadRow } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import { flag, isoDate, numeric, type OptionTable, text } from "./args.ts";
+import { listThreads, type ThreadRow } from "../thread.ts";
+import { flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 // Line 1 of a `sessions` thread row: no leading indent, wall-clock time, the message
@@ -41,7 +41,7 @@ const options = {
   project: text(),
   branch: text(),
   since: isoDate(),
-  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;
 

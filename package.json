@@ -24,7 +24,7 @@
     "typescript": "^5.6.0"
   },
   "engines": {
-    "bun": ">=1.1.0"
+    "bun": ">=1.2.6"
   },
   "dependencies": {
     "stopword": "^3.1.5",

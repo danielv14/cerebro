@@ -31,7 +31,7 @@ const STALE_FROM_WHERE = `
 
 // Thread roots that need a (re)summary: never summarized, summarized before the
 // thread's latest activity, or summarized by an older prompt version. Reads the
-// shared `threads` rollup view (see db.ts), then left-joins summaries.
+// shared `threads` rollup view (see thread.ts), then left-joins summaries.
 export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
   db
     .query(

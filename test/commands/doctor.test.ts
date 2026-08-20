@@ -97,6 +97,28 @@ describe("runDoctor", () => {
     expect(runDoctor(db, ":memory:").ok).toBe(true);
   });
 
+  test("the doctor count and the prune target agree on the same fixture set (#137)", () => {
+    // Two indexed files, one deleted afterwards. Doctor counts orphans through the
+    // same reader the prune deletes through, so what it reports must be exactly
+    // what the next `cerebro index` removes.
+    const goneAfter = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "g1", "bye")]);
+    writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "k1", "hi")]);
+    runIndex(db);
+    fs.rmSync(goneAfter);
+
+    const check = byKey(runDoctor(db, ":memory:"), "cursors");
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain("1 of 2");
+
+    runIndex(db); // the prune removes what doctor counted, nothing else
+    const remaining = db.query("SELECT source_file FROM index_state").all() as {
+      source_file: string;
+    }[];
+    expect(remaining.map((r) => r.source_file)).not.toContain(goneAfter);
+    expect(remaining).toHaveLength(1);
+    expect(byKey(runDoctor(db, ":memory:"), "cursors").detail).toBe("1 rows, no orphans");
+  });
+
   test("zero-message sessions are reported without being treated as a problem", () => {
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hello")]);
     writeSession(env.projects, "-repo", "EMPTY", [

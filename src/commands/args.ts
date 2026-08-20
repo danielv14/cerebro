@@ -67,6 +67,12 @@ export const numeric = (opts: {
   absent: undefined,
 });
 
+// A row-count option (--limit, --keep): a positive integer. One builder owns the
+// rule and its error wording, so the seven commands that take one cannot drift on
+// either.
+export const positiveInt = (): OptionSpec<number | undefined> =>
+  numeric({ integer: true, min: 1, label: "a positive integer" });
+
 // An ISO date option (the `--since` shape). Anchored shape check plus a round-trip
 // calendar check: an unanchored regex would let "2026-31-01" or trailing garbage
 // through, and Date.parse alone is engine-dependent (JSC rolls "2026-02-30" over to

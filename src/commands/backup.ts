@@ -1,6 +1,6 @@
 import { runBackup } from "../backup.ts";
 import { humanBytes } from "../render.ts";
-import { numeric, type OptionTable, text } from "./args.ts";
+import { type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 // `backup` output: where the snapshot landed, its size, and anything pruned.
@@ -16,7 +16,7 @@ export const backupReport = (result: {
 
 const options = {
   to: text(),
-  keep: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  keep: positiveInt(),
 } satisfies OptionTable;
 
 // The `backup` command: snapshot the database via VACUUM INTO, optionally pruning

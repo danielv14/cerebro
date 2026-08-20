@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
-import fs from "node:fs";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
 import { classify, parseLine } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
+import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
+import { relinkThreads } from "./thread.ts";
 
 interface FileMeta {
   sessionId: string;
@@ -14,60 +15,6 @@ interface FileMeta {
   title: string | null;
   titlePriority: number;
 }
-
-// Read raw bytes [start, size) synchronously. We work on bytes (not characters)
-// because the per-file cursor is a byte offset; 0x0A (\n) never appears inside a
-// UTF-8 multibyte sequence, so splitting the byte buffer on newline is safe.
-const readRange = (path: string, start: number, size: number): Buffer => {
-  const length = size - start;
-  if (length <= 0) return Buffer.alloc(0);
-
-  const fd = fs.openSync(path, "r");
-  try {
-    const buf = Buffer.alloc(length);
-    let offset = 0;
-    let position = start;
-    while (offset < length) {
-      const read = fs.readSync(fd, buf, offset, length - offset, position);
-      if (read === 0) break;
-      offset += read;
-      position += read;
-    }
-    return offset === length ? buf : buf.subarray(0, offset);
-  } finally {
-    fs.closeSync(fd);
-  }
-};
-
-// Split a byte buffer read at `start` into complete JSONL lines plus the new
-// cursor. The cursor only advances past a trailing '\n' (or a final line that
-// parses cleanly without one), so a half-written last line is left for next time.
-// Shared by the real indexer and the dry-run analyzer so both agree exactly on
-// what counts as indexable.
-export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
-  if (buf.length === 0) return { lines: [], cursor: start };
-
-  const lastNewline = buf.lastIndexOf(0x0a);
-  if (lastNewline >= 0) {
-    const lines = buf.subarray(0, lastNewline).toString("utf8").split("\n");
-    let cursor = start + lastNewline + 1;
-    const tail = buf
-      .subarray(lastNewline + 1)
-      .toString("utf8")
-      .trim();
-    if (tail && parseLine(tail) !== undefined) {
-      lines.push(tail);
-      cursor = start + buf.length;
-    }
-    return { lines, cursor };
-  }
-
-  const tail = buf.toString("utf8").trim();
-  if (tail && parseLine(tail) !== undefined) return { lines: [tail], cursor: start + buf.length };
-
-  // Mid-write, no complete line yet. Wait for the next run.
-  return { lines: [], cursor: start };
-};
 
 // Insert any new messages from a file's freshly-split lines and harvest the
 // metadata for its session row. The bytes were already read and split by
@@ -296,10 +243,11 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
 // cursors for files that no longer exist. A temp table keeps both correct and cheap
 // regardless of how many files there are.
 const reconcilePresence = (db: Database, files: SessionFile[]): void => {
-  // An empty scan almost always means a transient readdir failure, not that every
-  // session was deleted. Bail rather than flag the whole archive body-unavailable
-  // and wipe every cursor.
-  if (files.length === 0) return;
+  // null = an empty scan, which orphanedCursorPaths treats as a transient readdir
+  // failure. Bail rather than flag the whole archive body-unavailable and wipe
+  // every cursor.
+  const orphans = orphanedCursorPaths(db, files);
+  if (orphans === null) return;
 
   db.run("DROP TABLE IF EXISTS _present");
   db.run("CREATE TEMP TABLE _present (p TEXT PRIMARY KEY)");
@@ -314,83 +262,21 @@ const reconcilePresence = (db: Database, files: SessionFile[]): void => {
     `UPDATE sessions
        SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
   );
+  db.run("DROP TABLE _present");
   // Unlike sessions and messages, where the row *is* the archive (invariant #4), an
   // index_state row for a file that is gone carries no information: it is a byte
   // cursor into something unreadable. Claude Code deletes session files on its own
   // schedule, so without this the one table that is meant to be a working cursor set
-  // grows forever. Only rows whose file is absent go, so an is_digest flag on a file
-  // that still exists is never lost. A pruned file that later reappears is simply
-  // re-read from byte 0 and UUID dedup makes that a no-op, so this cannot resurrect
-  // or duplicate anything.
-  db.run("DELETE FROM index_state WHERE source_file NOT IN (SELECT p FROM _present)");
-  db.run("DROP TABLE _present");
-};
-
-// Build logical threads across resumes. A resume's first message has a parentUuid
-// owned by an earlier session; chaining those parents up gives each thread's root.
-// Cost is linear in archive size (a window scan over messages plus an UPDATE of
-// every sessions row), which is why runIndex only calls it when a file was read.
-// The accepted consequence: a run that crashed after ingest but before this call
-// leaves stale links that a later no-op run no longer repairs. The repair path is
-// `cerebro index --full`, which always reads files and so always relinks.
-export const relinkThreads = (db: Database): void => {
-  // Pass 1: direct parent session, in one query. The inner subquery finds the
-  // earliest main-chain message per session, with its parentUuid. Sidechain rows
-  // are excluded: the resume link lives on the first main-chain turn, and a folded
-  // subagent turn can never carry it (a pure-subagent stub then has no candidate
-  // row, which is correct: it has no parent link to find). Ordering is by id, not
-  // ts: for a session's main-chain messages, insertion order equals file order
-  // equals conversational order on every path (files scan oldest-first, appends get
-  // higher ids, re-reads dedup onto the original rows), so the lowest id is the
-  // true first turn regardless of missing or unordered timestamps — either ts-based
-  // ordering can be shadowed by a tolerated NULL ts.
-  //
-  // The join resolves which session owns the referenced parentUuid (uuid is UNIQUE,
-  // so at most one owner per first-message); a NULL parent_uuid simply never joins,
-  // and the <> guard drops in-session parents, so only cross-session resume links
-  // survive.
-  const links = db
-    .query(
-      `SELECT f.session_id AS session, m.session_id AS parent
-       FROM (
-         SELECT session_id, parent_uuid,
-                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id) AS rn
-         FROM messages
-         WHERE is_sidechain = 0
-       ) f
-       JOIN messages m ON m.uuid = f.parent_uuid
-       WHERE f.rn = 1 AND m.session_id <> f.session_id`,
-    )
-    .all() as { session: string; parent: string }[];
-
-  const parentSession = new Map<string, string>(links.map((l) => [l.session, l.parent]));
-
-  // Pass 2: walk to the root, guarding against cycles.
-  const rootOf = (session: string): string => {
-    const seen = new Set<string>();
-    let cur = session;
-    while (true) {
-      seen.add(cur);
-      const parent = parentSession.get(cur);
-      if (!parent || seen.has(parent)) break;
-      cur = parent;
-    }
-    return cur;
-  };
-
-  const allSessions = (
-    db.query("SELECT session_id FROM sessions").all() as { session_id: string }[]
-  ).map((r) => r.session_id);
-
-  const update = db.query(
-    `UPDATE sessions SET parent_session_id = ?, root_session_id = ? WHERE session_id = ?`,
-  );
-  const tx = db.transaction(() => {
-    for (const session of allSessions) {
-      update.run(parentSession.get(session) ?? null, rootOf(session), session);
-    }
+  // grows forever. The rows to drop come from orphanedCursorPaths (the same reader
+  // doctor counts through), so only rows whose file is absent go and an is_digest
+  // flag on a file that still exists is never lost. A pruned file that later
+  // reappears is simply re-read from byte 0 and UUID dedup makes that a no-op, so
+  // this cannot resurrect or duplicate anything.
+  const drop = db.query("DELETE FROM index_state WHERE source_file = ?");
+  const prune = db.transaction(() => {
+    for (const path of orphans) drop.run(path);
   });
-  tx();
+  prune();
 };
 
 export interface IndexResult {
@@ -401,108 +287,6 @@ export interface IndexResult {
   // no-op gate in runIndex is directly observable.
   relinked: boolean;
 }
-
-type FileStatus = "new" | "grown" | "truncated" | "unchanged";
-
-interface FileReadPlan {
-  start: number; // byte offset to read from
-  status: FileStatus;
-  shouldRead: boolean; // false only when unchanged (and not full)
-}
-
-// The single source of truth for the per-file cursor/skip/truncate decision in
-// front of splitBuffer. runIndex and dryRunIndex both consume this so they cannot
-// drift on what counts as indexable (invariant #2: dry-run must report exactly
-// what a real run would process). `full` forces a re-read from byte 0 and never
-// short-circuits as unchanged; in full mode the status is always "grown"/"new"
-// and callers ignore it for categorization.
-export const planFileRead = (
-  state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
-  file: SessionFile,
-  full: boolean,
-): FileReadPlan => {
-  // A file flagged as cerebro's own digest summarization transcript is permanently
-  // excluded, even when it grows: the content guard (isDigestRunTranscript) only
-  // inspects reads that start at byte 0, so without this flag a digest transcript
-  // still being written when first detected would leak its later lines into the
-  // archive on the next incremental run. Checked before `full` on purpose: a real
-  // --full run has already cleared index_state (no flag survives, the file is
-  // re-read and re-detected from byte 0), so honoring the flag here only affects
-  // a --full *dry run*, which must report the file as skipped to match.
-  if (state?.is_digest) {
-    return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
-  }
-
-  if (full) {
-    return { start: 0, status: state ? "grown" : "new", shouldRead: true };
-  }
-
-  const start = state ? state.bytes_indexed : 0;
-  if (start > file.size) {
-    // truncated / rotated -> re-read from the start
-    return { start: 0, status: "truncated", shouldRead: true };
-  }
-
-  if (state && start === file.size && state.mtime_ms === file.mtimeMs) {
-    return { start, status: "unchanged", shouldRead: false };
-  }
-
-  return { start, status: state ? "grown" : "new", shouldRead: true };
-};
-
-interface ScannedFile {
-  file: SessionFile;
-  plan: FileReadPlan;
-  lines: string[];
-  cursor: number;
-}
-
-// The single scan shared by runIndex and dryRunIndex: for each discovered file,
-// look up its cursor state, decide via planFileRead whether to read, and for the
-// ones to read, pull the new bytes and split them into complete lines. Hosting the
-// discover-state-plan-read-split sequence here (not in two parallel loops) is what
-// keeps invariant #2 structural: both consumers see exactly the same lines/cursor
-// for a given file. What to do with the result (write vs count) and how to treat a
-// mid-write file whose cursor did not advance is left to `handle`.
-//
-// `onUnchanged` is invoked for files planFileRead skips (so the dry run can count
-// them). `onError` isolates a per-file read/handle failure (a vanished or corrupt
-// file) so one bad file does not abort the whole run; without it the error
-// propagates, which is what the dry run wants.
-const eachIndexableFile = (
-  db: Database,
-  files: SessionFile[],
-  full: boolean,
-  handle: (scanned: ScannedFile) => void,
-  opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
-): void => {
-  const getState = db.query(
-    "SELECT bytes_indexed, mtime_ms, is_digest FROM index_state WHERE source_file = ?",
-  );
-
-  for (const file of files) {
-    const state = getState.get(file.path) as {
-      bytes_indexed: number;
-      mtime_ms: number;
-      is_digest: number;
-    } | null;
-
-    const plan = planFileRead(state, file, full);
-    if (!plan.shouldRead) {
-      opts.onUnchanged?.();
-      continue;
-    }
-
-    try {
-      const buf = readRange(file.path, plan.start, file.size);
-      const { lines, cursor } = splitBuffer(buf, plan.start);
-      handle({ file, plan, lines, cursor });
-    } catch (error) {
-      if (!opts.onError) throw error;
-      opts.onError(file, error as Error);
-    }
-  }
-};
 
 // True when these lines are cerebro's own headless summarization run rather than a
 // real session. The SessionEnd hook pipes a transcript through
@@ -538,8 +322,20 @@ const isDigestRunTranscript = (lines: string[]): boolean => {
 // A run that indexes nothing is O(files discovered), not O(archive): the relink
 // pass is skipped (see below), which is what keeps the synchronous /clear hook
 // cheap on a large archive.
-export const runIndex = (db: Database, full = false, rebuild = false): IndexResult => {
-  const readAll = full || rebuild;
+export interface IndexOptions {
+  full?: boolean;
+  // Implies full.
+  rebuild?: boolean;
+  // Where the per-file skip message goes when a file cannot be read or ingested
+  // (the run continues without it). The CLI injects its output sink; a direct
+  // library caller that omits it accepts silent skips, which IndexResult's
+  // filesIndexed vs filesScanned still exposes.
+  onSkip?: (line: string) => void;
+}
+
+export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => {
+  const rebuild = opts.rebuild ?? false;
+  const readAll = (opts.full ?? false) || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
@@ -582,7 +378,7 @@ export const runIndex = (db: Database, full = false, rebuild = false): IndexResu
     {
       // Isolate per-file failures (an unreadable or corrupt file) so one bad file
       // does not abort the whole run and skip relinkThreads / reconcilePresence.
-      onError: (file, error) => console.error(`cerebro: skipped ${file.path}: ${error.message}`),
+      onError: (file, error) => opts.onSkip?.(`cerebro: skipped ${file.path}: ${error.message}`),
     },
   );
 
