@@ -2,7 +2,7 @@ import { gitInfo } from "../git.ts";
 import { recentThreads, type ThreadRow } from "../query.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { threadOpeningPrompt } from "../thread.ts";
-import { flag, numeric, type OptionTable, text } from "./args.ts";
+import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 // Line 1 of a `recent` thread row. `showMsgs: false` (the --context branch) drops
@@ -64,7 +64,7 @@ export const recentBlock = (
 const options = {
   cwd: text(),
   days: numeric({ min: 0, minExclusive: true, label: "a positive number" }),
-  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  limit: positiveInt(),
   context: flag(),
   json: flag(),
 } satisfies OptionTable;

@@ -19,7 +19,7 @@ import {
 } from "../digest/index.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
-import { CliError, flag, numeric, type OptionTable, text } from "./args.ts";
+import { CliError, flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
@@ -146,7 +146,7 @@ export const parseSessionEndPayload = (raw: string): string | null => {
 // Matches the reconciler's own default cap.
 const DEFAULT_DRAIN_LIMIT = 8;
 
-const limitOption = numeric({ integer: true, min: 1, label: "a positive integer" });
+const limitOption = positiveInt();
 
 // `digest` is a group: each action declares the flags it accepts, so
 // `digest search --bytes 5` is rejected the same way an unknown flag on a

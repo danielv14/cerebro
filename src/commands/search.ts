@@ -1,6 +1,6 @@
 import { SEARCH_ROLES, type SearchHit, search } from "../query.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import { CliError, choice, flag, isoDate, numeric, type OptionTable, text } from "./args.ts";
+import { CliError, choice, flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 // `search` output: one header + one snippet line per hit, then the count footer. The
@@ -34,7 +34,7 @@ const options = {
   role: choice(SEARCH_ROLES),
   prose: flag(),
   all: flag(),
-  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;
 

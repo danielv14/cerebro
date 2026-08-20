@@ -1,6 +1,6 @@
 import { oneLine, shortDate } from "../render.ts";
 import { type SkillUsage, skillUsage } from "../skills.ts";
-import { flag, isoDate, numeric, type OptionTable } from "./args.ts";
+import { flag, isoDate, type OptionTable, positiveInt } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 const NAME_WIDTH = 34;
@@ -35,7 +35,7 @@ export const skillsListing = (usage: SkillUsage): string[] => {
 // never-called ones. `--limit` is there when you only want the top of the list.
 const options = {
   since: isoDate(),
-  limit: numeric({ integer: true, min: 1, label: "a positive integer" }),
+  limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;
 
