@@ -24,7 +24,8 @@ Do not drown the context window. Follow this ladder:
 2. **`cerebro search <query>`**, **`cerebro relevant <prompt>`** (relevance-ranked
    against a prompt) or **`cerebro sessions`** / **`cerebro recent`** to find the right
    thread. Gives you only id + timestamp + project + snippet.
-3. **`cerebro show <id>`** for an outline (one line per message) of the interesting thread.
+3. **`cerebro show <id>`** for an outline of the interesting thread (one line per
+   message; a long thread shows the first and last 50 with an omitted marker between).
 4. **`cerebro show <id> --range A..B`** to read a verbatim slice around a hit
    (`search` shows each hit's `#N` position). **`--full`** only when you need the whole
    transcript; do not pull it needlessly, threads can be thousands of messages.
@@ -195,7 +196,11 @@ JSON payload). That is what the automated hooks use (see "Good to know").
 
 ### `cerebro show <session-id> [--full] [--range A..B]`
 Shows a whole logical thread (root + all resumes + subagent turns), ordered
-chronologically. Outline by default, `--full` gives the verbatim transcript.
+chronologically. Outline by default; past 100 messages it shows the first and last
+50 with a marker line in between (`… N message(s) omitted (#A..#B), open a slice
+with: cerebro show <id> --range A..B`), so the head tells you how the thread opened
+and the tail how it ended without paying for every line. `--full` gives the
+verbatim transcript.
 `--range 12..18` (or a single number) gives a verbatim slice with the same numbering as
 the outline and as the `#N` markers in `search` hits, so you can jump straight to a hit
 in a huge thread without pulling the whole transcript. Subagent turns are tagged
@@ -212,6 +217,9 @@ Thread a1b2c3d4  162 message(s)
   4. user      2026-02-12 15:03  [tool_result] src/theme/ThemeProvider.tsx src/pages/Settings.tsx …
  18. assistant 2026-02-12 15:20  [tool_use:Agent] {"subagent_type":"Explore","description":"Find theme tokens"}
  19. user      2026-02-12 15:20  [subagent] List all color tokens in src/theme …
+  … 62 message(s) omitted (#51..#112), open a slice with: cerebro show <id> --range A..B
+113. assistant 2026-02-12 16:31  The toggle now persists via localStorage; running the test suite.
+162. assistant 2026-02-12 16:48  All tests pass. The dark mode toggle is done.
 
 Full transcript: cerebro show <id> --full
 ```
@@ -344,7 +352,7 @@ the thread's id, and every `digest` row starts with that id. That is the referen
 the raw data: in the vast majority of cases the summary is good enough to answer with, and
 you do not need to open the transcript. Fetch the raw data **only when needed**, in this
 order:
-- `cerebro show <id>` for an outline (one line per message) when you need to see how it unfolded.
+- `cerebro show <id>` for an outline (one line per message, head + tail on a long thread) when you need to see how it unfolded.
 - `cerebro show <id> --full` for the verbatim transcript when you need exact wording, code or commands.
 - `cerebro search "<term>"` when you want to hit one specific message somewhere in the thread (or in the archive).
 
