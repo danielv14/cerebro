@@ -108,7 +108,8 @@ export const buildParserOptions = (
   const table: Record<string, { type: "string" | "boolean"; short?: string }> = {
     help: { type: "boolean", short: "h" },
   };
-  // Only the labels, so a name's kind has exactly one home (the table above).
+  // Labels only, so a name's kind has exactly one home: the table above, which is
+  // also what the rule compares against.
   const owners = new Map<string, string>([["help", "the parser's own -h alias"]]);
   const add = (owner: string, options: OptionTable): void => {
     for (const [name, spec] of Object.entries(options)) {
