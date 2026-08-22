@@ -26,9 +26,13 @@ Do not drown the context window. Follow this ladder:
    thread. Gives you only id + timestamp + project + snippet.
 3. **`cerebro show <id>`** for an outline of the interesting thread (one line per
    message; a long thread shows the first and last 50 with an omitted marker between).
-4. **`cerebro show <id> --range A..B`** to read a verbatim slice around a hit
-   (`search` shows each hit's `#N` position). **`--full`** only when you need the whole
-   transcript; do not pull it needlessly, threads can be thousands of messages.
+   The head tells you how the thread opened, the tail how it ended: usually enough to
+   judge whether this is the right thread before spending more context on it.
+4. **`cerebro show <id> --range A..B`** to read a verbatim slice: around a `search`
+   hit's `#N` position, or into the outline's omitted middle. Range is the digging
+   tool; take a slice of 10-20 messages, widen only if the answer is not there.
+   **`--full`** is the last resort, only when you truly need the whole transcript;
+   a long thread's transcript can be hundreds of KB and drown the context window.
 
 Ids can be abbreviated to the prefix (8 characters) the listings show. An ambiguous
 prefix errors. The reader commands (`search`, `sessions`, `recent`, `relevant`, `show`,
