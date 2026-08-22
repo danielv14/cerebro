@@ -1,11 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { bestHitPerRoot, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
+import { dedupedHitWindow, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
 import { hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
 
 // Full-text search over the raw transcripts, as the `search` command runs it:
-// the user-facing filters, the sanitized-fallback MATCH handling, the deduped
-// over-fetch window policy, and display hydration. The query shape itself lives
-// in the FTS layer (rankedMessageHits).
+// the user-facing filters, the sanitized-fallback MATCH handling, the size of the
+// first over-fetch window, and display hydration. The query shape and the
+// dedup-and-grow window live in the FTS layer (rankedMessageHits,
+// dedupedHitWindow).
 
 export interface SearchHit {
   id: number;
@@ -54,14 +55,12 @@ export interface SearchOpts {
 // `search --role`. classify() already drops everything else before insert.
 export const SEARCH_ROLES = ["user", "assistant"] as const;
 
-// Over-fetch window for the deduped search: `max(2000, limit * 50)` rows in one
-// query, quadrupled for at most 3 further rounds when the window ran out before
-// `limit` distinct thread roots were found. 2000 rows covers any realistic archive in
-// one fetch; the ceiling (2000 * 4^3 = 128 000 rows) bounds the worst case.
-const SEARCH_WINDOW_MIN = 2000;
-const SEARCH_WINDOW_FACTOR = 50;
-const SEARCH_WINDOW_GROWTH = 4;
-const SEARCH_WINDOW_ROUNDS = 3;
+// The deduped search's tuning for the shared window: 50 rows per requested thread,
+// floored at 2000, which covers any realistic archive in one fetch. An explicit
+// query can afford that depth. The sizing formula, the growth and the round cap are
+// dedupedHitWindow's.
+const SEARCH_WINDOW_MIN_ROWS = 2000;
+const SEARCH_WINDOW_ROWS_PER_ROOT = 50;
 
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
@@ -112,27 +111,32 @@ export const search = (
     filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
   }
 
-  // The ranked hits are over-fetched in one deep query (rankedMessageHits, the
-  // shared owner of the FTS join shape) and the best hit per thread root is kept
-  // via bestHitPerRoot, the same dedup relevantThreads uses. One deep fetch rather
-  // than LIMIT/OFFSET paging: `ORDER BY bm25(...) LIMIT n` uses a bounded top-N
-  // sorter, so a deeper n is nearly free, while every extra page re-ranks the whole
-  // match set and pays that cost again (#81). A fixed window alone is not enough
-  // either: one chatty thread can own every row in it and starve the threads ranked
-  // below, so when the window is exhausted before `limit` distinct roots are found it
-  // grows geometrically and the dedup is redone from the top. The ordinal is
-  // deliberately NOT computed here: it would run a thread-wide COUNT for every
-  // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
-  // thread ordering) runs once per *kept* hit below.
-  const fetchWindow = (match: string, windowSize: number): RankedMessageHit[] =>
-    rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
+  const windowFetch =
+    (match: string) =>
+    (windowSize: number): RankedMessageHit[] =>
+      rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
 
-  // Resolve the effective MATCH query on the first fetch; deeper fetches reuse it.
-  let match = query;
-  let windowSize = opts.all ? limit : Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR);
-  let rows: RankedMessageHit[];
+  // Everything the window does under one resolved MATCH. The ordinal is deliberately
+  // NOT computed in the hit query: it would run a thread-wide COUNT for every matched
+  // row the sorter sees; instead messageOrdinal (thread.ts, the owner of thread
+  // ordering) runs once per *kept* hit below.
+  const collect = (match: string): RankedMessageHit[] =>
+    opts.all
+      ? windowFetch(match)(limit)
+      : dedupedHitWindow({
+          fetch: windowFetch(match),
+          targetRoots: limit,
+          minRows: SEARCH_WINDOW_MIN_ROWS,
+          rowsPerRoot: SEARCH_WINDOW_ROWS_PER_ROOT,
+        }).slice(0, limit);
+
+  // The retry wraps the whole window, not each fetch: only the first fetch can fail
+  // on syntax, because a query FTS5 accepted once stays valid at every window size.
+  // So the rejected query is paid exactly once and every growth round runs under the
+  // query that worked.
+  let kept: RankedMessageHit[];
   try {
-    rows = fetchWindow(match, windowSize);
+    kept = collect(query);
   } catch {
     const sanitized = query
       .split(/\s+/)
@@ -140,26 +144,7 @@ export const search = (
       .map((token) => `"${token.replace(/"/g, '""')}"`)
       .join(" ");
     if (!sanitized) return [];
-    match = sanitized;
-    rows = fetchWindow(match, windowSize);
-  }
-
-  let kept: RankedMessageHit[];
-  if (opts.all) {
-    kept = rows;
-  } else {
-    kept = bestHitPerRoot(rows).slice(0, limit);
-    // Grow only when the window was genuinely exhausted: fewer distinct roots than
-    // asked for AND a full window came back, so deeper rows can still exist.
-    for (
-      let round = 0;
-      round < SEARCH_WINDOW_ROUNDS && kept.length < limit && rows.length >= windowSize;
-      round++
-    ) {
-      windowSize *= SEARCH_WINDOW_GROWTH;
-      rows = fetchWindow(match, windowSize);
-      kept = bestHitPerRoot(rows).slice(0, limit);
-    }
+    kept = collect(sanitized);
   }
 
   // Title and project are the *thread's*, read from the `threads` rollup rather than

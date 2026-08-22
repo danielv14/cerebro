@@ -12,6 +12,7 @@ import { stats } from "../src/stats.ts";
 import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
+  countHitQueries,
   makeClaudeDir,
   type TempClaude,
   ts,
@@ -326,6 +327,31 @@ describe("query (populated archive)", () => {
     runIndex(db);
     const hits = search(db, 'alpha"', 10);
     expect(hits.map((h) => h.session_id)).toEqual(["S"]);
+  });
+
+  test("search resolves the sanitized fallback once and reuses it when the window grows", () => {
+    // The chatty thread is wider than the first 2000-row window, so OTHER only
+    // surfaces after a growth round, and the query is malformed so the first fetch
+    // pays a throwing MATCH plus the sanitized retry. The deeper round must reuse
+    // that decision: three hit queries in total, not four.
+    const chatty = Array.from({ length: 2100 }, (_, i) =>
+      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
+        timestamp: ts(i),
+        parentUuid: i === 0 ? null : `c${i - 1}`,
+      }),
+    );
+    writeSession(env.projects, "-repo", "CHATTY", chatty);
+    writeSession(env.projects, "-repo", "OTHER", [
+      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
+    ]);
+    runIndex(db);
+
+    let hits: string[] = [];
+    const queries = countHitQueries(db, () => {
+      hits = search(db, 'limiter"', 2).map((hit) => hit.session_id);
+    });
+    expect(hits.sort()).toEqual(["CHATTY", "OTHER"]);
+    expect(queries).toBe(3);
   });
 
   test("search returns no hits when a malformed query sanitizes to nothing matchable", () => {

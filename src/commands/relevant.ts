@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { gitInfo } from "../git.ts";
-import { type RelevantThread, relevantThreads } from "../relevance.ts";
+import { DEFAULT_RELEVANT_LIMIT, type RelevantThread, relevantThreads } from "../relevance.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { CliError, flag, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
@@ -114,7 +114,7 @@ export const relevantCommand = defineCommand({
     }
     // Same repo resolution as `recent`: the git root when the cwd is inside a repo,
     // else the exact path. gitInfo tolerates a null cwd (and a deleted directory).
-    const threads = relevantThreads(db, prompt, args.limit ?? 3, now, {
+    const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
       repoRoot: gitInfo(cwd).root,
       cwd,
     });
