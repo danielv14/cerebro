@@ -125,22 +125,16 @@ describe("option declarations", () => {
     );
   });
 
-  test("every command carries the db discriminant, and only version is db-less", () => {
-    // The flag is set by the builder, not handed over next to a run step whose type
-    // could disagree with it: defineCommand sets true, defineDbLessCommand sets false.
-    // So a boolean is always there, and the list of db-less commands is a decision
-    // rather than an oversight. doctor's drift check depends on `version` staying on
-    // it: it spawns the deployed binary's `version` precisely so the answer does not
-    // depend on whether that binary's archive is readable.
+  test("version is the only command that runs without a database", () => {
+    // The type already forces every command through a builder that sets the flag, so
+    // what is left to pin is the registry: which commands are db-less is a decision,
+    // not something that drifts. See versionCommand in cli.ts for why it is the one.
     const dbLess: string[] = [];
     for (const [name, node] of commands) {
       const entries: [string, Command][] = isGroup(node)
         ? Object.entries(node.subcommands).map(([action, sub]) => [`${name} ${action}`, sub])
         : [[name, node]];
-      for (const [label, command] of entries) {
-        expect(typeof command.needsDb).toBe("boolean");
-        if (!command.needsDb) dbLess.push(label);
-      }
+      for (const [label, command] of entries) if (!command.needsDb) dbLess.push(label);
     }
     expect(dbLess).toEqual(["version"]);
   });

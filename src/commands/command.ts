@@ -35,7 +35,6 @@ export interface CommandContext<A> {
   progress: (line: string) => void;
 }
 
-// The context plus the open archive, for the commands that read one.
 export interface CommandInput<A> extends CommandContext<A> {
   db: Database;
 }
@@ -67,17 +66,10 @@ export interface CommandOutput {
 // builders below, which is where the argument type is tied back to the option table
 // and where `needsDb` is set; those are the one place either connection is cast
 // away, and the dispatcher itself casts nothing.
-export type Command =
-  | {
-      options: OptionTable;
-      needsDb: true;
-      run: (input: CommandInput<Record<string, unknown>>) => CommandOutput;
-    }
-  | {
-      options: OptionTable;
-      needsDb: false;
-      run: (context: CommandContext<Record<string, unknown>>) => CommandOutput;
-    };
+export type Command = { options: OptionTable } & (
+  | { needsDb: true; run: (input: CommandInput<Record<string, unknown>>) => CommandOutput }
+  | { needsDb: false; run: (context: CommandContext<Record<string, unknown>>) => CommandOutput }
+);
 
 // A command that dispatches over sub-actions (digest). Each action declares its
 // own options, so `digest search --bytes 5` is rejected the same way an unknown
@@ -107,9 +99,7 @@ export const defineCommand = <T extends OptionTable>(spec: {
 // Build a command that answers before the archive is opened. Its run step takes the
 // context alone, so reaching for a database is a compile error rather than a crash
 // on a null. The flag comes from the builder rather than the caller, so the run
-// step's type and the dispatcher's behaviour cannot disagree. `version` is the one
-// user: doctor's drift check spawns the deployed binary's `version`, and that answer
-// must not depend on whether its archive happens to be readable.
+// step's type and the dispatcher's behaviour cannot disagree.
 export const defineDbLessCommand = <T extends OptionTable>(spec: {
   options: T;
   run: (context: CommandContext<OptionValues<T>>) => CommandOutput;

@@ -210,8 +210,6 @@ export const runCli = (
   // Read once per run, so every command in one dispatch sees the same instant.
   const now = env.now ?? Date.now();
   const cwd = env.cwd ?? process.cwd();
-  // Everything a command gets that is not the archive. A db-less command runs on
-  // this alone; the rest get it plus an open database.
   const context: CommandContext<Record<string, unknown>> = {
     args: commandArgs,
     rest,
