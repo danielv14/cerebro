@@ -9,16 +9,38 @@ import { resolveOrThrow } from "./helpers.ts";
 const threadHeader = (sessionId: string, count: number): string =>
   `Thread ${shortId(sessionId)}  ${count} message(s)\n`;
 
-// `show` (outline): the header, then a numbered one-line-per-message digest, then the
-// hint to open the full transcript.
+// The default outline is capped at head + tail: the head shows how the thread
+// opened, the tail how it ended, which is enough to judge "is this the right
+// thread?" without paying for a giant thread's every line (#147). The tail keeps
+// its true ordinals so the numbering stays identical to --range and search's #N.
+const OUTLINE_HEAD = 50;
+const OUTLINE_TAIL = 50;
+
+const outlineLine = (message: ThreadMessage, ordinal: number): string => {
+  const marker = message.is_sidechain ? "[subagent] " : "";
+  return `${String(ordinal).padStart(3)}. ${message.role.padEnd(9)} ${shortTime(message.ts)}  ${marker}${oneLine(message.text, 110)}`;
+};
+
+// `show` (outline): the header, then a numbered one-line-per-message digest (capped,
+// see above), then the hint to open the full transcript.
 export const showOutline = (sessionId: string, messages: ThreadMessage[]): string[] => {
   const lines: string[] = [threadHeader(sessionId, messages.length)];
-  messages.forEach((message, i) => {
-    const marker = message.is_sidechain ? "[subagent] " : "";
+  if (messages.length <= OUTLINE_HEAD + OUTLINE_TAIL) {
+    messages.forEach((message, i) => {
+      lines.push(outlineLine(message, i + 1));
+    });
+  } else {
+    const omitted = messages.length - OUTLINE_HEAD - OUTLINE_TAIL;
+    messages.slice(0, OUTLINE_HEAD).forEach((message, i) => {
+      lines.push(outlineLine(message, i + 1));
+    });
     lines.push(
-      `${String(i + 1).padStart(3)}. ${message.role.padEnd(9)} ${shortTime(message.ts)}  ${marker}${oneLine(message.text, 110)}`,
+      `  … ${omitted} message(s) omitted (#${OUTLINE_HEAD + 1}..#${messages.length - OUTLINE_TAIL}), open a slice with: cerebro show <id> --range A..B`,
     );
-  });
+    messages.slice(-OUTLINE_TAIL).forEach((message, i) => {
+      lines.push(outlineLine(message, messages.length - OUTLINE_TAIL + i + 1));
+    });
+  }
   lines.push("\nFull transcript: cerebro show <id> --full");
   return lines;
 };

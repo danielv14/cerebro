@@ -195,7 +195,11 @@ JSON payload). That is what the automated hooks use (see "Good to know").
 
 ### `cerebro show <session-id> [--full] [--range A..B]`
 Shows a whole logical thread (root + all resumes + subagent turns), ordered
-chronologically. Outline by default, `--full` gives the verbatim transcript.
+chronologically. Outline by default; past 100 messages it shows the first and last
+50 with a marker line in between (`… N message(s) omitted (#A..#B), open a slice
+with: cerebro show <id> --range A..B`), so the head tells you how the thread opened
+and the tail how it ended without paying for every line. `--full` gives the
+verbatim transcript.
 `--range 12..18` (or a single number) gives a verbatim slice with the same numbering as
 the outline and as the `#N` markers in `search` hits, so you can jump straight to a hit
 in a huge thread without pulling the whole transcript. Subagent turns are tagged
