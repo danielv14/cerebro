@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
-import { type Command, isGroup } from "../src/commands/command.ts";
+import { buildParserOptions, type CliIO, commands, runCli } from "../src/cli.ts";
+import { flag, positiveInt } from "../src/commands/args.ts";
+import { type Command, type CommandNode, defineCommand, isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -139,27 +140,61 @@ describe("option declarations", () => {
     expect(dbLess).toEqual(["version"]);
   });
 
-  test("a flag name shared by several commands agrees on its kind everywhere", () => {
-    // The parser needs one table up front, so two commands declaring --full as a
-    // boolean and a string would silently make one of them wrong. Seeded with the
-    // globals because parserOptions adds those first and first declaration wins: a
-    // command redeclaring --db as a flag would be parsed as a string forever, and
-    // read back as absent on every invocation.
-    const kinds = new Map<string, string>(
-      Object.entries(GLOBAL_OPTIONS).map(([option, spec]) => [option, spec.kind]),
+  test("the real option table builds, so no two commands disagree on a kind", () => {
+    // The rule lives in the builder now, so this asserts the real thing rather than
+    // re-deriving the aggregation: buildParserOptions throws on a clash, and the
+    // table cerebro actually parses with is the one being built here.
+    const table = buildParserOptions(commands);
+    expect(table.limit).toEqual({ type: "string" });
+    expect(table.help).toEqual({ type: "boolean", short: "h" });
+    expect(table.db).toEqual({ type: "string" });
+  });
+
+  test("building the table refuses an option two commands declare with different kinds", () => {
+    // --limit is a string everywhere; a command declaring it as a boolean would parse
+    // as `true`, the coercion would turn that into "true", and that command's --limit
+    // would error for every user who passed it. It has to fail here instead.
+    const clashing = new Map<string, CommandNode>([
+      ["first", defineCommand({ options: { limit: positiveInt() }, run: () => ({}) })],
+      ["second", defineCommand({ options: { limit: flag() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --limit is declared as string by `cerebro first` and as boolean by " +
+        "`cerebro second`. The parser needs one kind per option name.",
     );
-    for (const [, node] of commands) {
-      const tables = isGroup(node)
-        ? Object.values(node.subcommands).map((sub) => sub.options)
-        : [node.options];
-      for (const table of tables) {
-        for (const [option, spec] of Object.entries(table)) {
-          const seen = kinds.get(option);
-          if (seen !== undefined) expect(`${option}:${spec.kind}`).toBe(`${option}:${seen}`);
-          else kinds.set(option, spec.kind);
-        }
-      }
-    }
+  });
+
+  test("building the table refuses a command that redeclares a global option's kind", () => {
+    // --db is a string the dispatcher reads to find the archive. Redeclared as a flag
+    // it would parse as a string and read back as absent on every invocation, so the
+    // globals are part of the same one-kind-per-name rule.
+    const clashing = new Map<string, CommandNode>([
+      ["rogue", defineCommand({ options: { db: flag() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --db is declared as string by the global options and as boolean by " +
+        "`cerebro rogue`. The parser needs one kind per option name.",
+    );
+  });
+
+  test("the clash is caught inside a group's actions too", () => {
+    // A group's actions each declare their own options, so a clash can hide one level
+    // down; digest is the only group today.
+    const clashing = new Map<string, CommandNode>([
+      ["straight", defineCommand({ options: { bytes: positiveInt() }, run: () => ({}) })],
+      [
+        "grouped",
+        {
+          subcommands: {
+            act: defineCommand({ options: { bytes: flag() }, run: () => ({}) }),
+          },
+          unknownAction: () => "unknown",
+        },
+      ],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "declared as string by `cerebro straight` and as boolean by `cerebro grouped act`",
+    );
   });
 });
 
