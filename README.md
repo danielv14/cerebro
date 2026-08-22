@@ -375,8 +375,8 @@ src/
                 rootOf(), threadMessages(), listThreads(), recentThreads(),
                 hydrateThreadMeta(), relinkThreads()
   fts.ts        the message-FTS layer: rankedMessageHits(), bestHitPerRoot(),
-                escapeLike(), toMatchQuery()
-  search.ts     search(): the search command's filters, window policy and
+                dedupedHitWindow(), escapeLike(), toMatchQuery()
+  search.ts     search(): the search command's filters, first-window sizing and
                 display hydration
   stats.ts      stats() + archiveSpan()
   relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo

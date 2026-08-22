@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,3 +95,21 @@ export const assistantMsg = (
   message: { role: "assistant", content },
   ...over,
 });
+
+// Count the ranked-hit queries a call issues, so a test can pin how many over-fetch
+// rounds it ran. Wrapping db.query is the only seam for that: the window policy is
+// internal to the FTS layer on purpose, and the round count is not in the result.
+export const countHitQueries = (db: Database, run: () => void): number => {
+  let queries = 0;
+  const real = db.query.bind(db);
+  db.query = ((sql: string) => {
+    if (sql.includes("messages_fts MATCH")) queries++;
+    return real(sql);
+  }) as typeof db.query;
+  try {
+    run();
+  } finally {
+    db.query = real;
+  }
+  return queries;
+};

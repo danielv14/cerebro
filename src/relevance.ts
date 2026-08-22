@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/index.ts";
-import { bestHitPerRoot, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
+import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
 import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
 
 // Relevance ranking. `relevant` answers "what past work relates to this prompt",
@@ -59,6 +59,15 @@ const repoBoost = (
   if (scope.cwd) return hit.project_path === scope.cwd ? SAME_REPO_BOOST : 1;
   return 1;
 };
+
+// First over-fetch window for the raw tier: 20 rows per requested thread, floored
+// at the 80 rows the tier used to pin flat. The default limit of 3 therefore still
+// resolves in one fetch, which matters on the prompt hook's latency path, while a
+// larger --limit gets a window sized for it instead of returning however many
+// threads happened to fit in 80 rows (#141). Growing past the first window is
+// dedupedHitWindow's job.
+const RAW_WINDOW_MIN = 80;
+const RAW_WINDOW_FACTOR = 20;
 
 export interface RelevantThread {
   id: string;
@@ -119,20 +128,28 @@ export const relevantThreads = (
     // rankedMessageHits attaches the thread rollup (last_ts + repo) from the
     // `threads` view, not the matched message's own session row: a resume can
     // carry a NULL git_root, and the view is root-preferring, so the boost sees
-    // the thread's repo.
-    let hits: RankedMessageHit[] = [];
-    try {
-      hits = rankedMessageHits(db, match, { limit: 80, snippetTokens: 10 });
-    } catch {
-      hits = [];
-    }
+    // the thread's repo. A malformed MATCH (rare, toMatchQuery quotes tokens)
+    // yields an empty tier rather than throwing.
+    const fetchWindow = (windowSize: number): RankedMessageHit[] => {
+      try {
+        return rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 10 });
+      } catch {
+        return [];
+      }
+    };
 
-    // Best (lowest decayed rank) raw hit per thread root, then fill remaining slots.
-    const ranked = hits.map((hit) => ({
-      ...hit,
-      rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
-    }));
-    for (const hit of bestHitPerRoot(ranked, (h) => h.rank)) {
+    // The window is deduped on this tier's own rank, not on bm25, so the hit kept
+    // per thread is the one the decay and the boost would actually rank it on. The
+    // target is the full `limit` rather than the slots still open: the roots this
+    // tier finds may overlap the summary tier's, and asking for `limit` distinct
+    // roots covers that worst case. Then fill the remaining slots.
+    const kept = dedupedHitWindow({
+      fetch: fetchWindow,
+      target: limit,
+      firstWindow: Math.max(RAW_WINDOW_MIN, limit * RAW_WINDOW_FACTOR),
+      rank: (hit) => decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
+    });
+    for (const hit of kept) {
       if (chosen.size >= limit) break;
       if (!chosen.has(hit.root)) {
         chosen.set(hit.root, { snippet: hit.snippet, fromSummary: false });

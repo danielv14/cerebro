@@ -1,11 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { bestHitPerRoot, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
+import { dedupedHitWindow, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
 import { hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
 
 // Full-text search over the raw transcripts, as the `search` command runs it:
-// the user-facing filters, the sanitized-fallback MATCH handling, the deduped
-// over-fetch window policy, and display hydration. The query shape itself lives
-// in the FTS layer (rankedMessageHits).
+// the user-facing filters, the sanitized-fallback MATCH handling, the size of the
+// first over-fetch window, and display hydration. The query shape and the
+// dedup-and-grow window live in the FTS layer (rankedMessageHits,
+// dedupedHitWindow).
 
 export interface SearchHit {
   id: number;
@@ -54,14 +55,12 @@ export interface SearchOpts {
 // `search --role`. classify() already drops everything else before insert.
 export const SEARCH_ROLES = ["user", "assistant"] as const;
 
-// Over-fetch window for the deduped search: `max(2000, limit * 50)` rows in one
-// query, quadrupled for at most 3 further rounds when the window ran out before
-// `limit` distinct thread roots were found. 2000 rows covers any realistic archive in
-// one fetch; the ceiling (2000 * 4^3 = 128 000 rows) bounds the worst case.
+// First over-fetch window for the deduped search: `max(2000, limit * 50)` rows.
+// 2000 rows covers any realistic archive in one fetch, which is what an explicit
+// query can afford. Growing it when it runs out before `limit` distinct thread
+// roots are found is dedupedHitWindow's job.
 const SEARCH_WINDOW_MIN = 2000;
 const SEARCH_WINDOW_FACTOR = 50;
-const SEARCH_WINDOW_GROWTH = 4;
-const SEARCH_WINDOW_ROUNDS = 3;
 
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
@@ -112,55 +111,41 @@ export const search = (
     filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
   }
 
-  // The ranked hits are over-fetched in one deep query (rankedMessageHits, the
-  // shared owner of the FTS join shape) and the best hit per thread root is kept
-  // via bestHitPerRoot, the same dedup relevantThreads uses. One deep fetch rather
-  // than LIMIT/OFFSET paging: `ORDER BY bm25(...) LIMIT n` uses a bounded top-N
-  // sorter, so a deeper n is nearly free, while every extra page re-ranks the whole
-  // match set and pays that cost again (#81). A fixed window alone is not enough
-  // either: one chatty thread can own every row in it and starve the threads ranked
-  // below, so when the window is exhausted before `limit` distinct roots are found it
-  // grows geometrically and the dedup is redone from the top. The ordinal is
-  // deliberately NOT computed here: it would run a thread-wide COUNT for every
-  // matched row the sorter sees; instead messageOrdinal (thread.ts, the owner of
-  // thread ordering) runs once per *kept* hit below.
-  const fetchWindow = (match: string, windowSize: number): RankedMessageHit[] =>
-    rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
-
-  // Resolve the effective MATCH query on the first fetch; deeper fetches reuse it.
-  let match = query;
-  let windowSize = opts.all ? limit : Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR);
-  let rows: RankedMessageHit[];
-  try {
-    rows = fetchWindow(match, windowSize);
-  } catch {
-    const sanitized = query
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((token) => `"${token.replace(/"/g, '""')}"`)
-      .join(" ");
-    if (!sanitized) return [];
-    match = sanitized;
-    rows = fetchWindow(match, windowSize);
-  }
-
-  let kept: RankedMessageHit[];
-  if (opts.all) {
-    kept = rows;
-  } else {
-    kept = bestHitPerRoot(rows).slice(0, limit);
-    // Grow only when the window was genuinely exhausted: fewer distinct roots than
-    // asked for AND a full window came back, so deeper rows can still exist.
-    for (
-      let round = 0;
-      round < SEARCH_WINDOW_ROUNDS && kept.length < limit && rows.length >= windowSize;
-      round++
-    ) {
-      windowSize *= SEARCH_WINDOW_GROWTH;
-      rows = fetchWindow(match, windowSize);
-      kept = bestHitPerRoot(rows).slice(0, limit);
+  // The effective MATCH is decided on the first fetch and every later round reuses
+  // it: a user query goes to MATCH verbatim so power users can use FTS operators,
+  // and stray syntax falls back to a sanitized phrase query of the bare tokens.
+  // Deciding once is why a growth round never pays the rejected query again.
+  // `undefined` = not attempted yet, `null` = no usable query at all.
+  let match: string | null | undefined;
+  const fetchWindow = (windowSize: number): RankedMessageHit[] => {
+    const run = (effective: string): RankedMessageHit[] =>
+      rankedMessageHits(db, effective, { limit: windowSize, snippetTokens: 12, filters });
+    if (match !== undefined) return match === null ? [] : run(match);
+    try {
+      const rows = run(query);
+      match = query;
+      return rows;
+    } catch {
+      match =
+        query
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((token) => `"${token.replace(/"/g, '""')}"`)
+          .join(" ") || null;
+      return match === null ? [] : run(match);
     }
-  }
+  };
+
+  // The ordinal is deliberately NOT computed in the hit query: it would run a
+  // thread-wide COUNT for every matched row the sorter sees; instead messageOrdinal
+  // (thread.ts, the owner of thread ordering) runs once per *kept* hit below.
+  const kept = opts.all
+    ? fetchWindow(limit)
+    : dedupedHitWindow({
+        fetch: fetchWindow,
+        target: limit,
+        firstWindow: Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR),
+      }).slice(0, limit);
 
   // Title and project are the *thread's*, read from the `threads` rollup rather than
   // the matched message's own session row (#120). A resumed thread usually splits the

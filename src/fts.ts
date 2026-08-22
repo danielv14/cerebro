@@ -27,8 +27,9 @@ export const toMatchQuery = (text: string): string | null => {
 // the same FTS-join-sessions-join-rollup query and their own spelling of "keep
 // the best hit per thread root", which is exactly how #119/#127 happened: the two
 // paths disagreed about the same thread and the fix had to land twice. The join
-// and the dedup live here once; what a caller keeps for itself is policy (the
-// ranking function, the over-fetch window, display hydration).
+// and the dedup live here once, along with the growth policy that keeps a deep
+// window from starving a thread; what a caller keeps for itself is the ranking
+// function, the size of its first fetch, and display hydration.
 
 export interface RankedMessageHit {
   id: number;
@@ -122,4 +123,55 @@ export const bestHitPerRoot = <T extends { root: string }>(
     if (!existing || hitRank < existing.rank) byRoot.set(hit.root, { hit, rank: hitRank });
   });
   return [...byRoot.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
+};
+
+// Geometric growth for a deduped hit window, shared by search and relevance. A
+// fixed window is not enough on its own: one chatty thread can own every row in it
+// and starve the threads ranked below, so an exhausted window is re-fetched deeper
+// and the dedup redone from the top. One deep fetch rather than LIMIT/OFFSET
+// paging: `ORDER BY bm25(...) LIMIT n` uses a bounded top-N sorter, so a deeper n
+// is nearly free, while every extra page re-ranks the whole match set and pays that
+// cost again (#81).
+const WINDOW_GROWTH = 4;
+const WINDOW_ROUNDS = 3;
+
+export interface DedupedWindow<T> {
+  // Fetches the top `size` rows, best-first. Called once per round, and owns
+  // whatever the caller needs to resolve its MATCH: search memoizes its sanitized
+  // fallback in here, so a deeper round never pays the rejected query again.
+  fetch: (size: number) => T[];
+  // Distinct thread roots wanted. Growth stops once the window holds this many.
+  target: number;
+  // Rows in the first fetch, sized by the caller off its own limit: search
+  // over-fetches deep because an explicit query can afford it, relevance stays
+  // shallow because it runs on the prompt hot path.
+  firstWindow: number;
+  // Rank for the dedup, as bestHitPerRoot takes it. Defaults to incoming order,
+  // which is what a caller wants when the rows arrive sorted by bm25.
+  rank?: (hit: T, index: number) => number;
+}
+
+// The best hit per thread root over a window grown until it holds `target` roots.
+// Truncation stays the caller's (search slices, relevance fills remaining slots).
+export const dedupedHitWindow = <T extends { root: string }>({
+  fetch,
+  target,
+  firstWindow,
+  rank,
+}: DedupedWindow<T>): T[] => {
+  let size = firstWindow;
+  let rows = fetch(size);
+  let kept = bestHitPerRoot(rows, rank);
+  // Grow only when the window was genuinely exhausted: fewer distinct roots than
+  // asked for AND a full window came back, so deeper rows can still exist.
+  for (
+    let round = 0;
+    round < WINDOW_ROUNDS && kept.length < target && rows.length >= size;
+    round++
+  ) {
+    size *= WINDOW_GROWTH;
+    rows = fetch(size);
+    kept = bestHitPerRoot(rows, rank);
+  }
+  return kept;
 };
