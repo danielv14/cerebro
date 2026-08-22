@@ -10,6 +10,7 @@ import {
   type CommandNode,
   type CommandOutput,
   defineDbLessCommand,
+  eachCommand,
   isGroup,
 } from "./commands/command.ts";
 import { digestCommand } from "./commands/digest.ts";
@@ -50,7 +51,7 @@ const realIO: CliIO = {
 // The two options every command accepts. Everything else belongs to exactly one
 // command, which is what lets a flag meant for another one be rejected instead of
 // silently ignored.
-export const GLOBAL_OPTIONS = {
+const GLOBAL_OPTIONS = {
   db: text(),
   help: flag(),
 } satisfies OptionTable;
@@ -87,24 +88,53 @@ export const commands = new Map<string, CommandNode>([
 
 // Every option any command declares, as the table node:util needs up front. The
 // parser has to know the whole vocabulary before it can tell which command was
-// asked for; which subset is *allowed* is checked afterwards, per command. A name
-// declared by two commands must agree on its kind, which test/cli.test.ts asserts.
-const parserOptions = (): Record<string, { type: "string" | "boolean"; short?: string }> => {
+// asked for; which subset is *allowed* is checked afterwards, per command.
+//
+// Because there is one table, a name can only be parsed one way, so two commands
+// declaring it with different kinds is a contradiction the parser cannot express.
+// Resolving it silently (first declaration wins) breaks the loser for every user
+// who passes the flag: a `--limit` redeclared as a boolean parses as `true`, the
+// coercion turns that into the string "true", and the command errors on it. A
+// `--db` redeclared as a flag parses as a string and reads back as absent forever.
+// So the collision throws here, where the table is built, rather than reaching
+// that command's users. Taking the entries as a parameter is what lets a test hand
+// this a clashing pair instead of restating the loop.
+export const buildParserOptions = (
+  entries: Iterable<[string, CommandNode]>,
+): Record<string, { type: "string" | "boolean"; short?: string }> => {
+  // `help` is seeded rather than declared, because only this table can carry the
+  // `-h` short alias. It goes into the same table the rule reads, so the seed is
+  // inside the rule instead of beside it.
   const table: Record<string, { type: "string" | "boolean"; short?: string }> = {
     help: { type: "boolean", short: "h" },
   };
-  const add = (options: OptionTable): void => {
-    for (const [name, spec] of Object.entries(options)) table[name] ??= { type: spec.kind };
+  // Labels only, so a name's kind has exactly one home: the table above, which is
+  // also what the rule compares against.
+  const owners = new Map<string, string>([["help", "the parser's own -h alias"]]);
+  const add = (owner: string, options: OptionTable): void => {
+    for (const [name, spec] of Object.entries(options)) {
+      const declared = table[name];
+      if (declared) {
+        if (declared.type !== spec.kind) {
+          throw new Error(
+            `Option --${name} is declared as ${declared.type} by ${owners.get(name)} and as ` +
+              `${spec.kind} by ${owner}. The parser needs one kind per option name.`,
+          );
+        }
+        continue;
+      }
+      table[name] = { type: spec.kind };
+      owners.set(name, owner);
+    }
   };
-  add(GLOBAL_OPTIONS);
-  for (const node of commands.values()) {
-    if (isGroup(node)) for (const sub of Object.values(node.subcommands)) add(sub.options);
-    else add(node.options);
+  add("the global options", GLOBAL_OPTIONS);
+  for (const [label, command] of eachCommand(entries)) {
+    add(`\`cerebro ${label}\``, command.options);
   }
   return table;
 };
 
-const PARSER_OPTIONS = parserOptions();
+const PARSER_OPTIONS = buildParserOptions(commands);
 
 // Wrapped so the parsed shape is inferred rather than spelled out; parseArgs' own
 // type is generic over the option table and unpleasant to write by hand.

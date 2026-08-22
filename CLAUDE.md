@@ -103,6 +103,11 @@ When adding a command: declare its options, return data, and add it to the
 flag to an existing command, declare it on that command only. Reach for a new
 option builder in `args.ts` rather than validating inside a run step.
 
+The parser needs the whole option vocabulary as one table, so a name means one
+kind everywhere. `buildParserOptions` throws at startup when two commands
+disagree, naming both sides. Pick a different name rather than reusing one with a
+different kind.
+
 The `digest run` / `digest drain` pipeline (`src/digest/run.ts`) is the one place
 cerebro spawns a model. It sits behind the `Summarizer` seam: `claudeSummarizer`
 spawns the CLI, tests pass a fake. cerebro owns the prompt, the size tiering and

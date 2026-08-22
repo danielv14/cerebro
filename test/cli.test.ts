@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
-import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
-import { type Command, isGroup } from "../src/commands/command.ts";
+import { buildParserOptions, type CliIO, commands, runCli } from "../src/cli.ts";
+import { flag, positiveInt, text } from "../src/commands/args.ts";
+import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -105,19 +106,10 @@ describe("option declarations", () => {
     "digest show": ["json"],
   };
 
-  const declared = (): Record<string, string[]> => {
-    const out: Record<string, string[]> = {};
-    for (const [name, node] of commands) {
-      if (isGroup(node)) {
-        for (const [action, sub] of Object.entries(node.subcommands)) {
-          out[`${name} ${action}`] = Object.keys(sub.options).sort();
-        }
-      } else {
-        out[name] = Object.keys(node.options).sort();
-      }
-    }
-    return out;
-  };
+  const declared = (): Record<string, string[]> =>
+    Object.fromEntries(
+      eachCommand(commands).map(([label, command]) => [label, Object.keys(command.options).sort()]),
+    );
 
   test("every command declares exactly the options it accepts", () => {
     expect(declared()).toEqual(
@@ -129,37 +121,75 @@ describe("option declarations", () => {
     // The type already forces every command through a builder that sets the flag, so
     // what is left to pin is the registry: which commands are db-less is a decision,
     // not something that drifts. See versionCommand in cli.ts for why it is the one.
-    const dbLess: string[] = [];
-    for (const [name, node] of commands) {
-      const entries: [string, Command][] = isGroup(node)
-        ? Object.entries(node.subcommands).map(([action, sub]) => [`${name} ${action}`, sub])
-        : [[name, node]];
-      for (const [label, command] of entries) if (!command.needsDb) dbLess.push(label);
-    }
+    const dbLess = eachCommand(commands)
+      .filter(([, command]) => !command.needsDb)
+      .map(([label]) => label);
     expect(dbLess).toEqual(["version"]);
   });
 
-  test("a flag name shared by several commands agrees on its kind everywhere", () => {
-    // The parser needs one table up front, so two commands declaring --full as a
-    // boolean and a string would silently make one of them wrong. Seeded with the
-    // globals because parserOptions adds those first and first declaration wins: a
-    // command redeclaring --db as a flag would be parsed as a string forever, and
-    // read back as absent on every invocation.
-    const kinds = new Map<string, string>(
-      Object.entries(GLOBAL_OPTIONS).map(([option, spec]) => [option, spec.kind]),
+  test("the real option table builds, so no two commands disagree on a kind", () => {
+    // The rule lives in the builder now, so this asserts the real thing rather than
+    // re-deriving the aggregation: buildParserOptions throws on a clash, and the
+    // table cerebro actually parses with is the one being built here.
+    const table = buildParserOptions(commands);
+    expect(table.limit).toEqual({ type: "string" });
+    expect(table.help).toEqual({ type: "boolean", short: "h" });
+    expect(table.db).toEqual({ type: "string" });
+  });
+
+  test("building the table refuses an option two commands declare with different kinds", () => {
+    const clashing = new Map<string, CommandNode>([
+      ["first", defineCommand({ options: { limit: positiveInt() }, run: () => ({}) })],
+      ["second", defineCommand({ options: { limit: flag() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --limit is declared as string by `cerebro first` and as boolean by " +
+        "`cerebro second`. The parser needs one kind per option name.",
     );
-    for (const [, node] of commands) {
-      const tables = isGroup(node)
-        ? Object.values(node.subcommands).map((sub) => sub.options)
-        : [node.options];
-      for (const table of tables) {
-        for (const [option, spec] of Object.entries(table)) {
-          const seen = kinds.get(option);
-          if (seen !== undefined) expect(`${option}:${spec.kind}`).toBe(`${option}:${seen}`);
-          else kinds.set(option, spec.kind);
-        }
-      }
-    }
+  });
+
+  test("building the table refuses a command that redeclares a global option's kind", () => {
+    // The globals are part of the same rule, not a layer under it.
+    const clashing = new Map<string, CommandNode>([
+      ["rogue", defineCommand({ options: { db: flag() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --db is declared as string by the global options and as boolean by " +
+        "`cerebro rogue`. The parser needs one kind per option name.",
+    );
+  });
+
+  test("the seeded --help is inside the rule, not beside it", () => {
+    // `help` is put straight into the parser table rather than declared as an option,
+    // because only that table can carry the `-h` short alias. The rule reads the kind
+    // back off the table, so the seed is an incumbent like any other declaration.
+    const clashing = new Map<string, CommandNode>([
+      ["rogue", defineCommand({ options: { help: text() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --help is declared as boolean by the parser's own -h alias and as " +
+        "string by `cerebro rogue`. The parser needs one kind per option name.",
+    );
+  });
+
+  test("the clash is caught inside a group's actions too", () => {
+    // A group's actions each declare their own options, so a clash can hide one level
+    // down.
+    const clashing = new Map<string, CommandNode>([
+      ["straight", defineCommand({ options: { bytes: positiveInt() }, run: () => ({}) })],
+      [
+        "grouped",
+        {
+          subcommands: {
+            act: defineCommand({ options: { bytes: flag() }, run: () => ({}) }),
+          },
+          unknownAction: () => "unknown",
+        },
+      ],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "declared as string by `cerebro straight` and as boolean by `cerebro grouped act`",
+    );
   });
 });
 
