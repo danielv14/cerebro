@@ -27,37 +27,30 @@ describe("showOutline", () => {
     ]);
   });
 
-  test("caps a long outline at head 50 + tail 50 with an omitted marker (#147)", () => {
-    const messages = Array.from({ length: 101 }, (_, i) => ({
+  const userMessages = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
       role: "user",
       ts: "2026-01-15T08:00:00Z",
       text: `message ${i + 1}`,
       session_id: "S",
       is_sidechain: 0 as const,
     }));
-    const lines = showOutline("0123456789abcdef", messages);
-    // header + 50 head + marker + 50 tail + footer
+
+  test("caps a long outline at head 50 + tail 50 with an omitted marker (#147)", () => {
+    const lines = showOutline("0123456789abcdef", userMessages(101));
     expect(lines).toHaveLength(1 + 50 + 1 + 50 + 1);
     expect(lines[1]).toBe("  1. user      2026-01-15 09:00  message 1");
     expect(lines[50]).toBe(" 50. user      2026-01-15 09:00  message 50");
     expect(lines[51]).toBe(
       "  … 1 message(s) omitted (#51..#51), open a slice with: cerebro show <id> --range A..B",
     );
-    // The tail keeps its true ordinals, matching --range and search's #N.
     expect(lines[52]).toBe(" 52. user      2026-01-15 09:00  message 52");
     expect(lines[101]).toBe("101. user      2026-01-15 09:00  message 101");
     expect(lines[102]).toBe("\nFull transcript: cerebro show <id> --full");
   });
 
   test("renders exactly 100 messages uncapped, with no marker", () => {
-    const messages = Array.from({ length: 100 }, (_, i) => ({
-      role: "user",
-      ts: "2026-01-15T08:00:00Z",
-      text: `message ${i + 1}`,
-      session_id: "S",
-      is_sidechain: 0 as const,
-    }));
-    const lines = showOutline("0123456789abcdef", messages);
+    const lines = showOutline("0123456789abcdef", userMessages(100));
     expect(lines).toHaveLength(1 + 100 + 1);
     expect(lines.some((line) => line.includes("omitted"))).toBe(false);
   });
