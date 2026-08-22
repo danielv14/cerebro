@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
-import { isGroup } from "../src/commands/command.ts";
+import { type Command, isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -123,6 +123,20 @@ describe("option declarations", () => {
     expect(declared()).toEqual(
       Object.fromEntries(Object.entries(EXPECTED).map(([k, v]) => [k, [...v].sort()])),
     );
+  });
+
+  test("version is the only command that runs without a database", () => {
+    // The type already forces every command through a builder that sets the flag, so
+    // what is left to pin is the registry: which commands are db-less is a decision,
+    // not something that drifts. See versionCommand in cli.ts for why it is the one.
+    const dbLess: string[] = [];
+    for (const [name, node] of commands) {
+      const entries: [string, Command][] = isGroup(node)
+        ? Object.entries(node.subcommands).map(([action, sub]) => [`${name} ${action}`, sub])
+        : [[name, node]];
+      for (const [label, command] of entries) if (!command.needsDb) dbLess.push(label);
+    }
+    expect(dbLess).toEqual(["version"]);
   });
 
   test("a flag name shared by several commands agrees on its kind everywhere", () => {

@@ -1,13 +1,16 @@
 import type { Database } from "bun:sqlite";
 import type { OptionTable, OptionValues } from "./args.ts";
 
-// What a command is: a declared set of options, and a run step from the database
-// plus validated arguments to a result. A command does not print, does not decide
-// between JSON and a listing, and cannot reach a flag it did not declare. The
-// dispatcher owns all three.
+// What a command is: a declared set of options, and a run step from validated
+// arguments to a result. A command does not print, does not decide between JSON and
+// a listing, and cannot reach a flag it did not declare. The dispatcher owns all
+// three, and it owns the database too: a command that declares it needs no archive
+// has no way to reach one.
 
-export interface CommandInput<A> {
-  db: Database;
+// Everything the dispatcher supplies that is not the database. A command that
+// answers before the archive is opened is typed against this alone, so there is no
+// slot to fill with a database that does not exist.
+export interface CommandContext<A> {
   // The command's own validated options.
   args: A;
   // The instant the command runs at, and the directory it was invoked in, both
@@ -22,6 +25,7 @@ export interface CommandInput<A> {
   // Positionals after the command name (and after the sub-action for a group), so
   // a command never indexes past its own arguments.
   rest: string[];
+  // Where the archive is, which a command can report without reading it (`version`).
   dbPath: string;
   // Emit a line *now*, before the command returns. This is not a second output
   // channel for results: it exists because `digest drain` makes up to N model
@@ -29,6 +33,10 @@ export interface CommandInput<A> {
   // Buffering those lines until the end would make a hung call indistinguishable
   // from a slow one. Everything else returns its lines and ignores this.
   progress: (line: string) => void;
+}
+
+export interface CommandInput<A> extends CommandContext<A> {
+  db: Database;
 }
 
 export interface CommandOutput {
@@ -52,17 +60,16 @@ export interface CommandOutput {
   exitCode?: number;
 }
 
-// The erased shape the dispatcher works with. Commands are built through
-// defineCommand, which is where the argument type is tied back to the option
-// table; this is the one place the connection is cast away.
-export interface Command {
-  options: OptionTable;
-  run: (input: CommandInput<Record<string, unknown>>) => CommandOutput;
-  // `version` answers before the database is opened: doctor's drift check spawns
-  // the deployed binary's `version`, and that answer must not depend on whether
-  // its archive happens to be readable.
-  needsDb?: boolean;
-}
+// The erased shape the dispatcher works with: a command either reads an open
+// archive or answers from the context alone, and `needsDb` is the discriminant that
+// tells the dispatcher which call it is making. Both arms are built through the
+// builders below, which is where the argument type is tied back to the option table
+// and where `needsDb` is set; those are the one place either connection is cast
+// away, and the dispatcher itself casts nothing.
+export type Command = { options: OptionTable } & (
+  | { needsDb: true; run: (input: CommandInput<Record<string, unknown>>) => CommandOutput }
+  | { needsDb: false; run: (context: CommandContext<Record<string, unknown>>) => CommandOutput }
+);
 
 // A command that dispatches over sub-actions (digest). Each action declares its
 // own options, so `digest search --bytes 5` is rejected the same way an unknown
@@ -83,9 +90,21 @@ export const isGroup = (node: CommandNode): node is CommandGroup => "subcommands
 export const defineCommand = <T extends OptionTable>(spec: {
   options: T;
   run: (input: CommandInput<OptionValues<T>>) => CommandOutput;
-  needsDb?: boolean;
 }): Command => ({
   options: spec.options,
-  needsDb: spec.needsDb,
+  needsDb: true,
   run: (input) => spec.run(input as unknown as CommandInput<OptionValues<T>>),
+});
+
+// Build a command that answers before the archive is opened. Its run step takes the
+// context alone, so reaching for a database is a compile error rather than a crash
+// on a null. The flag comes from the builder rather than the caller, so the run
+// step's type and the dispatcher's behaviour cannot disagree.
+export const defineDbLessCommand = <T extends OptionTable>(spec: {
+  options: T;
+  run: (context: CommandContext<OptionValues<T>>) => CommandOutput;
+}): Command => ({
+  options: spec.options,
+  needsDb: false,
+  run: (context) => spec.run(context as unknown as CommandContext<OptionValues<T>>),
 });

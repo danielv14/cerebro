@@ -361,7 +361,8 @@ src/
   commands/     one module per command: its declared options, its run step, and
                 its output formatting
     args.ts     options as data (flag/text/numeric/isoDate/choice/range) + CliError
-    command.ts  defineCommand, CommandInput/CommandOutput, the group shape
+    command.ts  defineCommand + defineDbLessCommand, CommandContext/
+                CommandInput/CommandOutput, the group shape
     helpers.ts  readStdin() + resolveSession()/resolveOrThrow()
   db.ts         openDb() + schema/migrations + dbFileSize()
   paths.ts      session-file discovery (top-level + subagents)

@@ -6,9 +6,10 @@ import { flag, type OptionTable, readOptions, text } from "./commands/args.ts";
 import { backupCommand } from "./commands/backup.ts";
 import {
   type Command,
+  type CommandContext,
   type CommandNode,
   type CommandOutput,
-  defineCommand,
+  defineDbLessCommand,
   isGroup,
 } from "./commands/command.ts";
 import { digestCommand } from "./commands/digest.ts";
@@ -57,9 +58,8 @@ export const GLOBAL_OPTIONS = {
 // `version` answers before the database is opened, like --help. That is not just
 // speed: doctor's drift check works by spawning the *deployed* binary's `version`,
 // and that answer must not depend on whether its archive happens to be readable.
-const versionCommand = defineCommand({
+const versionCommand = defineDbLessCommand({
   options: { json: flag() } satisfies OptionTable,
-  needsDb: false,
   run: ({ dbPath }) => {
     const stamp = buildStamp();
     return { json: { ...stamp, dbPath }, lines: [buildStampLine(stamp), `db: ${dbPath}`] };
@@ -111,9 +111,9 @@ const PARSER_OPTIONS = parserOptions();
 const parseCliArgs = (args: string[]) =>
   parseArgs({ args, allowPositionals: true, tokens: true, options: PARSER_OPTIONS });
 
-// The ambient values the dispatcher hands every command (see CommandInput). Both are
-// injectable so a test can pin the clock and the working directory; production reads
-// them off the process.
+// The ambient values the dispatcher hands every command (see CommandContext). Both
+// are injectable so a test can pin the clock and the working directory; production
+// reads them off the process.
 export interface CliEnv {
   now?: number;
   cwd?: string;
@@ -210,6 +210,14 @@ export const runCli = (
   // Read once per run, so every command in one dispatch sees the same instant.
   const now = env.now ?? Date.now();
   const cwd = env.cwd ?? process.cwd();
+  const context: CommandContext<Record<string, unknown>> = {
+    args: commandArgs,
+    rest,
+    dbPath,
+    now,
+    cwd,
+    progress: io.log,
+  };
 
   // Emit whatever the command produced: raw stdout, or JSON when the command
   // declares --json and it was asked for, or the rendered lines, or the empty
@@ -222,19 +230,9 @@ export const runCli = (
     if (output.exitCode) io.setExitCode(output.exitCode);
   };
 
-  if (command.needsDb === false) {
-    // No database to open, close, or fail on.
-    emit(
-      command.run({
-        db: null as unknown as Database,
-        args: commandArgs,
-        rest,
-        dbPath,
-        now,
-        cwd,
-        progress: io.log,
-      }),
-    );
+  if (!command.needsDb) {
+    // No database to open, close, or fail on, and no slot to invent one in.
+    emit(command.run(context));
     return;
   }
 
@@ -249,7 +247,7 @@ export const runCli = (
   }
 
   try {
-    emit(command.run({ db, args: commandArgs, rest, dbPath, now, cwd, progress: io.log }));
+    emit(command.run({ ...context, db }));
   } catch (error) {
     // A CliError (a bad argument, an unresolvable id), an ambiguous session prefix,
     // or an unexpected SQL error: show the message, not a stack trace.

@@ -82,9 +82,18 @@ declares the flags it accepts as data (`src/commands/args.ts`) and its run step
 maps validated arguments to a `CommandOutput`. It never prints, never chooses
 between JSON and a listing, and cannot read a flag it did not declare.
 
+A command that answers before the archive is opened uses the other builder,
+`defineDbLessCommand`. Its run step takes a `CommandContext`, which has no `db`,
+so reaching for one is a compile error rather than a crash; `defineCommand`'s
+takes a `CommandInput`, the same context plus the open database. Each builder
+sets `needsDb` itself, so the run step's type and what the dispatcher hands it
+cannot disagree. `version` is the only db-less command, and `test/cli.test.ts`
+pins that list.
+
 `runCli` owns the rest: parsing, rejecting a flag the command did not declare
 (this is why `cerebro sessions --keep 3` errors instead of being ignored),
-coercing and validating the declared ones, opening and closing the database,
+coercing and validating the declared ones, opening and closing the database for
+the commands that declared they need it,
 supplying the ambient clock and working directory (`now`/`cwd` on the command
 input, injectable so a test can pin an instant), and rendering the result. A bad argument is a `CliError` thrown from wherever the rule
 lives; runCli turns it into one message plus exit 1.
