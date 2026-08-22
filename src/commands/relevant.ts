@@ -8,12 +8,7 @@ import { readStdin } from "./helpers.ts";
 
 // Line 1 of a `relevant` thread row: id, date, project, title. Distinct from the
 // `recent` / `sessions` rows.
-const relevantThreadLine = (thread: {
-  id: string;
-  last_ts: string | null;
-  project_path: string | null;
-  title: string | null;
-}): string =>
+const relevantThreadLine = (thread: RelevantThread): string =>
   `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${projectName(thread.project_path)}  ${oneLine(thread.title ?? "(untitled)", 80)}`;
 
 // The snippet follow-up line for a `relevant` row. The label flags which FTS tier the

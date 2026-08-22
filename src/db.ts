@@ -173,10 +173,9 @@ export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
   db.exec(CONNECTION_PRAGMAS);
-  const version = (): number =>
-    (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
-
-  const upToDate = (): boolean => version() === SCHEMA_VERSION && threadsViewIsCurrent(db);
+  const upToDate = (): boolean =>
+    (db.query("PRAGMA user_version").get() as { user_version: number }).user_version ===
+      SCHEMA_VERSION && threadsViewIsCurrent(db);
 
   if (!upToDate()) {
     // DDL, migrations, and the version stamp commit as ONE transaction. Were the

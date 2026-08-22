@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
-import { classify, parseLine } from "./jsonl.ts";
+import { classifyLines } from "./jsonl.ts";
 import { discoverSessionFiles, type SessionFile } from "./paths.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 import { relinkThreads } from "./thread.ts";
@@ -57,12 +57,7 @@ const ingestLines = (
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  for (const line of lines) {
-    if (!line) continue;
-    const parsed = parseLine(line);
-    if (parsed === undefined) continue;
-    const classified = classify(parsed);
-
+  for (const classified of classifyLines(lines)) {
     if (classified.kind === "message") {
       // Attribute every message to the file's owning session id. For a top-level
       // file that is its own UUID; for a subagent file it is the parent session,
@@ -300,11 +295,7 @@ export interface IndexResult {
 // file read whole from the start, never a mid-file incremental read whose first line
 // is an arbitrary turn.
 const isDigestRunTranscript = (lines: string[]): boolean => {
-  for (const line of lines) {
-    if (!line) continue;
-    const parsed = parseLine(line);
-    if (parsed === undefined) continue;
-    const classified = classify(parsed);
+  for (const classified of classifyLines(lines)) {
     if (classified.kind !== "message") continue;
     // The first real turn decides it: a digest run opens with the prompt as a user
     // message; any other opening is a genuine session.
@@ -400,10 +391,8 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
 
 const countMessages = (lines: string[]): number => {
   let count = 0;
-  for (const line of lines) {
-    if (!line) continue;
-    const parsed = parseLine(line);
-    if (parsed !== undefined && classify(parsed).kind === "message") count++;
+  for (const classified of classifyLines(lines)) {
+    if (classified.kind === "message") count++;
   }
   return count;
 };

@@ -111,24 +111,22 @@ export const search = (
     filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
   }
 
-  const windowFetch =
-    (match: string) =>
-    (windowSize: number): RankedMessageHit[] =>
-      rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
-
   // Everything the window does under one resolved MATCH. The ordinal is deliberately
   // NOT computed in the hit query: it would run a thread-wide COUNT for every matched
   // row the sorter sees; instead messageOrdinal (thread.ts, the owner of thread
   // ordering) runs once per *kept* hit below.
-  const collect = (match: string): RankedMessageHit[] =>
-    opts.all
-      ? windowFetch(match)(limit)
+  const collect = (match: string): RankedMessageHit[] => {
+    const fetch = (windowSize: number): RankedMessageHit[] =>
+      rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
+    return opts.all
+      ? fetch(limit)
       : dedupedHitWindow({
-          fetch: windowFetch(match),
+          fetch,
           targetRoots: limit,
           minRows: SEARCH_WINDOW_MIN_ROWS,
           rowsPerRoot: SEARCH_WINDOW_ROWS_PER_ROOT,
         }).slice(0, limit);
+  };
 
   // The retry wraps the whole window, not each fetch: only the first fetch can fail
   // on syntax, because a query FTS5 accepted once stays valid at every window size.

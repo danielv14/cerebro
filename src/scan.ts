@@ -37,28 +37,23 @@ const readRange = (path: string, start: number, size: number): Buffer => {
 // cursor. The cursor only advances past a trailing '\n' (or a final line that
 // parses cleanly without one), so a half-written last line is left for next time.
 export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
-  if (buf.length === 0) return { lines: [], cursor: start };
-
+  // With no newline at all, lastNewline is -1: lines start empty, the cursor stays
+  // at `start` (-1 + 1 = 0), and the whole buffer is the tail, so the one rule
+  // below covers a buffer with and without newlines alike.
   const lastNewline = buf.lastIndexOf(0x0a);
-  if (lastNewline >= 0) {
-    const lines = buf.subarray(0, lastNewline).toString("utf8").split("\n");
-    let cursor = start + lastNewline + 1;
-    const tail = buf
-      .subarray(lastNewline + 1)
-      .toString("utf8")
-      .trim();
-    if (tail && parseLine(tail) !== undefined) {
-      lines.push(tail);
-      cursor = start + buf.length;
-    }
-    return { lines, cursor };
+  const lines = lastNewline >= 0 ? buf.subarray(0, lastNewline).toString("utf8").split("\n") : [];
+  let cursor = start + lastNewline + 1;
+
+  const tail = buf
+    .subarray(lastNewline + 1)
+    .toString("utf8")
+    .trim();
+  if (tail && parseLine(tail) !== undefined) {
+    lines.push(tail);
+    cursor = start + buf.length;
   }
-
-  const tail = buf.toString("utf8").trim();
-  if (tail && parseLine(tail) !== undefined) return { lines: [tail], cursor: start + buf.length };
-
-  // Mid-write, no complete line yet. Wait for the next run.
-  return { lines: [], cursor: start };
+  // An unparseable tail is a mid-write line: leave it for the next run.
+  return { lines, cursor };
 };
 
 export type FileStatus = "new" | "grown" | "truncated" | "unchanged";
