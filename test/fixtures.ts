@@ -109,7 +109,9 @@ export const countHitQueries = (db: Database, run: () => void): number => {
   try {
     run();
   } finally {
-    db.query = real;
+    // Delete the own property rather than assigning the original back, so the
+    // prototype method is what the db carries afterwards.
+    Reflect.deleteProperty(db, "query");
   }
   return queries;
 };

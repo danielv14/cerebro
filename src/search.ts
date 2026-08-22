@@ -55,12 +55,12 @@ export interface SearchOpts {
 // `search --role`. classify() already drops everything else before insert.
 export const SEARCH_ROLES = ["user", "assistant"] as const;
 
-// First over-fetch window for the deduped search: `max(2000, limit * 50)` rows.
-// 2000 rows covers any realistic archive in one fetch, which is what an explicit
-// query can afford. Growing it when it runs out before `limit` distinct thread
-// roots are found is dedupedHitWindow's job.
-const SEARCH_WINDOW_MIN = 2000;
-const SEARCH_WINDOW_FACTOR = 50;
+// The deduped search's tuning for the shared window: 50 rows per requested thread,
+// floored at 2000, which covers any realistic archive in one fetch. An explicit
+// query can afford that depth. The sizing formula, the growth and the round cap are
+// dedupedHitWindow's.
+const SEARCH_WINDOW_MIN_ROWS = 2000;
+const SEARCH_WINDOW_ROWS_PER_ROOT = 50;
 
 // FTS5 search ranked by bm25 (lower = more relevant). User queries are passed to
 // MATCH verbatim so power users can use FTS operators; if that errors on stray
@@ -111,41 +111,41 @@ export const search = (
     filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
   }
 
-  // The effective MATCH is decided on the first fetch and every later round reuses
-  // it: a user query goes to MATCH verbatim so power users can use FTS operators,
-  // and stray syntax falls back to a sanitized phrase query of the bare tokens.
-  // Deciding once is why a growth round never pays the rejected query again.
-  // `undefined` = not attempted yet, `null` = no usable query at all.
-  let match: string | null | undefined;
-  const fetchWindow = (windowSize: number): RankedMessageHit[] => {
-    const run = (effective: string): RankedMessageHit[] =>
-      rankedMessageHits(db, effective, { limit: windowSize, snippetTokens: 12, filters });
-    if (match !== undefined) return match === null ? [] : run(match);
-    try {
-      const rows = run(query);
-      match = query;
-      return rows;
-    } catch {
-      match =
-        query
-          .split(/\s+/)
-          .filter(Boolean)
-          .map((token) => `"${token.replace(/"/g, '""')}"`)
-          .join(" ") || null;
-      return match === null ? [] : run(match);
-    }
-  };
+  const windowFetch =
+    (match: string) =>
+    (windowSize: number): RankedMessageHit[] =>
+      rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
 
-  // The ordinal is deliberately NOT computed in the hit query: it would run a
-  // thread-wide COUNT for every matched row the sorter sees; instead messageOrdinal
-  // (thread.ts, the owner of thread ordering) runs once per *kept* hit below.
-  const kept = opts.all
-    ? fetchWindow(limit)
-    : dedupedHitWindow({
-        fetch: fetchWindow,
-        target: limit,
-        firstWindow: Math.max(SEARCH_WINDOW_MIN, limit * SEARCH_WINDOW_FACTOR),
-      }).slice(0, limit);
+  // Everything the window does under one resolved MATCH. The ordinal is deliberately
+  // NOT computed in the hit query: it would run a thread-wide COUNT for every matched
+  // row the sorter sees; instead messageOrdinal (thread.ts, the owner of thread
+  // ordering) runs once per *kept* hit below.
+  const collect = (match: string): RankedMessageHit[] =>
+    opts.all
+      ? windowFetch(match)(limit)
+      : dedupedHitWindow({
+          fetch: windowFetch(match),
+          targetRoots: limit,
+          minRows: SEARCH_WINDOW_MIN_ROWS,
+          rowsPerRoot: SEARCH_WINDOW_ROWS_PER_ROOT,
+        }).slice(0, limit);
+
+  // The retry wraps the whole window, not each fetch: only the first fetch can fail
+  // on syntax, because a query FTS5 accepted once stays valid at every window size.
+  // So the rejected query is paid exactly once and every growth round runs under the
+  // query that worked.
+  let kept: RankedMessageHit[];
+  try {
+    kept = collect(query);
+  } catch {
+    const sanitized = query
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => `"${token.replace(/"/g, '""')}"`)
+      .join(" ");
+    if (!sanitized) return [];
+    kept = collect(sanitized);
+  }
 
   // Title and project are the *thread's*, read from the `threads` rollup rather than
   // the matched message's own session row (#120). A resumed thread usually splits the
