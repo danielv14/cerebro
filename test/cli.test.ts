@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { type CliIO, commands, GLOBAL_OPTIONS, runCli } from "../src/cli.ts";
-import { isGroup } from "../src/commands/command.ts";
+import { type Command, isGroup } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -123,6 +123,26 @@ describe("option declarations", () => {
     expect(declared()).toEqual(
       Object.fromEntries(Object.entries(EXPECTED).map(([k, v]) => [k, [...v].sort()])),
     );
+  });
+
+  test("every command carries the db discriminant, and only version is db-less", () => {
+    // The flag is set by the builder, not handed over next to a run step whose type
+    // could disagree with it: defineCommand sets true, defineDbLessCommand sets false.
+    // So a boolean is always there, and the list of db-less commands is a decision
+    // rather than an oversight. doctor's drift check depends on `version` staying on
+    // it: it spawns the deployed binary's `version` precisely so the answer does not
+    // depend on whether that binary's archive is readable.
+    const dbLess: string[] = [];
+    for (const [name, node] of commands) {
+      const entries: [string, Command][] = isGroup(node)
+        ? Object.entries(node.subcommands).map(([action, sub]) => [`${name} ${action}`, sub])
+        : [[name, node]];
+      for (const [label, command] of entries) {
+        expect(typeof command.needsDb).toBe("boolean");
+        if (!command.needsDb) dbLess.push(label);
+      }
+    }
+    expect(dbLess).toEqual(["version"]);
   });
 
   test("a flag name shared by several commands agrees on its kind everywhere", () => {
