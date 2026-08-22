@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { buildParserOptions, type CliIO, commands, runCli } from "../src/cli.ts";
-import { flag, positiveInt } from "../src/commands/args.ts";
-import { type Command, type CommandNode, defineCommand, isGroup } from "../src/commands/command.ts";
+import { flag, positiveInt, text } from "../src/commands/args.ts";
+import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
@@ -106,19 +106,10 @@ describe("option declarations", () => {
     "digest show": ["json"],
   };
 
-  const declared = (): Record<string, string[]> => {
-    const out: Record<string, string[]> = {};
-    for (const [name, node] of commands) {
-      if (isGroup(node)) {
-        for (const [action, sub] of Object.entries(node.subcommands)) {
-          out[`${name} ${action}`] = Object.keys(sub.options).sort();
-        }
-      } else {
-        out[name] = Object.keys(node.options).sort();
-      }
-    }
-    return out;
-  };
+  const declared = (): Record<string, string[]> =>
+    Object.fromEntries(
+      eachCommand(commands).map(([label, command]) => [label, Object.keys(command.options).sort()]),
+    );
 
   test("every command declares exactly the options it accepts", () => {
     expect(declared()).toEqual(
@@ -130,13 +121,9 @@ describe("option declarations", () => {
     // The type already forces every command through a builder that sets the flag, so
     // what is left to pin is the registry: which commands are db-less is a decision,
     // not something that drifts. See versionCommand in cli.ts for why it is the one.
-    const dbLess: string[] = [];
-    for (const [name, node] of commands) {
-      const entries: [string, Command][] = isGroup(node)
-        ? Object.entries(node.subcommands).map(([action, sub]) => [`${name} ${action}`, sub])
-        : [[name, node]];
-      for (const [label, command] of entries) if (!command.needsDb) dbLess.push(label);
-    }
+    const dbLess = eachCommand(commands)
+      .filter(([, command]) => !command.needsDb)
+      .map(([label]) => label);
     expect(dbLess).toEqual(["version"]);
   });
 
@@ -151,9 +138,6 @@ describe("option declarations", () => {
   });
 
   test("building the table refuses an option two commands declare with different kinds", () => {
-    // --limit is a string everywhere; a command declaring it as a boolean would parse
-    // as `true`, the coercion would turn that into "true", and that command's --limit
-    // would error for every user who passed it. It has to fail here instead.
     const clashing = new Map<string, CommandNode>([
       ["first", defineCommand({ options: { limit: positiveInt() }, run: () => ({}) })],
       ["second", defineCommand({ options: { limit: flag() }, run: () => ({}) })],
@@ -165,9 +149,7 @@ describe("option declarations", () => {
   });
 
   test("building the table refuses a command that redeclares a global option's kind", () => {
-    // --db is a string the dispatcher reads to find the archive. Redeclared as a flag
-    // it would parse as a string and read back as absent on every invocation, so the
-    // globals are part of the same one-kind-per-name rule.
+    // The globals are part of the same rule, not a layer under it.
     const clashing = new Map<string, CommandNode>([
       ["rogue", defineCommand({ options: { db: flag() }, run: () => ({}) })],
     ]);
@@ -177,9 +159,22 @@ describe("option declarations", () => {
     );
   });
 
+  test("the seeded --help is inside the rule, not beside it", () => {
+    // `help` is put straight into the parser table rather than declared as an option,
+    // because only that table can carry the `-h` short alias. The rule reads the kind
+    // back off the table, so the seed is an incumbent like any other declaration.
+    const clashing = new Map<string, CommandNode>([
+      ["rogue", defineCommand({ options: { help: text() }, run: () => ({}) })],
+    ]);
+    expect(() => buildParserOptions(clashing)).toThrow(
+      "Option --help is declared as boolean by the parser's own -h alias and as " +
+        "string by `cerebro rogue`. The parser needs one kind per option name.",
+    );
+  });
+
   test("the clash is caught inside a group's actions too", () => {
     // A group's actions each declare their own options, so a clash can hide one level
-    // down; digest is the only group today.
+    // down.
     const clashing = new Map<string, CommandNode>([
       ["straight", defineCommand({ options: { bytes: positiveInt() }, run: () => ({}) })],
       [

@@ -84,6 +84,20 @@ export type CommandNode = Command | CommandGroup;
 
 export const isGroup = (node: CommandNode): node is CommandGroup => "subcommands" in node;
 
+// Every command in a registry, paired with the label the CLI calls it by (`digest
+// search` for a group's action). One walk over the two-level shape, so the option
+// table built from the registry and the tests that pin the registry cannot disagree
+// about what is in it.
+export const eachCommand = (entries: Iterable<[string, CommandNode]>): [string, Command][] =>
+  [...entries].flatMap(([name, node]) =>
+    isGroup(node)
+      ? Object.entries(node.subcommands).map(([action, sub]): [string, Command] => [
+          `${name} ${action}`,
+          sub,
+        ])
+      : [[name, node] as [string, Command]],
+  );
+
 // Build a command, tying its run step's arguments to its option table. The cast is
 // the single point where that link is erased for the dispatcher; every caller of
 // defineCommand keeps full inference.

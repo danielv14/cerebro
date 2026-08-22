@@ -10,6 +10,7 @@ import {
   type CommandNode,
   type CommandOutput,
   defineDbLessCommand,
+  eachCommand,
   isGroup,
 } from "./commands/command.ts";
 import { digestCommand } from "./commands/digest.ts";
@@ -101,33 +102,33 @@ export const commands = new Map<string, CommandNode>([
 export const buildParserOptions = (
   entries: Iterable<[string, CommandNode]>,
 ): Record<string, { type: "string" | "boolean"; short?: string }> => {
+  // `help` is seeded rather than declared, because only this table can carry the
+  // `-h` short alias. It goes into the same table the rule reads, so the seed is
+  // inside the rule instead of beside it.
   const table: Record<string, { type: "string" | "boolean"; short?: string }> = {
     help: { type: "boolean", short: "h" },
   };
-  // Who declared each name first, so the error can name both sides of the clash.
-  const declaredBy = new Map<string, { kind: "string" | "boolean"; owner: string }>();
+  // Only the labels, so a name's kind has exactly one home (the table above).
+  const owners = new Map<string, string>([["help", "the parser's own -h alias"]]);
   const add = (owner: string, options: OptionTable): void => {
     for (const [name, spec] of Object.entries(options)) {
-      const seen = declaredBy.get(name);
-      if (seen && seen.kind !== spec.kind) {
-        throw new Error(
-          `Option --${name} is declared as ${seen.kind} by ${seen.owner} and as ` +
-            `${spec.kind} by ${owner}. The parser needs one kind per option name.`,
-        );
+      const declared = table[name];
+      if (declared) {
+        if (declared.type !== spec.kind) {
+          throw new Error(
+            `Option --${name} is declared as ${declared.type} by ${owners.get(name)} and as ` +
+              `${spec.kind} by ${owner}. The parser needs one kind per option name.`,
+          );
+        }
+        continue;
       }
-      if (!seen) declaredBy.set(name, { kind: spec.kind, owner });
-      table[name] ??= { type: spec.kind };
+      table[name] = { type: spec.kind };
+      owners.set(name, owner);
     }
   };
   add("the global options", GLOBAL_OPTIONS);
-  for (const [name, node] of entries) {
-    if (isGroup(node)) {
-      for (const [action, sub] of Object.entries(node.subcommands)) {
-        add(`\`cerebro ${name} ${action}\``, sub.options);
-      }
-    } else {
-      add(`\`cerebro ${name}\``, node.options);
-    }
+  for (const [label, command] of eachCommand(entries)) {
+    add(`\`cerebro ${label}\``, command.options);
   }
   return table;
 };
