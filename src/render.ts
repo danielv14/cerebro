@@ -32,10 +32,17 @@ const displayTz = (): string => {
   }
 };
 
-export const shortTime = (ts: string | null | undefined): string => {
-  if (!ts) return "????-??-?? ??:??";
+// A stored timestamp as a Date, or null when it is missing or unparseable; each
+// caller renders its own width-matched placeholder for null.
+const parseTs = (ts: string | null | undefined): Date | null => {
+  if (!ts) return null;
   const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "????-??-?? ??:??";
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const shortTime = (ts: string | null | undefined): string => {
+  const date = parseTs(ts);
+  if (!date) return "????-??-?? ??:??";
   return date.toLocaleString("sv-SE", {
     timeZone: displayTz(),
     year: "numeric",
@@ -47,9 +54,8 @@ export const shortTime = (ts: string | null | undefined): string => {
 };
 
 export const shortDate = (ts: string | null | undefined): string => {
-  if (!ts) return "??????????";
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "??????????";
+  const date = parseTs(ts);
+  if (!date) return "??????????";
   return date.toLocaleDateString("sv-SE", { timeZone: displayTz() });
 };
 

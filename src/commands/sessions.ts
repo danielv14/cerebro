@@ -8,15 +8,7 @@ import { defineCommand } from "./command.ts";
 // recorded, then resume and "[body deleted]" suffixes. The "+N resume(s)" suffix
 // appears only when the thread has resumes, and "[body deleted]" only when the
 // underlying source is gone.
-const sessionThreadLine = (thread: {
-  id: string;
-  last_ts: string | null;
-  msgs: number;
-  sessions_in_thread: number;
-  project_path: string | null;
-  git_branch: string | null;
-  body_available: number;
-}): string => {
+const sessionThreadLine = (thread: ThreadRow): string => {
   const branch = thread.git_branch ? ` @${thread.git_branch}` : "";
   const resumes =
     thread.sessions_in_thread > 1 ? ` +${thread.sessions_in_thread - 1} resume(s)` : "";

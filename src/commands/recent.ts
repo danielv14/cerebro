@@ -7,10 +7,7 @@ import { defineCommand } from "./command.ts";
 // Line 1 of a `recent` thread row. `showMsgs: false` (the --context branch) drops
 // the "N msgs" column; otherwise the count is right-padded to width 4. The title is
 // truncated at 90 columns in both branches.
-const recentThreadLine = (
-  thread: { id: string; last_ts: string | null; msgs: number; title: string | null },
-  opts: { showMsgs: boolean },
-): string => {
+const recentThreadLine = (thread: ThreadRow, opts: { showMsgs: boolean }): string => {
   const msgs = opts.showMsgs ? `${String(thread.msgs).padStart(4)} msgs  ` : "";
   return `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${msgs}${oneLine(thread.title ?? "(untitled)", 90)}`;
 };

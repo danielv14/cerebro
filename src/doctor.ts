@@ -208,37 +208,32 @@ const deployedDrift = (running: BuildStamp): Check => {
     : check.warn(`${deployedCommit}, this build is ${running.commit}`, "bun run deploy");
 };
 
-// Whether the hook that drives the automated path is wired at all. Reported, never
-// edited: doctor does not touch settings.json. A list of one because cerebro ships one
-// hook; per-prompt relevance injection was removed (see docs/hooks.md).
-const hookWiring = (): Check[] => {
+// Whether the SessionEnd hook that drives the automated path is wired at all.
+// Reported, never edited: doctor does not touch settings.json. One check because
+// cerebro ships one hook; per-prompt relevance injection was removed (see
+// docs/hooks.md).
+const hookWiring = (): Check => {
+  const check = defineCheck({ key: "hook:SessionEnd", group: "Hooks", label: "SessionEnd" });
   const path = join(claudeDir(), "settings.json");
-  const wanted = [{ key: "SessionEnd", label: "SessionEnd", what: "index + summarize on /clear" }];
-  const checks = wanted.map((hook) => ({
-    ...hook,
-    check: defineCheck({ key: `hook:${hook.key}`, group: "Hooks", label: hook.label }),
-  }));
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch {
-    return checks.map(({ check }) => check.unknown(`could not read ${path}`));
+    return check.unknown(`could not read ${path}`);
   }
   let settings: unknown;
   try {
     settings = JSON.parse(raw);
   } catch {
-    return checks.map(({ check }) => check.unknown(`${path} is not valid JSON`));
+    return check.unknown(`${path} is not valid JSON`);
   }
   const hooks = (settings as { hooks?: Record<string, unknown> }).hooks ?? {};
-  return checks.map(({ key, what, check }) => {
-    // A substring test on the serialized entry rather than a walk of the hook
-    // schema: the shape is Claude Code's, not cerebro's, and it can change.
-    const entry = JSON.stringify(hooks[key] ?? null);
-    return entry.includes("cerebro")
-      ? check.ok(what)
-      : check.warn("not wired to cerebro", `add a ${key} hook (see README, Automation)`);
-  });
+  // A substring test on the serialized entry rather than a walk of the hook
+  // schema: the shape is Claude Code's, not cerebro's, and it can change.
+  const entry = JSON.stringify(hooks.SessionEnd ?? null);
+  return entry.includes("cerebro")
+    ? check.ok("index + summarize on /clear")
+    : check.warn("not wired to cerebro", "add a SessionEnd hook (see README, Automation)");
 };
 
 // Collect every check. `full` swaps quick_check for the complete integrity_check.
@@ -258,7 +253,7 @@ export const runDoctor = (
     orphanedCursors(db),
     emptySessions(db),
     digestCoverage(db),
-    ...hookWiring(),
+    hookWiring(),
   ];
   // Only a hard failure (corruption, a schema this build cannot speak) is worth a
   // non-zero exit; warnings are things to get around to.

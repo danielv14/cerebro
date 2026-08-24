@@ -97,6 +97,20 @@ export const parseLine = (line: string): unknown => {
   }
 };
 
+// A batch of raw JSONL lines as its classified events: blank lines and lines that
+// do not parse are skipped, the rest go through classify. The one owner of the
+// read-a-batch preamble the indexer's ingest, digest-transcript guard, and dry-run
+// counter share. Lazy (a generator), so a caller that only needs the first event
+// stops there instead of flattening the whole file.
+export function* classifyLines(lines: string[]): Generator<Classified> {
+  for (const line of lines) {
+    if (!line) continue;
+    const parsed = parseLine(line);
+    if (parsed === undefined) continue;
+    yield classify(parsed);
+  }
+}
+
 // Tool plumbing (file reads, bash output, grep dumps, large Edit/Write payloads)
 // dominates raw transcript bytes and ages worst: it is reproducible and clutters
 // search relevance. We keep the head of each tool block so the searchable bit (tool
