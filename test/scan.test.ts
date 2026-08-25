@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionFile } from "../src/paths.ts";
 import { planFileRead, splitBuffer } from "../src/scan.ts";
+import type { SessionFile } from "../src/sources/adapter.ts";
 
 describe("splitBuffer", () => {
   test("empty buffer keeps the cursor", () => {
@@ -46,6 +46,7 @@ describe("planFileRead", () => {
     kind: "session",
     sessionId: "S",
     projectDir: "-repo",
+    provider: "claude-code",
     size,
     mtimeMs,
   });

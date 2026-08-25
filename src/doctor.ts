@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
 import { summaryCoverage } from "./digest/index.ts";
-import { claudeDir, discoverSessionFiles } from "./paths.ts";
+import { claudeDir } from "./paths.ts";
 import { orphanedCursorPaths } from "./scan.ts";
+import { discoverAllSessionFiles } from "./sources/registry.ts";
 
 // The health report `cerebro doctor` renders. Read-only by construction: doctor
 // never repairs, prunes, optimizes or deploys, it reports and names the command
@@ -125,7 +126,7 @@ const orphanedCursors = (db: Database): Check => {
   if (cursors === 0) return check.ok("0 rows");
   // null = empty scan, the transient-failure case the reader guards against:
   // report unknown rather than declaring every cursor orphaned.
-  const orphans = orphanedCursorPaths(db, discoverSessionFiles());
+  const orphans = orphanedCursorPaths(db, discoverAllSessionFiles());
   if (orphans === null) {
     return check.unknown("no session files discovered; cannot tell orphans from a failed scan");
   }

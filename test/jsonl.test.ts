@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { classify, flattenContent, parseLine } from "../src/jsonl.ts";
+import { classify, flattenContent } from "../src/jsonl.ts";
+import { parseLine } from "../src/sources/adapter.ts";
 
 describe("parseLine", () => {
   test("parses valid JSON object", () => {
@@ -144,7 +145,22 @@ describe("classify", () => {
       cwd: null,
       gitBranch: null,
       isSidechain: false,
+      model: null,
     });
+  });
+
+  test("captures the recorded model on an assistant turn, null when absent", () => {
+    expect(
+      classify({
+        type: "assistant",
+        uuid: "a1",
+        message: { content: "x", model: "claude-sonnet-4-6" },
+      }),
+    ).toMatchObject({ kind: "message", model: "claude-sonnet-4-6" });
+    // A non-string model (an evolving log) defaults like the other optional scalars.
+    expect(
+      classify({ type: "assistant", uuid: "a2", message: { content: "x", model: 42 } }),
+    ).toMatchObject({ kind: "message", model: null });
   });
 
   test("keeps the message when an optional field has an unexpected type, defaulting that field", () => {
@@ -171,6 +187,7 @@ describe("classify", () => {
       cwd: null,
       gitBranch: null,
       isSidechain: false,
+      model: null,
     });
   });
 

@@ -46,6 +46,8 @@ const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["project_path", rootPreferring("project_path")],
   ["git_root", rootPreferring("git_root")],
   ["git_branch", rootPreferring("git_branch")],
+  ["provider", rootPreferring("provider")],
+  ["model", rootPreferring("model")],
   ["title", rootPreferring("title")],
   ["body_available", "MIN(r.body_available)"],
 ];
@@ -95,7 +97,8 @@ export const threadsViewIsCurrent = (db: Database): boolean => {
 // ThreadRow reaches both readers instead of one. git_root is in the view but
 // deliberately not projected: recent filters on it, no listing shows it.
 const THREAD_ROW_COLUMNS =
-  "id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, title, body_available";
+  "id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, provider, model, " +
+  "title, body_available";
 
 // One row of the `threads` view as the listings read it; the projection that fills
 // it is THREAD_ROW_COLUMNS above, shared by both readers.
@@ -109,6 +112,11 @@ export interface ThreadRow {
   // The thread's representative branch (root-preferring, from the `threads` view).
   // Display-grade: a thread that spans branches shows its root's.
   git_branch: string | null;
+  // Which source adapter the thread came from ("claude-code", ...) and the model
+  // its root records. Root-preferring and display-grade like git_branch; carried
+  // in the JSON listings, not rendered in the text rows.
+  provider: string | null;
+  model: string | null;
   title: string | null;
   body_available: number;
 }

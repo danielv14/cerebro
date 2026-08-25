@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { parseLine } from "./jsonl.ts";
-import type { SessionFile } from "./paths.ts";
+import { parseLine, type SessionFile } from "./sources/adapter.ts";
 
 // The source-file scan layer: bytes, cursors, mtimes and index_state, and nothing
 // about messages or sessions. runIndex and dryRunIndex both consume this module,

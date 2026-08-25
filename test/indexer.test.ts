@@ -270,6 +270,44 @@ describe("runIndex", () => {
     expect(row.msg_count).toBe(2); // the aggregate did refresh
   });
 
+  test("stores the session's provider and the model its turns record", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      assistantMsg("S", "a1", "yo", {
+        parentUuid: "u1",
+        message: { role: "assistant", content: "yo", model: "claude-sonnet-4-6" },
+      }),
+    ]);
+    runIndex(db);
+    const row = db.query("SELECT provider, model FROM sessions WHERE session_id='S'").get() as {
+      provider: string;
+      model: string;
+    };
+    expect(row).toEqual({ provider: "claude-code", model: "claude-sonnet-4-6" });
+  });
+
+  test("a subagent's model never clobbers the parent's (invariant #7)", () => {
+    writeSession(env.projects, "-repo", "PARENT", [
+      assistantMsg("PARENT", "a1", "parent turn", {
+        message: { role: "assistant", content: "parent turn", model: "claude-sonnet-4-6" },
+      }),
+    ]);
+    runIndex(db);
+    // A subagent transcript on a cheaper model arrives later; the parent's
+    // top-level file is unchanged, so only touchParentSession runs.
+    writeSubagent(env.projects, "-repo", "PARENT", "agent-1", [
+      assistantMsg("PARENT", "sa1", "subagent turn", {
+        isSidechain: true,
+        message: { role: "assistant", content: "subagent turn", model: "claude-haiku-4-5" },
+      }),
+    ]);
+    runIndex(db);
+    const row = db
+      .query("SELECT provider, model FROM sessions WHERE session_id='PARENT'")
+      .get() as { provider: string; model: string };
+    expect(row).toEqual({ provider: "claude-code", model: "claude-sonnet-4-6" });
+  });
+
   test("truncated/rotated file is re-read from the start", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "one"),

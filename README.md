@@ -294,6 +294,13 @@ source of truth.
 - **Subagents fold into the parent.** Transcripts under
   `<session>/subagents/agent-*.jsonl` are attributed to their parent session, so
   their turns appear inline in `show`, tagged `[subagent]`.
+- **Sources are pluggable.** Claude Code is one source adapter, not a hardwired
+  assumption: each source owns its file discovery and normalizes its own log
+  format into the shared message shape, and everything downstream (the archive,
+  search, threads, digests) is source-agnostic. Every session records which
+  source it came from (`provider`) and the model its turns report (`model`);
+  both ride along in the `--json` listings. Adding a source (e.g. a Codex CLI
+  adapter) is described in `docs/source-adapters.md`.
 - **Tool output is capped.** Prose and reasoning are kept in full, but each
   tool call and tool result is truncated to its first 1 KB (plus a
   `[+N chars truncated]` marker). The first kilobyte holds the searchable part
@@ -367,8 +374,12 @@ src/
                 CommandInput/CommandOutput, the group shape
     helpers.ts  readStdin() + resolveSession()/resolveOrThrow()
   db.ts         openDb() + schema/migrations + dbFileSize()
-  paths.ts      session-file discovery (top-level + subagents)
-  jsonl.ts      parseLine() + classify() + flattenContent()
+  paths.ts      cerebro's own home paths (claudeDir, defaultDbPath)
+  sources/      the source-adapter seam (see docs/source-adapters.md):
+    adapter.ts    SessionFile + Classified + the SourceAdapter contract
+    claude-code.ts  the Claude Code source: projects-dir discovery
+    registry.ts   the adapter list + the global oldest-first file merge
+  jsonl.ts      classify() + flattenContent(): the Claude Code JSONL grammar
   git.ts        gitInfo(cwd) with cache
   scan.ts       the source-file scan layer: splitBuffer(), planFileRead(),
                 eachIndexableFile(), orphanedCursorPaths()

@@ -42,7 +42,8 @@ code.
   (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
-  session-file discovery (`test/paths.test.ts`: ordering, tiebreak, subagent walk),
+  the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
+  subagent walk, and a fake second adapter indexed end to end),
   git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance),
   dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option
   tables, per-command rejection of foreign flags, and each command via an injected
@@ -125,9 +126,10 @@ These are load-bearing. Violating one silently corrupts the archive.
 2. **`splitBuffer` is shared by `runIndex` and `dryRunIndex`.** They must agree
    exactly on what counts as indexable, so the dry-run numbers match a real run.
    Keep the parsing logic in that one function.
-3. **Index oldest-first** (`discoverSessionFiles` sorts by mtime asc, tiebreak
-   sessionId). An original session must be indexed before any resume that branches
-   from it, or a shared message is attributed to the resume.
+3. **Index oldest-first** (`discoverAllSessionFiles` in `src/sources/registry.ts`
+   merges every adapter's files and sorts by mtime asc, tiebreak sessionId). An
+   original session must be indexed before any resume that branches from it, or a
+   shared message is attributed to the resume.
 4. **Dedup on message UUID**, not on file or session id. Normal runs use
    `INSERT OR IGNORE`; `--rebuild` upserts on the same UUID key, refreshing the
    payload (text, ts, role) but never `session_id`, so attribution stays with the
@@ -160,7 +162,13 @@ These are load-bearing. Violating one silently corrupts the archive.
 10. **`bun:sqlite` `.changes` is inflated by the FTS trigger** (one insert reports
     ~7). Never trust its magnitude; measure `COUNT(*)` deltas for reporting.
 
-## Data source
+## Data sources
+
+Sessions enter the archive through source adapters (`src/sources/`, contract and
+how-to in `docs/source-adapters.md`). Each adapter owns its discovery and its
+log-format normalization; the indexer and everything downstream are
+source-agnostic, and every session row records its `provider` and `model`.
+Claude Code is the only registered adapter:
 
 Top-level sessions: `~/.claude/projects/<encoded-path>/<session-uuid>.jsonl`.
 Subagent transcripts: `<encoded-path>/<session-uuid>/subagents/agent-*.jsonl`
@@ -186,6 +194,8 @@ scheduling change belongs there rather than on the front page:
   plist and the cron equivalent.
 - `docs/digest-model-tiering.md` - the size-to-model tiering, its token budget, the
   `[1m]` suffix requirement and the `CEREBRO_DIGEST_*` overrides.
+- `docs/source-adapters.md` - the SourceAdapter contract, the guarantees an adapter
+  must give, and the step-by-step for adding a new source (e.g. a Codex adapter).
 
 README keeps the command table as the single canonical list next to `src/help.ts`;
 do not grow a competing one under `docs/`.
