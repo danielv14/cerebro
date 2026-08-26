@@ -55,6 +55,29 @@ describe("openDb schema versioning", () => {
     reopened.close();
   });
 
+  test("migration backfills provider='claude-code' on pre-adapter rows", () => {
+    // Simulate a database written before the source-adapter seam: no provider or
+    // model column, an existing session row, and an old stamp. Reopening must add
+    // both columns and backfill provider on the old row (everything indexed before
+    // the seam came from Claude Code); model stays NULL, it cannot be recovered.
+    const db = openDb(path);
+    db.run("INSERT INTO sessions (session_id, msg_count) VALUES ('OLD', 3)");
+    // The threads view references both columns, and SQLite refuses to drop a
+    // column the schema still mentions; reopening recreates the view anyway.
+    db.run("DROP VIEW threads");
+    db.run("ALTER TABLE sessions DROP COLUMN provider");
+    db.run("ALTER TABLE sessions DROP COLUMN model");
+    db.run("PRAGMA user_version = 0");
+    db.close();
+
+    const reopened = openDb(path);
+    const row = reopened
+      .query("SELECT provider, model FROM sessions WHERE session_id = 'OLD'")
+      .get() as { provider: string; model: string | null };
+    expect(row).toEqual({ provider: "claude-code", model: null });
+    reopened.close();
+  });
+
   test("an old-version database gets the current threads view definition (#83)", () => {
     // CREATE VIEW IF NOT EXISTS does not replace an existing view, so the DDL drops
     // the view first. Without that, an old database would keep serving its stale

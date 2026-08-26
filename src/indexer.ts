@@ -1,17 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
 import { gitInfo } from "./git.ts";
-import { classifyLines } from "./jsonl.ts";
-import { discoverSessionFiles, type SessionFile } from "./paths.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
+import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
+import { adapterFor, discoverAllSessionFiles, sourceAdapters } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
 
 interface FileMeta {
   sessionId: string;
   projectDir: string;
   sourceFile: string;
+  provider: string;
   cwd: string | null;
   gitBranch: string | null;
+  // The model recorded on this batch's turns (last non-null seen), so the session
+  // row tracks which model most recently served it. Stays null when no turn in the
+  // batch names one, in which case the upsert keeps the previously stored model.
+  model: string | null;
   title: string | null;
   titlePriority: number;
 }
@@ -31,14 +36,17 @@ const ingestLines = (
   db: Database,
   file: SessionFile,
   lines: string[],
+  classify: SourceAdapter["classifyLines"],
   rebuild = false,
 ): FileMeta => {
   const meta: FileMeta = {
     sessionId: file.sessionId,
     projectDir: file.projectDir,
     sourceFile: file.path,
+    provider: file.provider,
     cwd: null,
     gitBranch: null,
+    model: null,
     title: null,
     titlePriority: 0,
   };
@@ -57,7 +65,7 @@ const ingestLines = (
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  for (const classified of classifyLines(lines)) {
+  for (const classified of classify(lines)) {
     if (classified.kind === "message") {
       // Attribute every message to the file's owning session id. For a top-level
       // file that is its own UUID; for a subagent file it is the parent session,
@@ -74,6 +82,10 @@ const ingestLines = (
       );
       if (!meta.cwd && classified.cwd) meta.cwd = classified.cwd;
       if (!meta.gitBranch && classified.gitBranch) meta.gitBranch = classified.gitBranch;
+      // Last non-null wins: combined with upsertSession's incoming-wins COALESCE,
+      // every indexing path (incremental, --full, --rebuild) converges on the
+      // file's last recorded model regardless of how the bytes were batched.
+      if (classified.model) meta.model = classified.model;
     } else if (classified.kind === "title") {
       if (classified.priority > meta.titlePriority) {
         meta.title = classified.title;
@@ -136,9 +148,9 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
-       msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, provider, model, title, title_priority,
+       first_ts, last_ts, msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = COALESCE(excluded.project_path, sessions.project_path),
@@ -147,6 +159,8 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
        git_remote     = COALESCE(excluded.git_remote, sessions.git_remote),
        git_branch     = COALESCE(excluded.git_branch, sessions.git_branch),
        source_file    = COALESCE(excluded.source_file, sessions.source_file),
+       provider       = COALESCE(excluded.provider, sessions.provider),
+       model          = COALESCE(excluded.model, sessions.model),
        title          = CASE
                           WHEN excluded.title IS NOT NULL
                            AND excluded.title_priority >= sessions.title_priority
@@ -169,6 +183,8 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
     git.remote,
     meta.gitBranch,
     meta.sourceFile,
+    meta.provider,
+    meta.model,
     meta.title,
     meta.titlePriority,
     agg.mn,
@@ -182,8 +198,9 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
 // exists and refresh its aggregate, but never clobber the parent's identity fields,
 // which are owned by its top-level file. Here the existing row wins the merge:
 // COALESCE prefers sessions, so the values this passes (project_dir, project_path,
-// cwd, git_branch) only fill a not-yet-seen parent and never overwrite the
-// top-level's. The fields a subagent cannot know (git_root, git_remote, source_file,
+// cwd, git_branch, provider, model) only fill a not-yet-seen parent and never
+// overwrite the top-level's (a subagent may run a different model than its parent,
+// which is exactly why sessions.model wins here). The fields a subagent cannot know (git_root, git_remote, source_file,
 // title) are passed NULL, so on a pure-subagent stub source_file stays NULL and the
 // row reads as body-unavailable.
 //
@@ -196,9 +213,9 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, title, title_priority, first_ts, last_ts,
-       msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       git_remote, git_branch, source_file, provider, model, title, title_priority,
+       first_ts, last_ts, msg_count, body_available
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
        project_path   = COALESCE(sessions.project_path, excluded.project_path),
@@ -207,6 +224,8 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
        git_remote     = COALESCE(sessions.git_remote, excluded.git_remote),
        git_branch     = COALESCE(sessions.git_branch, excluded.git_branch),
        source_file    = COALESCE(sessions.source_file, excluded.source_file),
+       provider       = COALESCE(sessions.provider, excluded.provider),
+       model          = COALESCE(sessions.model, excluded.model),
        title          = COALESCE(sessions.title, excluded.title),
        title_priority = sessions.title_priority,
        body_available = COALESCE(sessions.body_available, excluded.body_available),
@@ -223,6 +242,8 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     null,
     meta.gitBranch,
     null,
+    meta.provider,
+    meta.model,
     null,
     0,
     agg.mn,
@@ -294,8 +315,11 @@ export interface IndexResult {
 // and any that slip through. Caller gates on plan.start === 0 so it only inspects a
 // file read whole from the start, never a mid-file incremental read whose first line
 // is an arbitrary turn.
-const isDigestRunTranscript = (lines: string[]): boolean => {
-  for (const classified of classifyLines(lines)) {
+const isDigestRunTranscript = (
+  lines: string[],
+  classify: SourceAdapter["classifyLines"],
+): boolean => {
+  for (const classified of classify(lines)) {
     if (classified.kind !== "message") continue;
     // The first real turn decides it: a digest run opens with the prompt as a user
     // message; any other opening is a genuine session.
@@ -317,6 +341,9 @@ export interface IndexOptions {
   full?: boolean;
   // Implies full.
   rebuild?: boolean;
+  // The sources to index. Defaults to every registered adapter; injectable so a
+  // test can index through a fake source without touching the registry.
+  adapters?: SourceAdapter[];
   // Where the per-file skip message goes when a file cannot be read or ingested
   // (the run continues without it). The CLI injects its output sink; a direct
   // library caller that omits it accepts silent skips, which IndexResult's
@@ -330,7 +357,8 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
   if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
-  const files = discoverSessionFiles();
+  const adapters = opts.adapters ?? sourceAdapters();
+  const files = discoverAllSessionFiles(adapters);
   const saveState = db.query(
     `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
      VALUES (?, ?, ?, ?, ?)
@@ -347,17 +375,18 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
     files,
     readAll,
     ({ file, plan, lines, cursor }) => {
+      const classify = adapterFor(file.provider, adapters).classifyLines;
       // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
       // we do not skip it: running saveState still records the new mtime, so a
       // touched-but-unchanged file settles to "unchanged" on the next run.
       const tx = db.transaction(() => {
-        if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) {
+        if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
           // cerebro's own digest summarization transcript, not a session: flag it so
           // it is never read again (even if it grows), and index none of it.
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return;
         }
-        const meta = ingestLines(db, file, lines, rebuild);
+        const meta = ingestLines(db, file, lines, classify, rebuild);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta);
@@ -389,9 +418,9 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
   return { newMessages: after - before, filesScanned: files.length, filesIndexed, relinked };
 };
 
-const countMessages = (lines: string[]): number => {
+const countMessages = (lines: string[], classify: SourceAdapter["classifyLines"]): number => {
   let count = 0;
-  for (const classified of classifyLines(lines)) {
+  for (const classified of classify(lines)) {
     if (classified.kind === "message") count++;
   }
   return count;
@@ -415,8 +444,12 @@ export interface DryRunResult {
 // is counted before UUID dedup: in incremental mode new bytes are genuinely new so
 // it equals net-new, but a `--full` dry run reports the whole archive (dedup would
 // then collapse it to ~0 net-new).
-export const dryRunIndex = (db: Database, full = false): DryRunResult => {
-  const files = discoverSessionFiles();
+export const dryRunIndex = (
+  db: Database,
+  full = false,
+  adapters: SourceAdapter[] = sourceAdapters(),
+): DryRunResult => {
+  const files = discoverAllSessionFiles(adapters);
 
   const result: DryRunResult = {
     full,
@@ -436,10 +469,12 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
     full,
     ({ file, plan, lines, cursor }) => {
       if (cursor === plan.start) return; // mid-write, nothing indexable yet
+      const classify = adapterFor(file.provider, adapters).classifyLines;
 
       // A digest summarization transcript is indexed as nothing by a real run, so the
       // dry run must not count it either (invariant: dry-run numbers match a real run).
-      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines)) return;
+      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify))
+        return;
 
       // In full mode every file re-reads from 0; the run does not categorize files
       // as new/grown/truncated, so skip those counters.
@@ -450,7 +485,7 @@ export const dryRunIndex = (db: Database, full = false): DryRunResult => {
       }
       result.filesToRead++;
       result.newBytes += cursor - plan.start;
-      result.candidateMessages += countMessages(lines);
+      result.candidateMessages += countMessages(lines, classify);
     },
     { onUnchanged: () => result.unchangedFiles++ },
   );

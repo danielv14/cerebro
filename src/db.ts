@@ -10,7 +10,7 @@ import { THREADS_VIEW_DDL, threadsViewIsCurrent } from "./thread.ts";
 // so the per-prompt hook hot path (UserPromptSubmit -> relevant) opens without any
 // schema work. An old database (or a fresh one, user_version 0) runs the DDL +
 // migrations once and is stamped.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 // Per-connection pragmas: these run on every open, outside the version-gated DDL.
 // busy_timeout / foreign_keys do not persist in the file; journal_mode does, but it
@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   git_remote        TEXT,
   git_branch        TEXT,
   source_file       TEXT,
+  -- Which source adapter indexed this session (e.g. "claude-code"), and the model
+  -- its turns record (last non-null seen, i.e. the model that most recently served
+  -- the session). Both nullable: rows written by a pre-adapter binary carry NULL
+  -- until migrate() backfills provider.
+  provider          TEXT,
+  model             TEXT,
   title             TEXT,
   -- Priority of the stored title (custom-title 3 > ai-title 2 > summary 1, 0 = none).
   -- Persisted so an incremental run that only sees a lower-priority title event can
@@ -156,6 +162,13 @@ const migrate = (db: Database): void => {
   // replace them once, after which the real priority is tracked.
   addColumnIfMissing(db, "sessions", "title_priority", "title_priority INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "index_state", "is_digest", "is_digest INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "sessions", "provider", "provider TEXT");
+  addColumnIfMissing(db, "sessions", "model", "model TEXT");
+  // Everything indexed before the source-adapter seam existed came from Claude
+  // Code, so a NULL provider is safe to backfill. Idempotent and re-run on every
+  // version bump: rows a frozen pre-adapter hook binary writes later also heal
+  // here (new-code rows always carry their adapter's id, so they are never NULL).
+  db.run(`UPDATE sessions SET provider = 'claude-code' WHERE provider IS NULL`);
 };
 
 // Size of the database file, or null when there is nothing to measure (an

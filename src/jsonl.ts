@@ -1,4 +1,6 @@
-// Parsing + classification of raw JSONL event lines.
+// Parsing + classification of raw Claude Code JSONL event lines: the normalization
+// half of the claude-code source adapter (discovery lives in
+// src/sources/claude-code.ts, the normalized contract in src/sources/adapter.ts).
 //
 // This is one of cerebro's two untrusted I/O boundaries (the other is the hook
 // stdin payload in src/commands/relevant.ts): the session JSONL is produced by
@@ -10,22 +12,7 @@
 // in the log never breaks indexing.
 
 import * as v from "valibot";
-
-export type Classified =
-  | {
-      kind: "message";
-      uuid: string;
-      parentUuid: string | null;
-      sessionId: string | null;
-      role: "user" | "assistant";
-      text: string;
-      ts: string | null;
-      cwd: string | null;
-      gitBranch: string | null;
-      isSidechain: boolean;
-    }
-  | { kind: "title"; sessionId: string | null; title: string; priority: number }
-  | { kind: "skip" };
+import { type Classified, parseLine } from "./sources/adapter.ts";
 
 // The accepted event shape, as a discriminated variant over `type`. user/assistant
 // carry a message; the three title-bearing events carry their title field. An
@@ -42,7 +29,7 @@ const EventSchema = v.variant("type", [
   v.object({
     type: v.picklist(["user", "assistant"]),
     uuid: v.string(),
-    message: v.object({ content: v.unknown() }),
+    message: v.object({ content: v.unknown(), model: v.optional(v.unknown()) }),
     parentUuid: v.optional(v.unknown()),
     sessionId: v.optional(v.unknown()),
     timestamp: v.optional(v.unknown()),
@@ -85,17 +72,6 @@ const BlockSchema = v.variant("type", [
   }),
   v.object({ type: v.literal("image") }),
 ]);
-
-// Returns `undefined` (never a valid JSON value) on parse failure, so callers can
-// distinguish a malformed line from a line that legitimately parses to a falsy
-// value like 0, false, or null.
-export const parseLine = (line: string): unknown => {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-};
 
 // A batch of raw JSONL lines as its classified events: blank lines and lines that
 // do not parse are skipped, the rest go through classify. The one owner of the
@@ -206,6 +182,10 @@ export const classify = (raw: unknown): Classified => {
         cwd: asStringOrNull(event.cwd),
         gitBranch: asStringOrNull(event.gitBranch),
         isSidechain: event.isSidechain === true,
+        // Assistant events record the serving model; user events carry none.
+        // Claude Code stamps "<synthetic>" on interrupted/API-error turns; no
+        // model served those, so they must not become the session's model.
+        model: event.message.model === "<synthetic>" ? null : asStringOrNull(event.message.model),
       };
     case "custom-title":
       return event.customTitle
