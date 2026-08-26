@@ -183,7 +183,9 @@ export const classify = (raw: unknown): Classified => {
         gitBranch: asStringOrNull(event.gitBranch),
         isSidechain: event.isSidechain === true,
         // Assistant events record the serving model; user events carry none.
-        model: asStringOrNull(event.message.model),
+        // Claude Code stamps "<synthetic>" on interrupted/API-error turns; no
+        // model served those, so they must not become the session's model.
+        model: event.message.model === "<synthetic>" ? null : asStringOrNull(event.message.model),
       };
     case "custom-title":
       return event.customTitle

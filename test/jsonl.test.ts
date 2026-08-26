@@ -161,6 +161,10 @@ describe("classify", () => {
     expect(
       classify({ type: "assistant", uuid: "a2", message: { content: "x", model: 42 } }),
     ).toMatchObject({ kind: "message", model: null });
+    // "<synthetic>" marks an interrupted/API-error turn no model served.
+    expect(
+      classify({ type: "assistant", uuid: "a3", message: { content: "x", model: "<synthetic>" } }),
+    ).toMatchObject({ kind: "message", model: null });
   });
 
   test("keeps the message when an optional field has an unexpected type, defaulting that field", () => {

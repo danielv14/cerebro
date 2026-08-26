@@ -49,8 +49,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   git_branch        TEXT,
   source_file       TEXT,
   -- Which source adapter indexed this session (e.g. "claude-code"), and the model
-  -- its turns record (first non-null seen per indexed batch). Both nullable: rows
-  -- written by a pre-adapter binary carry NULL until migrate() backfills provider.
+  -- its turns record (last non-null seen, i.e. the model that most recently served
+  -- the session). Both nullable: rows written by a pre-adapter binary carry NULL
+  -- until migrate() backfills provider.
   provider          TEXT,
   model             TEXT,
   title             TEXT,

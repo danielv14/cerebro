@@ -13,8 +13,9 @@ interface FileMeta {
   provider: string;
   cwd: string | null;
   gitBranch: string | null;
-  // The model recorded on this batch's turns (first non-null seen), so the session
-  // row tracks which model served it. Stays null when no turn in the batch names one.
+  // The model recorded on this batch's turns (last non-null seen), so the session
+  // row tracks which model most recently served it. Stays null when no turn in the
+  // batch names one, in which case the upsert keeps the previously stored model.
   model: string | null;
   title: string | null;
   titlePriority: number;
@@ -81,7 +82,10 @@ const ingestLines = (
       );
       if (!meta.cwd && classified.cwd) meta.cwd = classified.cwd;
       if (!meta.gitBranch && classified.gitBranch) meta.gitBranch = classified.gitBranch;
-      if (!meta.model && classified.model) meta.model = classified.model;
+      // Last non-null wins: combined with upsertSession's incoming-wins COALESCE,
+      // every indexing path (incremental, --full, --rebuild) converges on the
+      // file's last recorded model regardless of how the bytes were batched.
+      if (classified.model) meta.model = classified.model;
     } else if (classified.kind === "title") {
       if (classified.priority > meta.titlePriority) {
         meta.title = classified.title;

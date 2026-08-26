@@ -308,6 +308,51 @@ describe("runIndex", () => {
     expect(row).toEqual({ provider: "claude-code", model: "claude-sonnet-4-6" });
   });
 
+  test("the session's model follows the last recorded turn, however the bytes are batched", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      assistantMsg("S", "a1", "first", {
+        message: { role: "assistant", content: "first", model: "claude-sonnet-4-6" },
+      }),
+    ]);
+    runIndex(db);
+    const model = () =>
+      (db.query("SELECT model FROM sessions WHERE session_id='S'").get() as { model: string })
+        .model;
+    expect(model()).toBe("claude-sonnet-4-6");
+    // A turn on another model arrives as an incremental append...
+    appendRaw(
+      path,
+      `${JSON.stringify(
+        assistantMsg("S", "a2", "second", {
+          message: { role: "assistant", content: "second", model: "claude-opus-4-6" },
+        }),
+      )}\n`,
+    );
+    runIndex(db);
+    expect(model()).toBe("claude-opus-4-6");
+    // ...and a full re-read from byte 0 agrees, so --full/--rebuild never rewrite it.
+    runIndex(db, { full: true });
+    expect(model()).toBe("claude-opus-4-6");
+  });
+
+  test("a '<synthetic>' turn never becomes the session's model", () => {
+    writeSession(env.projects, "-repo", "S", [
+      assistantMsg("S", "a1", "real", {
+        message: { role: "assistant", content: "real", model: "claude-sonnet-4-6" },
+      }),
+      // Claude Code stamps "<synthetic>" on interrupted/API-error turns; the real
+      // model before it must win even when the synthetic turn is the file's last.
+      assistantMsg("S", "a2", "interrupted", {
+        message: { role: "assistant", content: "interrupted", model: "<synthetic>" },
+      }),
+    ]);
+    runIndex(db);
+    const row = db.query("SELECT model FROM sessions WHERE session_id='S'").get() as {
+      model: string;
+    };
+    expect(row.model).toBe("claude-sonnet-4-6");
+  });
+
   test("truncated/rotated file is re-read from the start", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "one"),
