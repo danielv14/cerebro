@@ -44,6 +44,21 @@ describe("relevance ranking", () => {
     expect(hits[0]!.snippet.toLowerCase()).toContain("knex");
   });
 
+  test("relevantThreads carries the thread's provider and model", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "migrate the database layer from drizzle to knex"),
+      {
+        ...assistantMsg("S", "a1", "the knex migration is done", { parentUuid: "u1" }),
+        message: { role: "assistant", content: "the knex migration is done", model: "opus-test" },
+      },
+    ]);
+    runIndex(db);
+
+    const [hit] = relevantThreads(db, "knex migration", 3);
+    expect(hit!.provider).toBe("claude-code");
+    expect(hit!.model).toBe("opus-test");
+  });
+
   test("relevantThreads prefers a thread's summary snippet over the raw transcript", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "migrate the database layer from drizzle to knex"),

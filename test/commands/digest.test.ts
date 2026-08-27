@@ -94,6 +94,8 @@ describe("summarySearchListing", () => {
         id: "0123456789abcdef",
         last_ts: "2026-07-15T08:00:00Z",
         project_path: "/Users/foo/cerebro",
+        provider: "claude-code",
+        model: null,
         title: "A title",
         snippet: "a snippet",
       },

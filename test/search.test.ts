@@ -648,6 +648,7 @@ describe("query (populated archive)", () => {
         title: "Fixing the search ranking",
         last_ts: ts(month),
         project_path: "/repo",
+        provider: "claude-code",
       });
     }
 
@@ -660,6 +661,7 @@ describe("query (populated archive)", () => {
       title: "Fixing the search ranking",
       last_ts: ts(month),
       project_path: "/repo",
+      provider: "claude-code",
       fromSummary: false,
     });
   });
@@ -672,7 +674,10 @@ describe("query (populated archive)", () => {
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
-      assistantMsg("ROOT", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      {
+        ...assistantMsg("ROOT", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+        message: { role: "assistant", content: "ok", model: "opus-test" },
+      },
     ]);
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "continue the limiter work", {
@@ -697,12 +702,23 @@ describe("query (populated archive)", () => {
     expect(hits.map((h) => h.session_id).sort()).toEqual(["RESUME", "ROOT"]);
     for (const hit of hits) {
       // Whichever session the hit landed in, it agrees with the thread listing.
-      expect({ id: hit.session_id, title: hit.title, project_path: hit.project_path }).toEqual({
+      expect({
+        id: hit.session_id,
+        title: hit.title,
+        project_path: hit.project_path,
+        provider: hit.provider,
+        model: hit.model,
+      }).toEqual({
         id: hit.session_id,
         title: thread.title,
         project_path: thread.project_path,
+        provider: thread.provider,
+        model: thread.model,
       });
     }
+    // Only the root's turns recorded a model, so the resume's hit proves the field
+    // comes from the rollup rather than the matched session's own row.
+    expect(thread.model).toBe("opus-test");
 
     // The sharp edge: a hit that matched --project must never render (unknown).
     const scoped = search(db, "limiter", 20, { all: true, project: "repo" });
@@ -723,6 +739,10 @@ describe("query (populated archive)", () => {
     // its title and project (or being dropped) because the rollup had nothing to say.
     writeSession(env.projects, "-repo", "STALE", [
       userMsg("STALE", "u1", "the limiter work", { timestamp: ts(0) }),
+      {
+        ...assistantMsg("STALE", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+        message: { role: "assistant", content: "ok", model: "opus-test" },
+      },
       { type: "custom-title", customTitle: "Rate limiting", sessionId: "STALE" },
     ]);
     runIndex(db);
@@ -735,6 +755,8 @@ describe("query (populated archive)", () => {
       session_id: "STALE",
       title: "Rate limiting",
       project_path: "/repo",
+      provider: "claude-code",
+      model: "opus-test",
     });
   });
 

@@ -211,6 +211,11 @@ export interface ThreadMeta {
   title: string | null;
   last_ts: string | null;
   project_path: string | null;
+  // Which source adapter the thread came from and the model its root records.
+  // Root-preferring and display-grade, the same values ThreadRow carries, so every
+  // JSON listing names a thread's provider identically.
+  provider: string | null;
+  model: string | null;
 }
 
 // Display metadata for a set of thread roots, keyed by root session id. Read from
@@ -228,7 +233,10 @@ export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, Th
   if (roots.length === 0) return new Map();
   const placeholders = roots.map(() => "?").join(", ");
   const rows = db
-    .query(`SELECT id, title, last_ts, project_path FROM threads WHERE id IN (${placeholders})`)
+    .query(
+      `SELECT id, title, last_ts, project_path, provider, model
+       FROM threads WHERE id IN (${placeholders})`,
+    )
     .all(...roots) as (ThreadMeta & { id: string })[];
   return new Map(rows.map(({ id, ...meta }) => [id, meta]));
 };
