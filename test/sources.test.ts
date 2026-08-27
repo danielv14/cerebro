@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db.ts";
-import { runIndex } from "../src/indexer.ts";
+import { dryRunIndex, runIndex } from "../src/indexer.ts";
 import type { Classified, SessionFile, SourceAdapter } from "../src/sources/adapter.ts";
 import { parseLine } from "../src/sources/adapter.ts";
 import { CLAUDE_CODE_PROVIDER, discoverSessionFiles } from "../src/sources/claude-code.ts";
-import { adapterFor, discoverAllSessionFiles } from "../src/sources/registry.ts";
+import { adapterFor, discoverAllSessionFiles, sourceAdapters } from "../src/sources/registry.ts";
 import {
   makeClaudeDir,
   type TempClaude,
@@ -68,7 +68,8 @@ const makeFakeAdapter = (root: string): SourceAdapter => ({
         path,
         kind: "session",
         sessionId: name.slice(0, -".jsonl".length),
-        projectDir: root,
+        // No projectDir: this source has no per-project grouping, and the contract
+        // makes the field optional for exactly that case.
         provider: FAKE_PROVIDER,
         size: stat.size,
         mtimeMs: stat.mtimeMs,
@@ -155,6 +156,15 @@ describe("registry", () => {
   });
   afterEach(() => env.cleanup());
 
+  // Pinned as literals on purpose. Every archived session row carries its provider
+  // id, and the migration backfill only heals a NULL one, so renaming an id would
+  // silently orphan history instead of failing. Spelling the strings out here (not
+  // importing the constant) is what turns a rename into a red test. A new adapter
+  // adds its id to this list.
+  test("pins the registered provider ids", () => {
+    expect(sourceAdapters().map((adapter) => adapter.id)).toEqual(["claude-code"]);
+  });
+
   test("adapterFor resolves a registered provider and throws on an unknown one", () => {
     expect(adapterFor(CLAUDE_CODE_PROVIDER).id).toBe(CLAUDE_CODE_PROVIDER);
     expect(() => adapterFor("no-such-tool")).toThrow("no source adapter registered");
@@ -240,6 +250,11 @@ describe("indexing through a second source adapter", () => {
       .get() as { provider: string; model: string | null; msg_count: number };
     expect(fake).toEqual({ provider: "fake-agent", model: "gpt-6-codex", msg_count: 2 });
 
+    // A source without the concept omits projectDir; the column simply stays NULL.
+    expect(db.query("SELECT project_dir FROM sessions WHERE session_id = 'FAKE-S'").get()).toEqual({
+      project_dir: null,
+    });
+
     const claude = db
       .query("SELECT provider FROM sessions WHERE session_id = 'CLAUDE-S'")
       .get() as { provider: string };
@@ -253,6 +268,31 @@ describe("indexing through a second source adapter", () => {
       )
       .get() as { session_id: string };
     expect(hit.session_id).toBe("FAKE-S");
+  });
+
+  test("a dry run and a real run agree across sources (invariant #2)", () => {
+    writeSession(env.projects, "-repo", "CLAUDE-S", oneMsg("CLAUDE-S"));
+    writeFakeSession(fakeRoot, "FAKE-S", [
+      { who: "human", id: "m1", say: "port the indexer", at: "2026-02-01T10:00:00Z" },
+      { who: "bot", id: "m2", say: "ported", brain: "gpt-6-codex" },
+      { unrelated: "bookkeeping noise" },
+    ]);
+
+    // Parity is the point: the dry run classifies through each file's own adapter, so
+    // its counts must match what the real run then indexes, foreign format included.
+    const plan = dryRunIndex(db, false, adapters);
+    expect(plan.filesScanned).toBe(2);
+    expect(plan.newFiles).toBe(2);
+    expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 0 });
+
+    const real = runIndex(db, { adapters });
+    expect(real.newMessages).toBe(plan.candidateMessages);
+    expect(real.filesIndexed).toBe(plan.filesToRead);
+
+    // And with the archive current, the dry run sees no work left in either source.
+    const after = dryRunIndex(db, false, adapters);
+    expect(after.filesToRead).toBe(0);
+    expect(after.unchangedFiles).toBe(2);
   });
 
   test("the sessions listing surfaces the provider through the threads view", () => {

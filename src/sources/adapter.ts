@@ -42,7 +42,12 @@ export interface SessionFile {
   // The session this file's messages belong to (see the attribution guarantee
   // above).
   sessionId: string;
-  projectDir: string;
+  // The source's own grouping directory for this session, if it has one: for Claude
+  // Code the dash-encoded project name under ~/.claude/projects. Optional because
+  // it is a per-source layout detail; a source that groups sessions differently (or
+  // not at all) omits it and the column stays NULL. Repo and project scoping run
+  // off `cwd`, never off this.
+  projectDir?: string;
   // The id of the SourceAdapter that discovered this file. The indexer resolves
   // the classifier through it and stamps it on the session row as its provider.
   provider: string;
@@ -75,7 +80,10 @@ export type Classified =
 export interface SourceAdapter {
   // Stable provider id, e.g. "claude-code". Stored on every session this adapter
   // discovers, so the archive always knows which tool a session came from. Never
-  // rename an id once sessions carry it.
+  // rename an id once sessions carry it: the schema migration's backfill only heals
+  // a NULL provider, not a stale one, so a rename orphans every row already stamped
+  // with the old id. test/sources.test.ts pins the registered ids as literals so a
+  // rename fails CI.
   id: string;
   // Walk the source's on-disk layout and return every session file it owns.
   // Order does not matter (the registry sorts globally); a missing or unreadable
