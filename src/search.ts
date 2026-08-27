@@ -19,6 +19,10 @@ export interface SearchHit {
   // The branch the matched message's own session was recorded on (a session stores
   // one branch, so this is approximate for a session that switched branches mid-way).
   git_branch: string | null;
+  // The thread's source adapter and model, from the `threads` rollup like project
+  // and title. Carried in --json only; the text rows have no room for them.
+  provider: string | null;
+  model: string | null;
   title: string | null;
   snippet: string;
   // 1-based position of the message within its thread's chronological order; the
@@ -167,6 +171,8 @@ export const search = (
       role: hit.role,
       project_path: meta ? meta.project_path : hit.session_project_path,
       git_branch: hit.session_git_branch,
+      provider: meta ? meta.provider : hit.session_provider,
+      model: meta ? meta.model : hit.session_model,
       title: meta ? meta.title : hit.session_title,
       snippet: hit.snippet,
       ordinal: messageOrdinal(db, hit.root, hit.id),

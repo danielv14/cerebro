@@ -133,6 +133,10 @@ export interface SummaryHit {
   id: string;
   last_ts: string | null;
   project_path: string | null;
+  // The thread's source and model, carried in --json only, from the same rollup
+  // every other listing reads.
+  provider: string | null;
+  model: string | null;
   title: string | null;
   snippet: string;
 }
@@ -161,6 +165,8 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
       id: row.root,
       last_ts: meta?.last_ts ?? null,
       project_path: meta?.project_path ?? null,
+      provider: meta?.provider ?? null,
+      model: meta?.model ?? null,
       title: meta?.title ?? null,
       snippet: row.snippet,
     };

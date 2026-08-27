@@ -76,6 +76,10 @@ export interface RelevantThread {
   id: string;
   last_ts: string | null;
   project_path: string | null;
+  // The thread's source and model, carried in --json only (the text block has no
+  // room for them). Same rollup values as the sessions and recent listings.
+  provider: string | null;
+  model: string | null;
   title: string | null;
   snippet: string;
   opening: string | null;
@@ -174,6 +178,8 @@ export const relevantThreads = (
       id: root,
       last_ts: meta?.last_ts ?? null,
       project_path: meta?.project_path ?? null,
+      provider: meta?.provider ?? null,
+      model: meta?.model ?? null,
       title: meta?.title ?? null,
       snippet: info.snippet,
       opening: threadOpeningPrompt(db, root),

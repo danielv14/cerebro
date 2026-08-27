@@ -299,8 +299,10 @@ source of truth.
   format into the shared message shape, and everything downstream (the archive,
   search, threads, digests) is source-agnostic. Every session records which
   source it came from (`provider`) and the model its turns report (`model`);
-  both ride along in the `--json` listings. Adding a source (e.g. a Codex CLI
-  adapter) is described in `docs/source-adapters.md`.
+  both ride along in every `--json` listing (`sessions`, `recent`, `relevant`,
+  `search`, `digest search`), read from the thread rollup so the five agree.
+  Adding a source (e.g. a Codex CLI adapter) is described in
+  `docs/source-adapters.md`.
 - **Tool output is capped.** Prose and reasoning are kept in full, but each
   tool call and tool result is truncated to its first 1 KB (plus a
   `[+N chars truncated]` marker). The first kilobyte holds the searchable part

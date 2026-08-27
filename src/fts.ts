@@ -45,6 +45,8 @@ export interface RankedMessageHit {
   session_project_path: string | null;
   session_git_branch: string | null;
   session_title: string | null;
+  session_provider: string | null;
+  session_model: string | null;
   snippet: string;
   // bm25 of the match; lower = more relevant. Callers rank on it (plain, or
   // decayed and boosted).
@@ -86,6 +88,8 @@ export const rankedMessageHits = (
            s.project_path AS session_project_path,
            s.git_branch   AS session_git_branch,
            s.title        AS session_title,
+           s.provider     AS session_provider,
+           s.model        AS session_model,
            snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
            bm25(messages_fts) AS score,
            t.last_ts, t.git_root, t.project_path
