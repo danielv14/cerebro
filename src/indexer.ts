@@ -8,7 +8,7 @@ import { relinkThreads } from "./thread.ts";
 
 interface FileMeta {
   sessionId: string;
-  projectDir: string;
+  projectDir: string | null;
   sourceFile: string;
   provider: string;
   cwd: string | null;
@@ -41,7 +41,7 @@ const ingestLines = (
 ): FileMeta => {
   const meta: FileMeta = {
     sessionId: file.sessionId,
-    projectDir: file.projectDir,
+    projectDir: file.projectDir ?? null,
     sourceFile: file.path,
     provider: file.provider,
     cwd: null,

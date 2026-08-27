@@ -43,7 +43,8 @@ code.
   helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
   the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
-  subagent walk, and a fake second adapter indexed end to end),
+  subagent walk, the pinned registered provider ids, and a fake second adapter
+  indexed end to end plus dry-run parity through it),
   git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance),
   dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option
   tables, per-command rejection of foreign flags, and each command via an injected

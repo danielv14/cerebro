@@ -50,15 +50,21 @@ corrupts the archive.
    (b) collision-free against other sources - prefix it with the provider id
    (`"codex:<...>"`). Do not derive it from anything that changes when the file
    is appended to.
-3. **Honest attribution** (`SessionFile.sessionId`). Every message in a file is
+3. **A provider id you never rename** (`SourceAdapter.id`). It is stamped on
+   every session row the adapter discovers, and the schema migration's backfill
+   only heals a NULL provider, not a stale one, so a rename orphans history
+   instead of failing. The registered ids are pinned as literals in
+   `test/sources.test.ts` ("pins the registered provider ids"); add your new id
+   to that list, and a later rename turns into a red test.
+4. **Honest attribution** (`SessionFile.sessionId`). Every message in a file is
    attributed to the file's owning session. Sidechain/subagent transcripts name
    the parent session and use `kind: "subagent"`; a source without subagents
    never emits that kind.
-4. **Honest parent links** (`Classified.parentUuid`). Cross-session links are
+5. **Honest parent links** (`Classified.parentUuid`). Cross-session links are
    how resumes fold into one logical thread (`relinkThreads`). A source without
    resume semantics returns null everywhere and its sessions are all thread
    roots. Never fabricate links.
-5. **Tolerant parsing.** An unknown event type classifies to `skip`, a missing
+6. **Tolerant parsing.** An unknown event type classifies to `skip`, a missing
    optional field defaults to null, a malformed line is skipped. The log format
    will evolve under you; a parser that throws loses whole files. Fold whatever
    is searchable into `text` (see how `flattenContent` tags and caps tool
@@ -73,6 +79,11 @@ Optional but wired through when present:
   the JSON listings, alongside `provider`.
 - **cwd / gitBranch**: fill them when the log records them; project and repo
   scoping (`recent`, `relevant`, `--project`) work through them.
+- **projectDir** (`SessionFile.projectDir`): the source's own grouping directory
+  for a session, if it has one. Claude Code passes the dash-encoded name under
+  `~/.claude/projects`; a source that groups sessions differently, or not at
+  all, omits the field and `sessions.project_dir` stays NULL. Nothing downstream
+  reads it, so do not invent a value to fill it.
 
 ## Adding an adapter, step by step
 
@@ -90,8 +101,11 @@ Optional but wired through when present:
    template, then add the same coverage for the real adapter against fixture
    files copied from real logs: normalization, dedup idempotency (index twice,
    zero new), incremental append, provider + model on the session row, and FTS
-   hits on the source's text. `runIndex(db, { adapters })` takes an injected
-   adapter list, so tests never touch the registry or a real archive.
+   hits on the source's text. Add the id to the pinned provider list in the same
+   file. `runIndex(db, { adapters })` and `dryRunIndex(db, full, adapters)` both
+   take an injected adapter list, so tests never touch the registry or a real
+   archive; index the same fixtures through both and assert the counts agree, so
+   dry-run parity (invariant #2) holds for your source too.
 5. Run `bun run typecheck`, `bun test`, `bun run check`, and update the README
    layout section plus this document's status line below.
 
