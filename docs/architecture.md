@@ -4,6 +4,9 @@ How cerebro's modules fit together and why they are shaped the way they are.
 The code itself keeps its comments short and local (a specific edge case, a
 non-obvious constraint); the module-level story lives here. The load-bearing
 invariants are in `CLAUDE.md`; this document explains the design around them.
+It is deliberately not an inventory: it covers the decisions a reader cannot
+recover from the code, and it should shrink when code starts explaining itself,
+not grow with every change.
 
 The pipeline, end to end:
 

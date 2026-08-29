@@ -30,12 +30,15 @@ code.
   repo is English: commits, comments, CLI output, `README.md`, `docs/` and the skill.
   The repo is public and cloneable, so Swedish prose does not belong in it (the only
   Swedish that does is data: the `swe` stopword list and the tokenizer examples).
-- **Comments explain edge cases, not functionality.** A code comment states a
-  specific edge case, invariant, or non-obvious constraint the code cannot show,
-  in a line or two. Module overviews, design rationale, and descriptions of what
-  a function or command does belong in `docs/architecture.md` (or the other
-  `docs/` pages), not in the source. When you find yourself writing a paragraph
-  above a function, move it to the doc and leave at most a one-line pointer.
+- **Comments are banned by default; keep the code clean.** The full policy is the
+  `no-comments` skill (`.claude/skills/no-comments/SKILL.md`); load it before
+  writing or reviewing code here. The test: a comment stays only if deleting it
+  loses something the code cannot say (a why, a landmine, a deliberate omission),
+  in a line or two. Function and flow documentation goes to `docs/` when it is
+  needed at all, never into the source. And do not document reflexively in the
+  other direction either: every documented detail is a detail that can drift, so
+  docs are for what a reader cannot get from the code in reasonable time. Prefer
+  clearer names and smaller functions over both comments and docs.
 
 ## Developing and testing
 
@@ -188,6 +191,14 @@ Title events: `custom-title` (priority 3) > `ai-title` (2) > `summary` (1).
 
 ## Keep docs in sync
 
+Before you finish any change in this repo, check whether `docs/` still tells the
+truth about what you touched: skim the page that covers the area (list below) and
+update it if your change moved a responsibility, changed a flow, or invalidated a
+described decision. A doc that lies is worse than no doc. The check cuts both
+ways: if nothing on the page is wrong, do not add to it, and do not create doc
+sections for code that explains itself; docs cover what a reader cannot get from
+the code in reasonable time, nothing more.
+
 When you change a command, a flag, or its output, update both `README.md` and
 `skills/cerebro/SKILL.md` (the skill is symlinked into `~/.claude/skills/cerebro`
 and carries real example output, so refresh the examples too).
@@ -197,7 +208,6 @@ scheduling change belongs there rather than on the front page:
 
 - `docs/architecture.md` - how the modules fit together and why they are shaped
   the way they are: the module-level story that used to live in source comments.
-  When a change makes a design decision or moves a responsibility, update it here.
 - `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
   deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd
