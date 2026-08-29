@@ -3,7 +3,6 @@ import { humanBytes } from "../render.ts";
 import { type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// `backup` output: where the snapshot landed, its size, and anything pruned.
 export const backupReport = (result: {
   path: string;
   bytes: number;
@@ -19,8 +18,6 @@ const options = {
   keep: positiveInt(),
 } satisfies OptionTable;
 
-// The `backup` command: snapshot the database via VACUUM INTO, optionally pruning
-// old default-named snapshots with --keep.
 export const backupCommand = defineCommand({
   options,
   run: ({ db, args, dbPath }) => ({

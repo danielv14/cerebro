@@ -4,19 +4,15 @@ import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// Line 1 of a `recent` thread row. `showMsgs: false` (the --context branch) drops
-// the "N msgs" column; otherwise the count is right-padded to width 4. The title is
-// truncated at 90 columns in both branches.
 const recentThreadLine = (thread: ThreadRow, opts: { showMsgs: boolean }): string => {
   const msgs = opts.showMsgs ? `${String(thread.msgs).padStart(4)} msgs  ` : "";
   return `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${msgs}${oneLine(thread.title ?? "(untitled)", 90)}`;
 };
 
-// The agent-facing context block emitted under --context is cerebro's contract with
-// the consuming SessionStart hook: these exact bytes are injected into the model, so
-// the intro/footer are exported for their own pinned tests. The "Background only;
-// ignore …" guardrail (which stops injected history derailing the task) and the
-// recall instructions are load-bearing.
+// The --context block's exact bytes are injected into the model by the consuming
+// SessionStart hook, so the intro/footer are exported for their own pinned tests.
+// The "Background only; ignore …" guardrail and the recall instructions are
+// load-bearing.
 
 export const recentContextIntro = (repoLabel: string): string =>
   `Recent Claude Code sessions in this repo (${repoLabel}), from the cerebro archive. ` +
@@ -27,11 +23,7 @@ export const recentContextFooter = (): string =>
   "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
   '  cerebro search "<terms>"   full-text search across all past sessions';
 
-// `recent` output: repo-scoped recent threads. The context branch emits the
-// agent-facing block (intro + rows without the msg count + recall footer); the plain
-// branch shows the msg count and a human header/footer. `repoPath` is the matched
-// git root or cwd; the label is derived here. Openings are passed in so this stays
-// db-free.
+// Openings are passed in so this stays db-free.
 export const recentBlock = (
   rows: { thread: ThreadRow; opening: string | null }[],
   opts: { repoPath: string; days: number; context: boolean },
@@ -55,8 +47,7 @@ export const recentBlock = (
   return lines;
 };
 
-// Fractional days are allowed: --days multiplies into a millisecond cutoff, so
-// 1.5 is a meaningful window (unlike a row limit).
+// Fractional days are allowed: --days multiplies into a millisecond cutoff.
 const options = {
   cwd: text(),
   days: numeric({ min: 0, minExclusive: true, label: "a positive number" }),
@@ -65,20 +56,14 @@ const options = {
   json: flag(),
 } satisfies OptionTable;
 
-// The `recent` command: threads recently active in one repo (by git root when the
-// cwd is inside a repo, else by exact project path), for session-start context.
 export const recentCommand = defineCommand({
   options,
   run: ({ db, args, now, cwd: invokedIn }) => {
-    // --cwd wins over the directory the command was invoked in; the window is measured
-    // from the dispatcher's instant, not from a second reading of the clock.
     const cwd = args.cwd || invokedIn;
     const days = args.days ?? 14;
     const since = new Date(now - days * 86_400_000).toISOString();
     const repoRoot = gitInfo(cwd).root;
     const threads = recentThreads(db, { repoRoot, cwd, since, limit: args.limit ?? 5 });
-    // The opening prompt is fetched here so the render stays db-free. JSON carries
-    // it as a field; the listing puts it on its own follow-up line.
     const rows = threads.map((thread) => ({
       thread,
       opening: threadOpeningPrompt(db, thread.id),

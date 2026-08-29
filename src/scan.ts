@@ -2,15 +2,12 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { parseLine, type SessionFile } from "./sources/adapter.ts";
 
-// The source-file scan layer: bytes, cursors, mtimes and index_state, and nothing
-// about messages or sessions. runIndex and dryRunIndex both consume this module,
-// which is what makes invariant #2 (they must agree exactly on what counts as
-// indexable) structural rather than a discipline: there is one splitter, one read
-// plan, and one discover-state-plan-read-split walk.
+// The source-file scan layer: bytes, cursors, mtimes and index_state. One splitter
+// and one read plan shared by runIndex and dryRunIndex (invariant #2). Design
+// notes: docs/architecture.md ("Scan layer").
 
-// Read raw bytes [start, size) synchronously. We work on bytes (not characters)
-// because the per-file cursor is a byte offset; 0x0A (\n) never appears inside a
-// UTF-8 multibyte sequence, so splitting the byte buffer on newline is safe.
+// Bytes, not characters, because the per-file cursor is a byte offset; 0x0A never
+// appears inside a UTF-8 multibyte sequence, so splitting on newline is safe.
 const readRange = (path: string, start: number, size: number): Buffer => {
   const length = size - start;
   if (length <= 0) return Buffer.alloc(0);
@@ -32,9 +29,9 @@ const readRange = (path: string, start: number, size: number): Buffer => {
   }
 };
 
-// Split a byte buffer read at `start` into complete JSONL lines plus the new
-// cursor. The cursor only advances past a trailing '\n' (or a final line that
-// parses cleanly without one), so a half-written last line is left for next time.
+// The cursor only advances past a trailing '\n' (or a final line that parses
+// cleanly without one), so a half-written last line is left for next time
+// (invariant #1).
 export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; cursor: number } => {
   // With no newline at all, lastNewline is -1: lines start empty, the cursor stays
   // at `start` (-1 + 1 = 0), and the whole buffer is the tail, so the one rule
@@ -63,23 +60,18 @@ export interface FileReadPlan {
   shouldRead: boolean; // false only when unchanged (and not full)
 }
 
-// The single source of truth for the per-file cursor/skip/truncate decision in
-// front of splitBuffer. `full` forces a re-read from byte 0 and never
-// short-circuits as unchanged; in full mode the status is always "grown"/"new"
-// and callers ignore it for categorization.
 export const planFileRead = (
   state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
   file: SessionFile,
   full: boolean,
 ): FileReadPlan => {
-  // A file flagged as cerebro's own digest summarization transcript is permanently
-  // excluded, even when it grows: the content guard (isDigestRunTranscript) only
-  // inspects reads that start at byte 0, so without this flag a digest transcript
-  // still being written when first detected would leak its later lines into the
-  // archive on the next incremental run. Checked before `full` on purpose: a real
-  // --full run has already cleared index_state (no flag survives, the file is
-  // re-read and re-detected from byte 0), so honoring the flag here only affects
-  // a --full *dry run*, which must report the file as skipped to match.
+  // A file flagged as cerebro's own digest transcript is permanently excluded,
+  // even when it grows: the content guard only inspects reads that start at byte
+  // 0, so without this a digest transcript still being written when first detected
+  // would leak its later lines on the next incremental run. Checked before `full`
+  // on purpose: a real --full run has already cleared index_state, so honoring the
+  // flag here only affects a --full *dry run*, which must report the file as
+  // skipped to match.
   if (state?.is_digest) {
     return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
   }
@@ -101,13 +93,10 @@ export const planFileRead = (
   return { start, status: state ? "grown" : "new", shouldRead: true };
 };
 
-// index_state cursors whose source file is absent, given the discovered file set.
-// The one owner of the orphan predicate: the indexer's presence reconciliation
-// deletes through this and doctor counts through it, so the diagnostic can never
-// disagree with what `cerebro index` would actually prune. Returns null on an
-// empty scan: that almost always means a transient readdir failure, not that every
-// session was deleted, so "unknown" must stay distinguishable from "no orphans"
-// (the prune bails instead of wiping every cursor; doctor reports unknown).
+// The one owner of the orphan predicate: the indexer prunes through this and
+// doctor counts through it. Returns null on an empty scan, which almost always
+// means a transient readdir failure rather than every session being deleted, so
+// "unknown" stays distinguishable from "no orphans".
 export const orphanedCursorPaths = (db: Database, files: SessionFile[]): string[] | null => {
   if (files.length === 0) return null;
   const present = new Set(files.map((file) => file.path));
@@ -124,16 +113,10 @@ export interface ScannedFile {
   cursor: number;
 }
 
-// The single scan shared by runIndex and dryRunIndex: for each discovered file,
-// look up its cursor state, decide via planFileRead whether to read, and for the
-// ones to read, pull the new bytes and split them into complete lines. What to do
-// with the result (write vs count) and how to treat a mid-write file whose cursor
-// did not advance is left to `handle`.
-//
-// `onUnchanged` is invoked for files planFileRead skips (so the dry run can count
-// them). `onError` isolates a per-file read/handle failure (a vanished or corrupt
-// file) so one bad file does not abort the whole run; without it the error
-// propagates, which is what the dry run wants.
+// The single scan shared by runIndex and dryRunIndex. What to do with the result
+// (write vs count) and how to treat a mid-write file is left to `handle`.
+// `onError` isolates a per-file failure so one bad file does not abort the whole
+// run; without it the error propagates, which is what the dry run wants.
 export const eachIndexableFile = (
   db: Database,
   files: SessionFile[],

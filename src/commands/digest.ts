@@ -23,9 +23,8 @@ import { CliError, flag, numeric, type OptionTable, positiveInt, text } from "./
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
-// `digest stale` (human): one row per stale thread with the staleness reason, the
-// title on its own line, then the how-to-summarize footer. `promptVersion` is passed
-// in so this stays free of the staleness query's versioning.
+// `promptVersion` is passed in so this stays free of the staleness query's
+// versioning.
 export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
   const lines: string[] = [];
   for (const row of rows) {
@@ -47,13 +46,10 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
   return lines;
 };
 
-// `digest stale --ids`: machine mode for the batch hook. One full session id per
-// line, nothing else (no header, titles, or footer), so a caller never scrapes the
-// human listing format; full ids, not shortId, so it skips the prefix round-trip.
+// Machine mode for the batch hook: one full session id per line, nothing else, so
+// a caller never scrapes the human listing format.
 export const staleIds = (rows: StaleThread[]): string[] => rows.map((row) => row.id);
 
-// `digest search`: one header + one snippet line per summary hit, then the count
-// footer pointing at both the thread and its stored summary.
 export const summarySearchListing = (hits: SummaryHit[]): string[] => {
   const lines: string[] = [];
   for (const hit of hits) {
@@ -68,8 +64,6 @@ export const summarySearchListing = (hits: SummaryHit[]): string[] => {
   return lines;
 };
 
-// `digest show`: the summary header (root id, time, model, prompt version) then the
-// stored summary body.
 export const digestShow = (summary: StoredSummary): string[] => {
   const model = summary.model ? `, ${summary.model}` : "";
   return [
@@ -79,40 +73,35 @@ export const digestShow = (summary: StoredSummary): string[] => {
   ];
 };
 
-// `digest show` empty state: no summary stored yet for this thread.
 export const noSummaryHint = (sessionId: string): string =>
   `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`;
 
-// `digest write` confirmation: which thread the summary was saved to and its size.
 export const summarySaved = (root: string, chars: number): string =>
   `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
-// One line per summarize attempt, for `digest run` and for each thread of a
-// `digest drain`. Both the hooks' logs and a human read these, so a failure always
-// names the reason and says the thread is not lost.
+// Both the hooks' logs and a human read these, so a failure always names the
+// reason and says the thread is not lost.
 export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   const id = shortId(outcome.root);
   switch (outcome.status) {
     case "summarized":
       return `Summarized ${id}: ${outcome.chars} chars stored.`;
     case "skipped":
-      // No retry promise here: the only way to skip is an empty transcript, and the
-      // `threads` view keeps zero-message threads out of the stale list entirely.
+      // No retry promise here: the only way to skip is an empty transcript, and
+      // the `threads` view keeps zero-message threads out of the stale list.
       return `Skipped ${id}: ${outcome.reason}.`;
     default:
       return `Failed ${id}: ${outcome.reason}; left unsummarized, digest drain will retry it.`;
   }
 };
 
-// The breadcrumb printed before the model is called, naming the thread, the size
-// and the model. A wedged call leaves this line behind, which is the whole point:
-// the bash pipeline logged it and losing it made a hung run unreadable.
+// Printed before the model is called: a wedged call leaves this line behind, which
+// is the whole point.
 export const digestStartLine = (about: { root: string; bytes: number; model: string }): string =>
   `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
 
-// What a `digest drain` achieved, printed after the per-thread lines the run
-// streamed as it went. An aborted run says so on its own line, because
-// "0 summarized" alone reads like a clean backlog.
+// An aborted run says so on its own line, because "0 summarized" alone reads like
+// a clean backlog.
 export const drainSummary = (result: DrainResult): string[] => {
   if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
   const lines: string[] = [];
@@ -122,16 +111,13 @@ export const drainSummary = (result: DrainResult): string[] => {
   return lines;
 };
 
-// The accepted shape of the JSON a SessionEnd hook pipes to `digest run --stdin`
-// (Claude Code sends { session_id, ... }). Extra keys are ignored. This is the
-// third untrusted I/O boundary, and it replaces a sed that scraped the id out of
-// the payload with a regex in the hook script.
+// The JSON a SessionEnd hook pipes to `digest run --stdin` (Claude Code sends
+// { session_id, ... }); an untrusted I/O boundary. Extra keys are ignored.
 const SessionEndPayloadSchema = v.object({ session_id: v.optional(v.string()) });
 
-// Pull the session id out of that payload, pure over the already-read raw string
-// so it is unit-testable without fd-0 plumbing. Returns null on any parse or
-// validation failure, and the caller reports a missing id rather than summarizing
-// something arbitrary.
+// Pure over the already-read raw string so it is unit-testable without fd-0
+// plumbing. Returns null on any parse or validation failure, and the caller
+// reports a missing id rather than summarizing something arbitrary.
 export const parseSessionEndPayload = (raw: string): string | null => {
   try {
     const parsed = v.safeParse(SessionEndPayloadSchema, JSON.parse(raw));
@@ -142,15 +128,11 @@ export const parseSessionEndPayload = (raw: string): string | null => {
   }
 };
 
-// How many stale threads one `digest drain` summarizes when --limit is absent.
 // Matches the reconciler's own default cap.
 const DEFAULT_DRAIN_LIMIT = 8;
 
 const limitOption = positiveInt();
 
-// `digest` is a group: each action declares the flags it accepts, so
-// `digest search --bytes 5` is rejected the same way an unknown flag on a
-// top-level command is, and each action's arguments arrive validated.
 export const digestCommand: CommandGroup = {
   unknownAction: (action) =>
     `digest: unknown action "${action ?? ""}". ` +
@@ -164,9 +146,8 @@ export const digestCommand: CommandGroup = {
         const rows = staleThreads(db, args.limit ?? 50);
         return {
           json: rows,
-          // --ids is the machine mode: full ids, one per line, no header, titles or
-          // footer, so a caller never scrapes the human listing. Empty output means
-          // nothing is stale, which is what the reconciler's guard reads.
+          // --ids: empty output means nothing is stale, which is what the
+          // reconciler's guard reads.
           lines: args.ids
             ? staleIds(rows)
             : rows.length > 0
@@ -180,14 +161,13 @@ export const digestCommand: CommandGroup = {
     run: defineCommand({
       options: { stdin: flag() } satisfies OptionTable,
       run: ({ db, args, rest, progress }) => {
-        // --stdin takes the id from the SessionEnd payload, so the clear hook needs
-        // neither jq nor a sed over untrusted JSON.
+        // --stdin takes the id from the SessionEnd payload, so the clear hook
+        // needs neither jq nor a sed over untrusted JSON.
         const idArg = args.stdin ? parseSessionEndPayload(readStdin()) : rest[0];
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
         const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
-          // Printed before the model call, so a hung call still names the thread.
           onStart: (about) => progress(digestStartLine(about)),
         });
         return {
@@ -212,8 +192,8 @@ export const digestCommand: CommandGroup = {
         });
         return {
           lines: drainSummary(result),
-          // Per-thread failures are normal and leave the thread stale for next time;
-          // only a run that could not proceed at all is an error.
+          // Per-thread failures are normal and leave the thread stale for next
+          // time; only a run that could not proceed at all is an error.
           exitCode: result.aborted ? 1 : 0,
         };
       },
@@ -226,8 +206,8 @@ export const digestCommand: CommandGroup = {
 
     input: defineCommand({
       options: {} satisfies OptionTable,
-      // The size-bounded transcript fed to the model. Raw stdout with no trailing
-      // newline of our own, so it pipes straight into one.
+      // Raw stdout with no trailing newline of our own, so it pipes straight into
+      // a model call.
       run: ({ db, rest }) => ({
         raw: buildDigestInput(threadMessages(db, resolveOrThrow(db, rest[0], "digest input"))),
       }),
@@ -240,7 +220,6 @@ export const digestCommand: CommandGroup = {
       run: ({ db, args, rest }) => {
         // --bytes N tiers an already-measured size without rendering anything.
         if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes)] };
-        // Otherwise render the thread and tier on its size, for manual inspection.
         const input = buildDigestInput(
           threadMessages(db, resolveOrThrow(db, rest[0], "digest model")),
         );
@@ -254,8 +233,8 @@ export const digestCommand: CommandGroup = {
         const sessionId = resolveOrThrow(db, rest[0], "digest write");
         const summary = readStdin().trim();
         if (!summary) throw new CliError("digest write: no summary text on stdin");
-        // Refuse to store output that cannot be a summary (an error message, a
-        // fragment). The thread stays stale, so the reconciler retries it.
+        // Refuse to store output that cannot be a summary; the thread stays stale,
+        // so the reconciler retries it.
         const rejected = rejectSummaryReason(summary);
         if (rejected) throw new CliError(`digest write: rejected: ${rejected}`);
         const root = writeSummary(db, sessionId, summary, args.model ?? null);

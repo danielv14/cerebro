@@ -1,26 +1,17 @@
-// Shared formatting primitives for the CLI. The per-command listing/report
-// builders live with their commands in src/commands/ (each command module owns
-// its output format end to end); what remains here is the vocabulary they share:
-// id/time/path/size shorthands and the row fragments used by more than one
-// command. Everything is dependency-free and side-effect-free (returns strings,
-// never prints, never touches the db). CLI output is consumed by hooks and
-// agents, so the exact bytes are load-bearing: do not change spacing, widths,
-// truncation lengths, or labels without updating the tests in lockstep.
+// Shared formatting primitives. CLI output is consumed by hooks and agents, so
+// the exact bytes are load-bearing: do not change spacing, widths, truncation
+// lengths, or labels without updating the tests in lockstep.
 
 export const shortId = (id: string): string => id.slice(0, 8);
 
-// Stored timestamps are verbatim UTC (ISO-8601 with a trailing Z) from the JSONL.
-// Display them in wall-clock time. Europe/Stockholm is the default because that is
-// where this archive lives; CEREBRO_TZ overrides it for anyone else and for anyone
-// travelling. The sv-SE locale is NOT a preference: it is what produces the
-// "YYYY-MM-DD HH:mm" shape the listings, the tests and SKILL.md's examples pin, so
-// it stays fixed while the zone moves.
+// Stored timestamps are verbatim UTC; displayed in wall-clock time. The sv-SE
+// locale is NOT a preference: it produces the "YYYY-MM-DD HH:mm" shape the tests
+// pin, so it stays fixed while the zone moves (CEREBRO_TZ).
 const DEFAULT_DISPLAY_TZ = "Europe/Stockholm";
 
-// Resolved per call rather than cached at module load, so a test (or a shell) can
-// set the variable per case without module-registry games; it is one env read. An
-// unknown zone makes toLocaleString throw a RangeError, so it is validated once
-// here and falls back rather than taking the whole listing down.
+// Resolved per call rather than cached at module load, so a test can set the
+// variable per case. An unknown zone makes toLocaleString throw a RangeError, so
+// it is validated once here and falls back rather than taking the listing down.
 const displayTz = (): string => {
   const requested = process.env.CEREBRO_TZ;
   if (!requested) return DEFAULT_DISPLAY_TZ;
@@ -32,8 +23,8 @@ const displayTz = (): string => {
   }
 };
 
-// A stored timestamp as a Date, or null when it is missing or unparseable; each
-// caller renders its own width-matched placeholder for null.
+// null when missing or unparseable; each caller renders its own width-matched
+// placeholder.
 const parseTs = (ts: string | null | undefined): Date | null => {
   if (!ts) return null;
   const date = new Date(ts);
@@ -79,6 +70,5 @@ export const humanBytes = (bytes: number): string => {
   return `${formatted} ${units[unit]}`;
 };
 
-// The "opened:" follow-up line shared by the `recent` and `relevant` rows (its two
-// consumers are why it lives here and not in either command). Truncated at 120.
+// Shared by the `recent` and `relevant` rows.
 export const openedLine = (opening: string): string => `      opened: ${oneLine(opening, 120)}`;

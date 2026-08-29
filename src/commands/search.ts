@@ -3,10 +3,6 @@ import { SEARCH_ROLES, type SearchHit, search } from "../search.ts";
 import { CliError, choice, flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// `search` output: one header + one snippet line per hit, then the count footer. The
-// thread title (when there is one) trails the header line, truncated at 60, so a
-// hit is recognizable without opening it. The default (deduplicated) mode says so
-// in the footer and points at --all; `all` restores the plain per-message footer.
 export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): string[] => {
   const lines: string[] = [];
   for (const hit of hits) {
@@ -14,8 +10,6 @@ export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): 
     lines.push(
       `${shortId(hit.session_id)}  ${shortTime(hit.ts)}  ${hit.role.padEnd(9)}  ${projectName(hit.project_path)}${title}`,
     );
-    // The ordinal is the message's position in show's numbering, so the hit can be
-    // opened in place with show <id> --range.
     lines.push(`    #${hit.ordinal}  ${oneLine(hit.snippet, 160)}`);
   }
   lines.push(
@@ -38,9 +32,6 @@ const options = {
   json: flag(),
 } satisfies OptionTable;
 
-// The `search` command: ranked full-text search, best hit per thread by default
-// (--all for every matching message), optionally filtered by --project / --branch /
-// --since / --role / --prose.
 export const searchCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {

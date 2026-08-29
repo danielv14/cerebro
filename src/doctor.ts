@@ -9,16 +9,11 @@ import { orphanedCursorPaths } from "./scan.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
 // The health report `cerebro doctor` renders. Read-only by construction: doctor
-// never repairs, prunes, optimizes or deploys, it reports and names the command
-// that fixes each thing. A diagnostic that mutates is not trustworthy on an archive
-// that is the only copy of sessions Claude Code has already deleted.
+// never repairs, it reports and names the command that fixes each thing. Design
+// notes: docs/architecture.md ("Doctor").
 
-// One check's outcome. "warn" is informational and does not fail the run; only
-// "fail" sets exit 1, so doctor is usable as a cron guard without going red on a
-// large WAL or a not-yet-drained digest backlog. "unknown" is what a check degrades
-// to when its input is unreadable (a missing binary, an unparseable settings.json):
-// every check degrades independently, the same tolerance rule as gitInfo
-// (invariant #9).
+// Only "fail" sets exit 1; "unknown" is what a check degrades to when its input is
+// unreadable, each check independently.
 export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface Check {
@@ -32,13 +27,10 @@ export interface Check {
   remedy?: string;
 }
 
-// A check's identity plus one method per outcome. Every check declares its key,
-// group and label once and builds each branch from that, instead of rebuilding the
-// whole Check literal three or four times: a typo in one branch would hand `--json`
-// consumers two different keys for the same check, and nothing would catch it.
-//
-// `remedy` stays absent rather than undefined when a branch has no command to name,
-// so the JSON payload keeps the shape it has always had.
+// Identity declared once, one method per outcome: rebuilding the whole Check
+// literal per branch would let a typo hand --json consumers two different keys for
+// the same check. `remedy` stays absent rather than undefined so the JSON payload
+// keeps its shape.
 interface CheckOutcomes {
   ok: (detail: string, remedy?: string) => Check;
   warn: (detail: string, remedy?: string) => Check;
@@ -69,11 +61,9 @@ export interface DoctorReport {
   ok: boolean;
 }
 
-// SQLite's own structural check. quick_check is the default because
-// integrity_check walks every page and is not instant on a multi-hundred-megabyte
-// archive, while quick_check catches the corruption that actually happens
-// (malformed records, broken b-tree links) and skips only the cross-page index
-// verification. `--full` opts into the slower, complete form.
+// quick_check by default: integrity_check walks every page and is not instant on a
+// multi-hundred-megabyte archive, while quick_check catches the corruption that
+// actually happens and skips only the cross-page index verification.
 const integrityCheck = (db: Database, full: boolean): Check => {
   const check = defineCheck({ key: "integrity", group: "Database", label: "integrity" });
   const pragma = full ? "integrity_check" : "quick_check";
@@ -88,9 +78,8 @@ const integrityCheck = (db: Database, full: boolean): Check => {
   }
 };
 
-// FTS5's own consistency check: it re-derives the index from the content table and
-// throws when they disagree, which is how a partially-applied schema change or a
-// dropped trigger shows up.
+// FTS5 re-derives the index from the content table and throws when they disagree,
+// which is how a partially-applied schema change or a dropped trigger shows up.
 const ftsCheck = (db: Database, table: string): Check => {
   const check = defineCheck({ key: `fts:${table}`, group: "Database", label: table });
   try {
@@ -114,18 +103,16 @@ const schemaCheck = (db: Database): Check => {
       );
 };
 
-// index_state rows whose source file is gone. The indexer prunes these (#84), so a
-// non-zero count here means no index run has happened since those files were
-// deleted, not that anything is broken. Counted through orphanedCursorPaths, the
-// same reader the prune deletes through, so this check can never disagree with
-// what `cerebro index` would actually remove. Read-only: the counting form issues
-// no writes.
+// A non-zero count means no index run has happened since those files were deleted,
+// not that anything is broken. Counted through orphanedCursorPaths, the same
+// reader the prune deletes through, so this can never disagree with what
+// `cerebro index` would remove.
 const orphanedCursors = (db: Database): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
   const cursors = (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
   if (cursors === 0) return check.ok("0 rows");
-  // null = empty scan, the transient-failure case the reader guards against:
-  // report unknown rather than declaring every cursor orphaned.
+  // null = empty scan (transient failure): report unknown rather than declaring
+  // every cursor orphaned.
   const orphans = orphanedCursorPaths(db, discoverAllSessionFiles());
   if (orphans === null) {
     return check.unknown("no session files discovered; cannot tell orphans from a failed scan");
@@ -135,9 +122,9 @@ const orphanedCursors = (db: Database): Check => {
     : check.warn(`${orphans.length} of ${cursors} point at files that are gone`, "cerebro index");
 };
 
-// Sessions with no user/assistant turns. They are hidden from the listings by the
-// threads view (#83) but the rows stay, deliberately: the row is the sidecar
-// metadata that keeps a session known after Claude Code deletes its transcript.
+// Hidden from the listings by the threads view (#83) but the rows stay: the row is
+// the sidecar metadata that keeps a session known after Claude Code deletes its
+// transcript.
 const emptySessions = (db: Database): Check => {
   const count = (
     db.query("SELECT COUNT(*) AS c FROM sessions WHERE msg_count = 0").get() as { c: number }
@@ -151,15 +138,14 @@ const digestCoverage = (db: Database): Check => {
   const check = defineCheck({ key: "digest", group: "Archive", label: "digest coverage" });
   const { threads, summarized, stale } = summaryCoverage(db);
   const detail = `${summarized}/${threads} threads summarized, ${stale} stale`;
-  // Coverage is not just a quality metric: relevant's summary tier short-circuits
-  // the raw-transcript scan, so a backlog is per-prompt hook latency.
+  // Not just a quality metric: relevant's summary tier short-circuits the raw
+  // scan, so a backlog is lookup latency.
   return stale === 0
     ? check.ok(detail)
     : check.warn(detail, "run the reconciler (hooks/digest-stale-batch.sh)");
 };
 
-// The WAL is folded back into the main file by `maintain`; a large one is untidy
-// rather than broken, so this warns and never fails.
+// A large WAL is untidy rather than broken, so this warns and never fails.
 const WAL_WARN_BYTES = 64 * 1024 * 1024;
 const walSize = (dbPath: string): Check => {
   const check = defineCheck({ key: "wal", group: "Database", label: "wal" });
@@ -174,13 +160,12 @@ const walSize = (dbPath: string): Check => {
   }
 };
 
-// Where `deploy` puts the compiled binary; kept as one expression so doctor and the
-// deploy script cannot disagree about the path.
+// One expression so doctor and the deploy script cannot disagree about the path.
 export const deployedBinaryPath = (): string =>
   join(process.env.CLAUDE_CONFIG_DIR || claudeDir(), "cerebro", "cerebro");
 
-// The drift check this whole stamp exists for: ask the deployed binary what it was
-// built from and compare it against the binary doing the asking.
+// Ask the deployed binary what it was built from and compare it against the binary
+// doing the asking.
 const deployedDrift = (running: BuildStamp): Check => {
   const check = defineCheck({ key: "deployed", group: "Build", label: "deployed" });
   const path = deployedBinaryPath();
@@ -209,10 +194,8 @@ const deployedDrift = (running: BuildStamp): Check => {
     : check.warn(`${deployedCommit}, this build is ${running.commit}`, "bun run deploy");
 };
 
-// Whether the SessionEnd hook that drives the automated path is wired at all.
 // Reported, never edited: doctor does not touch settings.json. One check because
-// cerebro ships one hook; per-prompt relevance injection was removed (see
-// docs/hooks.md).
+// cerebro ships one hook (see docs/hooks.md).
 const hookWiring = (): Check => {
   const check = defineCheck({ key: "hook:SessionEnd", group: "Hooks", label: "SessionEnd" });
   const path = join(claudeDir(), "settings.json");
@@ -237,7 +220,6 @@ const hookWiring = (): Check => {
     : check.warn("not wired to cerebro", "add a SessionEnd hook (see README, Automation)");
 };
 
-// Collect every check. `full` swaps quick_check for the complete integrity_check.
 export const runDoctor = (
   db: Database,
   dbPath: string,

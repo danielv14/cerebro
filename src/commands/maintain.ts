@@ -3,10 +3,8 @@ import { defineCommand } from "./command.ts";
 
 const options = {} satisfies OptionTable;
 
-// The `maintain` command. Periodic housekeeping: the FTS indexes are fed by
-// thousands of tiny incremental transactions and fragment over time; 'optimize'
-// merges their b-trees. PRAGMA optimize refreshes the query planner's stats, and
-// the truncating checkpoint folds the WAL back into the main file.
+// The FTS indexes are fed by thousands of tiny incremental transactions and
+// fragment over time; 'optimize' merges their b-trees.
 export const maintainCommand = defineCommand({
   options,
   run: ({ db }) => {

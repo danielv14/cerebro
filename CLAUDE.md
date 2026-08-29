@@ -30,6 +30,12 @@ code.
   repo is English: commits, comments, CLI output, `README.md`, `docs/` and the skill.
   The repo is public and cloneable, so Swedish prose does not belong in it (the only
   Swedish that does is data: the `swe` stopword list and the tokenizer examples).
+- **Comments explain edge cases, not functionality.** A code comment states a
+  specific edge case, invariant, or non-obvious constraint the code cannot show,
+  in a line or two. Module overviews, design rationale, and descriptions of what
+  a function or command does belong in `docs/architecture.md` (or the other
+  `docs/` pages), not in the source. When you find yourself writing a paragraph
+  above a function, move it to the doc and leave at most a one-line pointer.
 
 ## Developing and testing
 
@@ -189,6 +195,9 @@ and carries real example output, so refresh the examples too).
 README is the user guide; the operational half lives in `docs/`, so a hook or
 scheduling change belongs there rather than on the front page:
 
+- `docs/architecture.md` - how the modules fit together and why they are shaped
+  the way they are: the module-level story that used to live in source comments.
+  When a change makes a design decision or moves a responsibility, update it here.
 - `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
   deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd

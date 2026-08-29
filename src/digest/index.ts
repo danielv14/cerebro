@@ -1,9 +1,5 @@
-// The digest package's public surface, and the boundary it encodes: code outside
-// src/digest imports from here, never from the package's internals, so how the
-// package is split (prompt.ts owns the summarization contract and model tiering,
-// stale.ts the staleness predicate and coverage reading, store.ts summary storage
-// plus the summary full-text search, run.ts the summarize pipeline and the seam
-// the model call sits behind) stays a private layout that can change without
+// The digest package's public surface: code outside src/digest imports from here,
+// never from the package's internals, so the internal split can change without
 // touching a caller.
 export { DIGEST_PROMPT_SIGNATURE } from "../digest-signature.ts";
 export {

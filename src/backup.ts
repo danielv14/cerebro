@@ -2,10 +2,8 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { dirname, join } from "node:path";
 
-// The archive is the only copy of every session Claude Code has already deleted,
-// so it deserves a backup story of its own. VACUUM INTO is the right primitive:
-// it takes a consistent snapshot even against a concurrently-writing WAL database
-// and produces a compacted single file.
+// VACUUM INTO: a consistent snapshot even against a concurrently-writing WAL
+// database, as a compacted single file.
 
 export interface BackupResult {
   path: string;
@@ -23,10 +21,9 @@ const stamp = (now: Date): string =>
 
 const DEFAULT_NAME = /^archive-\d{8}-\d{6}\.sqlite$/;
 
-// Snapshot the open database to `opts.to`, or to <db-dir>/backups/archive-<ts>.sqlite.
-// `keep` prunes the oldest default-named backups beyond N; it only ever touches the
-// default directory and the default name pattern, so a custom --to target (or any
-// other file living there) is never deleted by pruning.
+// `keep` only ever touches the default directory and the default name pattern, so
+// a custom --to target (or any other file living there) is never deleted by
+// pruning.
 export const runBackup = (
   db: Database,
   dbPath: string,

@@ -7,11 +7,8 @@ const NAME_WIDTH = 34;
 const COUNT_WIDTH = 7;
 const count = (value: string | number): string => String(value).padStart(COUNT_WIDTH);
 
-// `skills` output: a header naming the window, a column header, then one row per name.
-// slash + model = total reads left to right; `sub` hangs off the end because it is a
-// share of total rather than a fourth term. The name is truncated to its column: the
-// exact bytes are load-bearing for the agents that read this, so one long
-// plugin-qualified name must not shift every count on its row.
+// The name is truncated to its column: one long plugin-qualified name must not
+// shift every count on its row.
 export const skillsListing = (usage: SkillUsage): string[] => {
   const names = `name${usage.distinct === 1 ? "" : "s"}`;
   const scope =
@@ -30,17 +27,14 @@ export const skillsListing = (usage: SkillUsage): string[] => {
   return lines;
 };
 
-// No default limit, unlike the listings: the question this answers is which skills
-// are unused, and a trimmed tail silently turns rarely-called skills into
-// never-called ones. `--limit` is there when you only want the top of the list.
+// No default limit, unlike the listings: a trimmed tail silently turns
+// rarely-called skills into never-called ones.
 const options = {
   since: isoDate(),
   limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;
 
-// The `skills` command: how often each named command was invoked, counted out of the
-// archive.
 export const skillsCommand = defineCommand({
   options,
   run: ({ db, args }) => {

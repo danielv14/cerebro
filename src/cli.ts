@@ -28,10 +28,11 @@ import { openDb } from "./db.ts";
 import { HELP } from "./help.ts";
 import { defaultDbPath } from "./paths.ts";
 
-// Output sink for the CLI. Routing every line through this (instead of calling
-// console / process directly inside the dispatch) is what makes runCli testable:
-// a test passes a capturing sink and asserts on the lines and exit code without
-// spawning the binary or mutating the global process.exitCode.
+// The dispatcher: parsing, option checking, db lifetime, rendering. Design notes:
+// docs/architecture.md ("CLI").
+
+// Routing every line through this is what makes runCli testable: a test passes a
+// capturing sink instead of spawning the binary.
 export interface CliIO {
   log: (line: string) => void; // a normal output line (stdout + newline)
   error: (line: string) => void; // an error line (stderr + newline)
@@ -48,17 +49,15 @@ const realIO: CliIO = {
   },
 };
 
-// The two options every command accepts. Everything else belongs to exactly one
-// command, which is what lets a flag meant for another one be rejected instead of
-// silently ignored.
+// The two options every command accepts; everything else belongs to exactly one
+// command.
 const GLOBAL_OPTIONS = {
   db: text(),
   help: flag(),
 } satisfies OptionTable;
 
-// `version` answers before the database is opened, like --help. That is not just
-// speed: doctor's drift check works by spawning the *deployed* binary's `version`,
-// and that answer must not depend on whether its archive happens to be readable.
+// db-less on purpose: doctor's drift check spawns the *deployed* binary's
+// `version`, and that answer must not depend on whether its archive is readable.
 const versionCommand = defineDbLessCommand({
   options: { json: flag() } satisfies OptionTable,
   run: ({ dbPath }) => {
@@ -67,9 +66,9 @@ const versionCommand = defineDbLessCommand({
   },
 });
 
-// The command dispatch table. A Map, not a plain object, so a command name that
-// collides with an Object.prototype key (e.g. "toString") can never resolve to an
-// inherited function instead of the unknown-command error.
+// A Map, not a plain object, so a command name that collides with an
+// Object.prototype key (e.g. "toString") can never resolve to an inherited
+// function.
 export const commands = new Map<string, CommandNode>([
   ["index", indexCommand],
   ["search", searchCommand],
@@ -86,30 +85,20 @@ export const commands = new Map<string, CommandNode>([
   ["version", versionCommand],
 ]);
 
-// Every option any command declares, as the table node:util needs up front. The
-// parser has to know the whole vocabulary before it can tell which command was
-// asked for; which subset is *allowed* is checked afterwards, per command.
-//
-// Because there is one table, a name can only be parsed one way, so two commands
-// declaring it with different kinds is a contradiction the parser cannot express.
-// Resolving it silently (first declaration wins) breaks the loser for every user
-// who passes the flag: a `--limit` redeclared as a boolean parses as `true`, the
-// coercion turns that into the string "true", and the command errors on it. A
-// `--db` redeclared as a flag parses as a string and reads back as absent forever.
-// So the collision throws here, where the table is built, rather than reaching
-// that command's users. Taking the entries as a parameter is what lets a test hand
-// this a clashing pair instead of restating the loop.
+// parseArgs needs the whole vocabulary before the command is known, so a name can
+// only be parsed one way. Two commands declaring the same name with different
+// kinds would silently break the loser for every user (a --limit redeclared as
+// boolean coerces "true" and errors; a --db redeclared as flag reads back absent),
+// so the collision throws here, where the table is built. Taking the entries as a
+// parameter lets a test hand this a clashing pair.
 export const buildParserOptions = (
   entries: Iterable<[string, CommandNode]>,
 ): Record<string, { type: "string" | "boolean"; short?: string }> => {
   // `help` is seeded rather than declared, because only this table can carry the
-  // `-h` short alias. It goes into the same table the rule reads, so the seed is
-  // inside the rule instead of beside it.
+  // `-h` short alias.
   const table: Record<string, { type: "string" | "boolean"; short?: string }> = {
     help: { type: "boolean", short: "h" },
   };
-  // Labels only, so a name's kind has exactly one home: the table above, which is
-  // also what the rule compares against.
   const owners = new Map<string, string>([["help", "the parser's own -h alias"]]);
   const add = (owner: string, options: OptionTable): void => {
     for (const [name, spec] of Object.entries(options)) {
@@ -136,24 +125,17 @@ export const buildParserOptions = (
 
 const PARSER_OPTIONS = buildParserOptions(commands);
 
-// Wrapped so the parsed shape is inferred rather than spelled out; parseArgs' own
-// type is generic over the option table and unpleasant to write by hand.
+// Wrapped so the parsed shape is inferred; parseArgs' own type is generic over the
+// option table and unpleasant to write by hand.
 const parseCliArgs = (args: string[]) =>
   parseArgs({ args, allowPositionals: true, tokens: true, options: PARSER_OPTIONS });
 
-// The ambient values the dispatcher hands every command (see CommandContext). Both
-// are injectable so a test can pin the clock and the working directory; production
-// reads them off the process.
+// Injectable so a test can pin the clock and the working directory.
 export interface CliEnv {
   now?: number;
   cwd?: string;
 }
 
-// Parse args, dispatch the command, and report through `io`. `makeDb` is injected
-// so tests can supply an in-memory database; production passes openDb. runCli owns
-// the database lifetime (open after the help/parse fast-paths, close in finally),
-// the option checking, and the rendering. A command handler does none of those:
-// it maps validated arguments to a result.
 export const runCli = (
   args: string[],
   io: CliIO,
@@ -166,8 +148,8 @@ export const runCli = (
   };
 
   // parseArgs throws on an option no command knows at all; turn that into a clean
-  // message + exit 1 instead of a raw stack trace. `tokens` records which options
-  // were actually supplied, which the values object cannot express.
+  // message + exit 1. `tokens` records which options were actually supplied, which
+  // the values object cannot express.
   let parsed: ReturnType<typeof parseCliArgs>;
   try {
     parsed = parseCliArgs(args);
@@ -192,7 +174,7 @@ export const runCli = (
   }
 
   // A group (digest) resolves one more positional to the action that owns the
-  // options and the run step; a plain command is its own.
+  // options and the run step.
   let command: Command;
   let rest: string[];
   let label: string;
@@ -212,9 +194,8 @@ export const runCli = (
     label = name;
   }
 
-  // The check that used to be missing: a flag this command did not declare is an
-  // error, not something to swallow. Without it `cerebro sessions --keep 3` parsed
-  // fine and ignored --keep.
+  // A flag this command did not declare is an error, not something to swallow
+  // (`cerebro sessions --keep 3` used to parse fine and ignore --keep).
   const accepted = new Set([
     ...Object.keys(GLOBAL_OPTIONS),
     "help",
@@ -227,7 +208,6 @@ export const runCli = (
     }
   }
 
-  // Coerce and validate this command's own options, once, here.
   let commandArgs: Record<string, unknown>;
   try {
     commandArgs = readOptions(command.options, values);
@@ -249,9 +229,6 @@ export const runCli = (
     progress: io.log,
   };
 
-  // Emit whatever the command produced: raw stdout, or JSON when the command
-  // declares --json and it was asked for, or the rendered lines, or the empty
-  // state. A --context hook contract asks for silence instead of an empty state.
   const emit = (output: CommandOutput): void => {
     if (output.raw !== undefined) io.write(output.raw);
     else if (values.json === true && "json" in output) io.log(JSON.stringify(output.json, null, 2));
@@ -261,13 +238,12 @@ export const runCli = (
   };
 
   if (!command.needsDb) {
-    // No database to open, close, or fail on, and no slot to invent one in.
     emit(command.run(context));
     return;
   }
 
   // Opening can fail (permissions, corrupt file, a lost migration race): report it
-  // like any other error instead of escaping runCli as an unhandled stack trace.
+  // like any other error instead of an unhandled stack trace.
   let db: Database;
   try {
     db = makeDb(dbPath);
@@ -279,8 +255,8 @@ export const runCli = (
   try {
     emit(command.run({ ...context, db }));
   } catch (error) {
-    // A CliError (a bad argument, an unresolvable id), an ambiguous session prefix,
-    // or an unexpected SQL error: show the message, not a stack trace.
+    // A CliError, an ambiguous session prefix, or an unexpected SQL error: show
+    // the message, not a stack trace.
     fail((error as Error).message);
   } finally {
     db.close();
@@ -291,6 +267,6 @@ const main = (): void => {
   runCli(Bun.argv.slice(2), realIO);
 };
 
-// Only dispatch when run as the entry point; importing this module (e.g. from a
-// test that drives runCli directly) must not execute a command.
+// Importing this module (e.g. from a test that drives runCli directly) must not
+// execute a command.
 if (import.meta.main) main();

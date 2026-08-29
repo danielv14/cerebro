@@ -4,18 +4,14 @@ import { classifyLines } from "../jsonl.ts";
 import { claudeDir } from "../paths.ts";
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
 
-// The Claude Code source: session transcripts under ~/.claude/projects. The JSONL
-// event grammar this adapter normalizes lives in src/jsonl.ts; this file owns the
-// on-disk layout (discovery and attribution).
+// The Claude Code source: discovery and attribution for ~/.claude/projects; the
+// JSONL grammar lives in src/jsonl.ts.
 
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
 export const projectsDir = (): string => join(claudeDir(), "projects");
 
-// Walk ~/.claude/projects/<project>/<session>.jsonl and return every session
-// file. Top-level files own the session named by their filename UUID; a per-session
-// <uuid>/subagents/ directory holds sidechain transcripts attributed to that parent
-// session (invariant #6). Unsorted: the registry orders the merged set.
+// Unsorted: the registry orders the merged set.
 export const discoverSessionFiles = (): SessionFile[] => {
   const root = projectsDir();
   let projectDirs: string[];
@@ -68,8 +64,8 @@ export const discoverSessionFiles = (): SessionFile[] => {
         const sessionId = entry.name.slice(0, -".jsonl".length);
         pushFile(join(dir, entry.name), "session", sessionId, projectDir);
       } else if (entry.isDirectory()) {
-        // A per-session directory may hold subagent transcripts. The directory
-        // name is the parent session UUID; fold the transcripts into it.
+        // The directory name is the parent session UUID; its subagent transcripts
+        // fold into that session (invariant #6).
         const subDir = join(dir, entry.name, "subagents");
         let subEntries: string[];
         try {

@@ -3,11 +3,6 @@ import { listThreads, type ThreadRow } from "../thread.ts";
 import { flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// Line 1 of a `sessions` thread row: no leading indent, wall-clock time, the message
-// count, the project name with the thread's branch as an @suffix when one was
-// recorded, then resume and "[body deleted]" suffixes. The "+N resume(s)" suffix
-// appears only when the thread has resumes, and "[body deleted]" only when the
-// underlying source is gone.
 const sessionThreadLine = (thread: ThreadRow): string => {
   const branch = thread.git_branch ? ` @${thread.git_branch}` : "";
   const resumes =
@@ -16,8 +11,6 @@ const sessionThreadLine = (thread: ThreadRow): string => {
   return `${shortId(thread.id)}  ${shortTime(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${projectName(thread.project_path)}${branch}${resumes}${deleted}`;
 };
 
-// `sessions` output: the thread row plus the title on its own follow-up line
-// (truncated at 120). No intro, no footer.
 export const sessionsListing = (threads: ThreadRow[]): string[] => {
   const lines: string[] = [];
   for (const thread of threads) {
@@ -27,8 +20,6 @@ export const sessionsListing = (threads: ThreadRow[]): string[] => {
   return lines;
 };
 
-// Same anchored-ISO-date shape as search --since, from the same validator, rather
-// than a second date syntax.
 const options = {
   project: text(),
   branch: text(),
@@ -37,8 +28,6 @@ const options = {
   json: flag(),
 } satisfies OptionTable;
 
-// The `sessions` command: list logical threads, newest first, optionally filtered
-// by --project, --branch, and --since.
 export const sessionsCommand = defineCommand({
   options,
   run: ({ db, args }) => {

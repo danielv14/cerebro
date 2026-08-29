@@ -5,8 +5,7 @@ import { humanBytes } from "../render.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// A status marker wide enough to align every row, so failures are scannable in a
-// wall of ok.
+// Fixed-width so failures are scannable in a wall of ok.
 const MARKER: Record<Check["status"], string> = {
   ok: "ok  ",
   warn: "warn",
@@ -14,9 +13,8 @@ const MARKER: Record<Check["status"], string> = {
   unknown: "?   ",
 };
 
-// `doctor` output: the running build, then the checks under their group headings,
-// then a one-line verdict. Grouped in the order runDoctor emits them, so the
-// listing and the --json array stay in the same sequence.
+// Grouped in the order runDoctor emits them, so the listing and the --json array
+// stay in the same sequence.
 export const doctorReport = (
   report: DoctorReport,
   dbPath: string,
@@ -50,11 +48,8 @@ export const doctorReport = (
 
 const options = { full: flag(), json: flag() } satisfies OptionTable;
 
-// The `doctor` command: one read-only health report over the archive, the schema,
-// the digest backlog, the deployed binary and the hook wiring. Exits 1 only on a
-// hard failure (corruption, a schema this build cannot speak), so it is usable as a
-// cron or CI-style guard without going red on a warning. The report itself is the
-// error message, so nothing is printed twice on the way out.
+// The report itself is the error message, so nothing is printed twice on the way
+// out.
 export const doctorCommand = defineCommand({
   options,
   run: ({ db, args, dbPath }) => {
