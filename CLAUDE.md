@@ -30,6 +30,18 @@ code.
   repo is English: commits, comments, CLI output, `README.md`, `docs/` and the skill.
   The repo is public and cloneable, so Swedish prose does not belong in it (the only
   Swedish that does is data: the `swe` stopword list and the tokenizer examples).
+- **Comments are banned by default; keep the code clean.** The test: a comment
+  stays only if deleting it loses something the code cannot say. That means a
+  why the code cannot express, a landmine (a change that looks safe but is not),
+  a deliberate omission a reader would mistake for a bug, a durable external
+  pointer, or a toolchain pragma - in a line or two. Never narration of the next
+  line, signature restatement, section banners, change notes (the commit
+  message's job), or module essays. Function and flow documentation goes to
+  `docs/` when it is needed at all, never into the source. And do not document
+  reflexively in the other direction either: every documented detail is a detail
+  that can drift, so docs are for what a reader cannot get from the code in
+  reasonable time. Prefer clearer names and smaller functions over both comments
+  and docs.
 
 ## Developing and testing
 
@@ -182,6 +194,14 @@ Title events: `custom-title` (priority 3) > `ai-title` (2) > `summary` (1).
 
 ## Keep docs in sync
 
+Before you finish any change in this repo, check whether `docs/` still tells the
+truth about what you touched: skim the page that covers the area (list below) and
+update it if your change moved a responsibility, changed a flow, or invalidated a
+described decision. A doc that lies is worse than no doc. The check cuts both
+ways: if nothing on the page is wrong, do not add to it, and do not create doc
+sections for code that explains itself; docs cover what a reader cannot get from
+the code in reasonable time, nothing more.
+
 When you change a command, a flag, or its output, update both `README.md` and
 `skills/cerebro/SKILL.md` (the skill is symlinked into `~/.claude/skills/cerebro`
 and carries real example output, so refresh the examples too).
@@ -189,6 +209,8 @@ and carries real example output, so refresh the examples too).
 README is the user guide; the operational half lives in `docs/`, so a hook or
 scheduling change belongs there rather than on the front page:
 
+- `docs/architecture.md` - how the modules fit together and why they are shaped
+  the way they are: the module-level story that used to live in source comments.
 - `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
   deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd

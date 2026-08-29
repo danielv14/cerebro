@@ -4,24 +4,16 @@ import { CliError, flag, messageRange, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 import { resolveOrThrow } from "./helpers.ts";
 
-// The shared header of `show` (outline and full): id + message count, with a blank
-// line under it (the trailing "\n" plus io.log's own newline).
 const threadHeader = (sessionId: string, count: number): string =>
   `Thread ${shortId(sessionId)}  ${count} message(s)\n`;
 
-// The default outline is capped at head + tail: the head shows how the thread
-// opened, the tail how it ended, which is enough to judge "is this the right
-// thread?" without paying for a giant thread's every line (#147). The tail keeps
-// its true ordinals so the numbering stays identical to --range and search's #N.
+// The outline is capped at head + tail (#147). The tail keeps its true ordinals so
+// the numbering stays identical to --range and search's #N.
 const OUTLINE_HEAD = 50;
 const OUTLINE_TAIL = 50;
 
-// `show` (outline): the header, then a numbered one-line-per-message digest, then the
-// hint to open the full transcript.
 export const showOutline = (sessionId: string, messages: ThreadMessage[]): string[] => {
   const lines: string[] = [threadHeader(sessionId, messages.length)];
-  // Indexes into `messages`, so the ordinal is i + 1 everywhere and head and tail
-  // cannot disagree on the numbering.
   const pushLines = (start: number, end: number) => {
     for (let i = start; i < end; i++) {
       const message = messages[i]!;
@@ -45,8 +37,6 @@ export const showOutline = (sessionId: string, messages: ThreadMessage[]): strin
   return lines;
 };
 
-// `show --full`: the header, then each message rendered verbatim under a separator
-// header, with a blank line between messages.
 export const showFull = (sessionId: string, messages: ThreadMessage[]): string[] => {
   const lines: string[] = [threadHeader(sessionId, messages.length)];
   for (const message of messages) {
@@ -58,9 +48,6 @@ export const showFull = (sessionId: string, messages: ThreadMessage[]): string[]
   return lines;
 };
 
-// `show --range A..B`: a verbatim slice of the thread, numbered with the same
-// ordinals as the outline (and as search's #N markers), so a search hit can be
-// opened in place without pulling the whole transcript.
 export const showRange = (
   sessionId: string,
   slice: ThreadMessage[],
@@ -79,24 +66,20 @@ export const showRange = (
   return lines;
 };
 
-// --range's shape is validated by the option itself; whether it fits the thread is
-// decided here, because only the command knows how long the thread is.
 const options = {
   full: flag(),
   range: messageRange(),
   json: flag(),
 } satisfies OptionTable;
 
-// The `show` command: a thread as outline (default), full transcript (--full), or
-// a verbatim slice in outline numbering (--range A..B).
 export const showCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {
     const sessionId = resolveOrThrow(db, rest[0], "show");
     const messages = threadMessages(db, sessionId);
 
-    // The slice is resolved BEFORE the output format is chosen, so
-    // `--range A..B --json` returns the requested slice instead of the whole thread.
+    // Resolved BEFORE the output format is chosen, so `--range A..B --json`
+    // returns the requested slice instead of the whole thread.
     let slice = messages;
     let from = 1;
     if (args.range) {

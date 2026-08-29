@@ -5,11 +5,6 @@ import { type Stats, stats } from "../stats.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// `stats` output: the archive counts, labels left-aligned to a shared column.
-// `extras` carries what the query layer cannot know: the database file size
-// (measured on the path by the command; null for :memory: or a missing file) and
-// the summary coverage, which the digest layer owns because it depends on the
-// prompt version.
 export const statsReport = (
   s: Stats,
   extras: { dbBytes: number | null; coverage: SummaryCoverage },
@@ -34,14 +29,9 @@ export const statsReport = (
 
 const options = { json: flag() } satisfies OptionTable;
 
-// The `stats` command: archive counts plus the database file size and the digest
-// staleness count.
 export const statsCommand = defineCommand({
   options,
   run: ({ db, dbPath }) => {
-    // The file size lives outside the query layer (and is meaningless for the
-    // in-memory databases tests use); the coverage numbers are the digest layer's,
-    // the same reader doctor's coverage check calls.
     const dbBytes = dbFileSize(dbPath);
     const coverage = summaryCoverage(db);
     const counts = stats(db);

@@ -412,6 +412,9 @@ test/
                 per-command formatting tests under test/commands/
 ```
 
+How the modules fit together, and the design rationale behind them, is
+documented in [docs/architecture.md](docs/architecture.md).
+
 Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
 pure-JS dependencies: `stopword` filters filler words out of relevance queries,
 and `valibot` validates the untrusted input boundaries (the session JSONL and

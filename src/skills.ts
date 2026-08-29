@@ -3,97 +3,57 @@ import { escapeLike } from "./fts.ts";
 import { toolUseTag } from "./jsonl.ts";
 import { archiveSpan } from "./stats.ts";
 
-// How often each named command was invoked, counted out of the archive.
-//
-// This lives in cerebro because the markers do. A skill call leaves no field of its
-// own in the JSONL: it is text inside a turn, and one of the two forms is cerebro's
-// own rendering (see SKILL_TAG). An outside consumer counting these strings is
-// coupled to this repo's flattener, and when the flattener changes it gets zero hits
-// and reports every skill as unused, confidently and silently. So the counting and
-// the knowledge behind it stay here.
-//
-// "Named command", not "skill", is the honest word for what comes out: the slash
-// marker is Claude Code's expansion of any `/name`, so its own built-ins (/clear,
-// /model) are in the list. Filtering them would be a denylist to maintain every time
-// Claude Code ships a command, so the caller filters against whatever list it owns.
-// Merging renamed skills and explaining why a number is low stay with the caller too.
+// Design notes: docs/architecture.md ("Skills").
 
-// Claude Code's expansion of a typed `/name`, embedded in the user turn.
 const SLASH_OPEN = "<command-name>";
 const SLASH_CLOSE = "</command-name>";
 
-// The model's Skill tool call, as flattenContent renders it. Derived from the
-// flattener so the two cannot drift apart.
+// Derived from the flattener so the two cannot drift.
 const SKILL_TAG = toolUseTag("Skill");
 
-// Deliberately absent: a third marker. `Launching skill: <name>` is the tool_result
-// side of a SKILL_TAG call, not an independent signal, and counting it would double
-// every model-side call. It is also on the user side, so the role filter below drops
-// it anyway.
+// Deliberately no third marker: "Launching skill: <name>" is the tool_result side
+// of a SKILL_TAG call and would double-count it.
 
 export interface SkillUsageRow {
   name: string;
-  // Calls made by typing `/name`.
   slash: number;
-  // Calls the model made through the Skill tool.
   model: number;
   total: number;
-  // How many of `total` came from a subagent turn. A subagent that calls a skill is
-  // using it, so those count; they get their own number because they answer a
-  // different question than "how often did I reach for this myself".
   sidechain: number;
   lastTs: string | null;
 }
 
 export interface SkillUsage {
   rows: SkillUsageRow[];
-  // Names seen before `limit` trimmed the list.
   distinct: number;
-  // The window the counts cover: `since` (or the archive's first message) to its
-  // last. A consumer needs it to tell "never called" from "called before the archive
+  // The counted window, to tell "never called" from "called before the archive
   // begins".
   from: string | null;
   to: string | null;
 }
 
 export interface SkillUsageOpts {
-  // ISO date cutoff, lexical compare on ts like search --since.
   since?: string;
   limit?: number;
 }
 
-// A marker only counts when it opens a line, which is most of what separates a call
-// from a transcript quoting one. The model tag is rendered by flattenContent, which
-// joins blocks with a newline, so a real one always opens a line. On the slash side
-// the producer is Claude Code, and every one of the ~1100 expansions in this archive
-// opens a line, while the mid-line ones are all cerebro's own `show` / `recent` output
-// quoted back into a tool_result, where a whole turn is collapsed onto one line.
-//
-// What it does not catch: a marker deliberately quoted on a line of its own, in a
-// fenced code block or a doc about this very command, is indistinguishable from a
-// call. The shape filter below bounds the damage but cannot see intent, so treat a
-// name that only ever appears once as what it is, one occurrence.
+// A marker only counts when it opens a line: a real call always does, while
+// mid-line occurrences are cerebro's own listings quoted back through a
+// tool_result.
 const opensLine = (text: string, at: number): boolean => at === 0 || text[at - 1] === "\n";
 
-// What a name may look like. Not a denylist of commands (that would be a table to
-// maintain), a bound on the shape: the text between two markers is foreign input, and
-// without this an opening tag whose nearest closing tag is far away turns an arbitrary
-// multi-line slice of someone's transcript into a "skill name", printed raw into a
-// listing an agent reads. Every one of the 78 names in this archive passes, the
-// plugin-qualified `code-review:code-review` included.
+// A bound on the shape, not a denylist: without it an unclosed tag turns an
+// arbitrary multi-line slice of transcript into a "skill name".
 const NAME_SHAPE = /^[A-Za-z0-9][\w.:/-]{0,63}$/;
 
-// Every `/name` expansion in one turn. Occurrences, not messages: a turn can carry
-// two markers, so counting rows would be a lower bound on counting calls.
 const eachSlashCall = (text: string, add: (name: string) => void): void => {
   let at = text.indexOf(SLASH_OPEN);
   while (at !== -1) {
     const from = at + SLASH_OPEN.length;
     const end = text.indexOf(SLASH_CLOSE, from);
     if (end === -1) return;
-    // An unclosed tag must not swallow the next one: without this resync the closing
-    // tag found belongs to a later marker, and that marker is both lost and turned
-    // into a multi-line name.
+    // Resync on an unclosed tag: otherwise the closing tag found belongs to a
+    // later marker, which is both lost and turned into a multi-line name.
     const nextOpen = text.indexOf(SLASH_OPEN, from);
     if (nextOpen !== -1 && nextOpen < end) {
       at = nextOpen;
@@ -107,12 +67,8 @@ const eachSlashCall = (text: string, add: (name: string) => void): void => {
   }
 };
 
-// Every Skill tool call in one turn. The payload is matched, not parsed: a call with
-// arguments renders as {"skill":"x","args":"..."}, a long argument list is truncated
-// mid-JSON by the tool-text cap, and JSON.parse would then drop exactly the calls that
-// carry arguments. Matching the field also survives a reordered key. It survives
-// either of those, not both: an args-first payload truncated before the skill field is
-// lost, which no row in this archive is.
+// Matched, not JSON.parsed: the tool-text cap truncates long argument lists
+// mid-JSON, which would drop exactly the calls that carry arguments.
 const eachModelCall = (text: string, add: (name: string) => void): void => {
   let at = text.indexOf(SKILL_TAG);
   while (at !== -1) {
@@ -135,12 +91,9 @@ interface MarkedRow {
 }
 
 export const skillUsage = (db: Database, opts: SkillUsageOpts = {}): SkillUsage => {
-  // The rest of not counting our own measurements. The role decides which marker can
-  // appear at all (an assistant writing about `/name` is prose, a Skill tool call in a
-  // user turn is a quote), and a user turn that opens with a flattened tool tag is
-  // machine output rather than something typed, which is where cerebro's own listings
-  // come back in through a Bash result. That predicate is the one `search --prose`
-  // uses. The LIKE patterns are pre-filters for the scan below, escaped because
+  // The role decides which marker can appear at all, and a user turn opening
+  // with a flattened tool tag is machine output (our own listings coming back
+  // through a Bash result). LIKE patterns are pre-filters, escaped because
   // SKILL_TAG contains a `_`.
   const marked = db
     .query(

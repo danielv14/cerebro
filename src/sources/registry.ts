@@ -1,14 +1,10 @@
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
 import { claudeCodeAdapter } from "./claude-code.ts";
 
-// The registry of sources cerebro indexes. Adding a source is: implement its
-// SourceAdapter in a sibling file (see docs/source-adapters.md for the contract)
-// and add it to this list. Claude Code is the only adapter today.
+// Adding a source: docs/source-adapters.md.
 export const sourceAdapters = (): SourceAdapter[] => [claudeCodeAdapter];
 
-// Resolve the adapter a discovered file came from. An unknown provider is a
-// programming error (files only enter the pipeline through an adapter's own
-// discover), so this throws rather than guessing a classifier.
+// An unknown provider is a programming error, so this throws rather than guessing.
 export const adapterFor = (
   provider: string,
   adapters: SourceAdapter[] = sourceAdapters(),
@@ -18,11 +14,8 @@ export const adapterFor = (
   return adapter;
 };
 
-// Every session file across all sources, sorted oldest-first by mtime (tiebreak
-// sessionId). Oldest-first matters (invariant #3): an original session must be
-// indexed before any resume that branches from it, so a shared message is
-// attributed to the original, not the resume. The sort is global, here, so no
-// adapter has to order its own files and cross-source order is deterministic.
+// Oldest-first by mtime, tiebreak sessionId (invariant #3: an original session
+// must be indexed before any resume that branches from it).
 export const discoverAllSessionFiles = (
   adapters: SourceAdapter[] = sourceAdapters(),
 ): SessionFile[] => {

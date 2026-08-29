@@ -13,13 +13,8 @@ export interface StaleThread {
   summarized_at: string | null;
 }
 
-// The staleness predicate, defined once (over the threads view aliased `t`
-// left-joined to summaries aliased `su`) so the listing and the count can never
-// drift on what "needs a (re)summary" means. A fixed literal the codebase owns;
-// the prompt version stays a bound parameter.
-//
 // t.msgs > 0 is redundant since the view took over excluding empty threads (#83);
-// kept as a local statement of intent ("nothing to summarize"), harmless either way.
+// kept as a local statement of intent, harmless either way.
 const STALE_FROM_WHERE = `
   FROM threads t
   LEFT JOIN summaries su ON su.root_session_id = t.id
@@ -29,9 +24,6 @@ const STALE_FROM_WHERE = `
       OR su.source_last_ts < t.last_ts
       OR su.prompt_version < ?)`;
 
-// Thread roots that need a (re)summary: never summarized, summarized before the
-// thread's latest activity, or summarized by an older prompt version. Reads the
-// shared `threads` rollup view (see thread.ts), then left-joins summaries.
 export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
   db
     .query(
@@ -43,24 +35,18 @@ export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
     )
     .all(DIGEST_PROMPT_VERSION, limit) as StaleThread[];
 
-// The count form of the same predicate, for stats: no row materialization, no
-// ORDER BY, just the number the `digest stale` listing would produce unbounded.
 export const countStaleThreads = (db: Database): number =>
   (db.query(`SELECT COUNT(*) AS c ${STALE_FROM_WHERE}`).get(DIGEST_PROMPT_VERSION) as { c: number })
     .c;
 
 export interface SummaryCoverage {
   threads: number;
-  // Summaries that still key on a current thread root. A relink (relinkThreads can
-  // move a root) leaves a summary keyed on an id that is no longer one, and such a
-  // row is not coverage: `relevant` will never reach it through the threads view.
+  // Joined to threads: a relink can move a root, and a summary keyed on a stale
+  // id is not coverage (`relevant` never reaches it through the view).
   summarized: number;
   stale: number;
 }
 
-// The one summary-coverage reading, owned here next to the staleness predicate it
-// includes. stats and doctor both call this instead of counting `summaries`
-// themselves, so the number they print cannot drift apart.
 export const summaryCoverage = (db: Database): SummaryCoverage => ({
   threads: countThreads(db),
   summarized: (

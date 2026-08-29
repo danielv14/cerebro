@@ -19,8 +19,8 @@ const runGit = (cwd: string, args: string[]): string | null => {
   }
 };
 
-// Resolve git root + origin remote for a cwd. Tolerates a missing/moved/deleted
-// directory by returning nulls instead of throwing. Cached per cwd.
+// Tolerates a missing/moved/deleted directory by returning nulls instead of
+// throwing (invariant #9). Cached per cwd.
 export const gitInfo = (cwd: string | null | undefined): GitInfo => {
   if (!cwd) return { root: null, remote: null };
 
