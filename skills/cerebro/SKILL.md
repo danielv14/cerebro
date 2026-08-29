@@ -283,7 +283,7 @@ invisible, and a skill only used in one season looks dead the rest of the year.
 `doctor` is a read-only health report: SQLite and FTS integrity, the schema version,
 orphaned index cursors, empty sessions, WAL size, digest coverage, whether the deployed
 binary has drifted from the repo, and whether the hooks are wired in `settings.json`. It
-never repairs anything, it points out the command that does. Exit 1 only on a hard
+never repairs anything; it points out the command that does. Exit 1 only on a hard
 failure (corruption, or a schema this build cannot read), so a warning like a digest
 backlog does not turn it red. `--full` runs the complete `integrity_check` instead of
 `quick_check`. `version` prints just the build identity, which is what makes the drift
@@ -342,8 +342,8 @@ for when you want to be the model yourself.
 (dense summaries) and then go deeper with `cerebro show <id>`. If that comes back too
 thin, complement it with `cerebro search` against the raw data.
 
-**Coverage is a latency question, not just a quality question.** `relevant` only runs its
-raw-data tier when the summary tier did not fill `--limit`, and the raw tier is a broad
+**Coverage is about latency as much as quality.** `relevant` only runs its raw-data
+tier when the summary tier did not fill `--limit`, and the raw tier is a broad
 scan over the message FTS index (one row per message) where the summary tier reads one row
 per thread. So summaries short-circuit the expensive half of the lookup: measured with the
 compiled binary against a synthetic archive of
@@ -351,11 +351,9 @@ compiled binary against a synthetic archive of
 took 386 ms, and that shrinks as coverage rises. If the archive is unsummarized,
 `cerebro digest drain` is worth running, and not only for recall.
 
-**The summary points at the raw data, and usually it is enough.** Each summary is keyed on
-the thread's id, and every `digest` row starts with that id. That is the reference back to
-the raw data: in the vast majority of cases the summary is good enough to answer with, and
-you do not need to open the transcript. Fetch the raw data **only when needed**, in this
-order:
+**The summary points at the raw data, and usually it is enough.** Each summary is keyed
+on the thread's id, and every `digest` row starts with that id, which is the reference
+back to the raw data. Fetch the raw data **only when needed**, in this order:
 - `cerebro show <id>` for an outline (one line per message, head + tail on a long thread) when you need to see how it unfolded.
 - `cerebro show <id> --full` for the verbatim transcript when you need exact wording, code or commands.
 - `cerebro search "<term>"` when you want to hit one specific message somewhere in the thread (or in the archive).
@@ -418,7 +416,7 @@ guard sits in `digest run`/`drain`.
 Use `cerebro digest input <id>`, not `show <id> --full`, as model input: it renders the
 same transcript but size-bounded so it fits in a single model context. Short threads come
 out verbatim; a giant thread is trimmed (water-fill: short messages are kept whole, the
-longest essays are trimmed first) so that not even a 1M context is blown. cerebro owns the
+longest essays are trimmed first) so it cannot overflow even a 1M context. cerebro owns the
 model choice: `digest run`/`drain` measure the transcript where they render it and tier on
 that, and `cerebro digest model <id>` (or `--bytes <n>`) shows the same decision for a
 manual check. Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
