@@ -1,17 +1,15 @@
-// Shared formatting primitives. CLI output is consumed by hooks and agents, so
-// the exact bytes are load-bearing: do not change spacing, widths, truncation
-// lengths, or labels without updating the tests in lockstep.
+// CLI output is consumed by hooks and agents, so the exact bytes are load-bearing:
+// do not change spacing, widths, truncation lengths, or labels without updating
+// the tests in lockstep.
 
 export const shortId = (id: string): string => id.slice(0, 8);
 
-// Stored timestamps are verbatim UTC; displayed in wall-clock time. The sv-SE
-// locale is NOT a preference: it produces the "YYYY-MM-DD HH:mm" shape the tests
-// pin, so it stays fixed while the zone moves (CEREBRO_TZ).
+// The sv-SE locale is NOT a preference: it produces the "YYYY-MM-DD HH:mm" shape
+// the tests pin, so it stays fixed while the zone moves (CEREBRO_TZ).
 const DEFAULT_DISPLAY_TZ = "Europe/Stockholm";
 
-// Resolved per call rather than cached at module load, so a test can set the
-// variable per case. An unknown zone makes toLocaleString throw a RangeError, so
-// it is validated once here and falls back rather than taking the listing down.
+// An unknown zone makes toLocaleString throw a RangeError, so it is validated
+// once here and falls back rather than taking the listing down.
 const displayTz = (): string => {
   const requested = process.env.CEREBRO_TZ;
   if (!requested) return DEFAULT_DISPLAY_TZ;
@@ -23,8 +21,6 @@ const displayTz = (): string => {
   }
 };
 
-// null when missing or unparseable; each caller renders its own width-matched
-// placeholder.
 const parseTs = (ts: string | null | undefined): Date | null => {
   if (!ts) return null;
   const date = new Date(ts);
@@ -70,5 +66,4 @@ export const humanBytes = (bytes: number): string => {
   return `${formatted} ${units[unit]}`;
 };
 
-// Shared by the `recent` and `relevant` rows.
 export const openedLine = (opening: string): string => `      opened: ${oneLine(opening, 120)}`;

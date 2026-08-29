@@ -5,9 +5,6 @@ import { type Stats, stats } from "../stats.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// `extras` carries what the query layer cannot know: the database file size (null
-// for :memory: or a missing file) and the summary coverage, which the digest layer
-// owns because it depends on the prompt version.
 export const statsReport = (
   s: Stats,
   extras: { dbBytes: number | null; coverage: SummaryCoverage },

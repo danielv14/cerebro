@@ -3,12 +3,10 @@ import { searchSummaryRoots } from "./digest/index.ts";
 import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
 import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
 
-// Relevance ranking for `relevant`: two FTS tiers, recency decay, a same-repo
-// boost. Design notes: docs/architecture.md ("Relevance").
+// Design notes: docs/architecture.md ("Relevance").
 
-// bm25 is negative (lower = more relevant); a decay factor in (0,1] shrinks an old
-// hit's magnitude toward 0, ranking it worse. `search` and `digest search` stay
-// pure bm25 on purpose: an explicit search should be deterministic text relevance.
+// bm25 is negative (lower = better); a decay factor in (0,1] shrinks an old hit's
+// magnitude toward 0, ranking it worse.
 const RELEVANCE_HALF_LIFE_DAYS = 90;
 const UNKNOWN_AGE_DAYS = 365;
 export const decayedRank = (
@@ -24,15 +22,12 @@ export const decayedRank = (
   return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS) * boost;
 };
 
-// Matched on the thread's git_root when the cwd is inside a git repo, else on the
-// exact project_path: the same pairing recentThreads scopes by.
 export interface RepoScope {
   repoRoot?: string | null;
   cwd?: string | null;
 }
 
-// 1.5x is worth roughly two months of recency at the 90-day half-life. A boost,
-// never a filter, so a much stronger cross-repo match stays reachable.
+// A boost, never a filter: a much stronger cross-repo match stays reachable.
 const SAME_REPO_BOOST = 1.5;
 const repoBoost = (
   hit: { git_root: string | null; project_path: string | null },
@@ -43,13 +38,10 @@ const repoBoost = (
   return 1;
 };
 
-// At this limit the raw tier answers out of a single window (growth off below), so
-// a hook invocation costs one query.
 export const DEFAULT_RELEVANT_LIMIT = 3;
 
-// Floored at the 80 rows the tier used to pin flat regardless of the limit; that
-// flat window was the bug in #141, where eight chatty threads owned all 80 rows and
-// `--limit 20` answered with 8.
+// The 80-row floor is the flat window the tier used to pin; per-root sizing is
+// the fix for #141 (chatty threads owning the whole window).
 const RAW_WINDOW_MIN_ROWS = 80;
 const RAW_WINDOW_ROWS_PER_ROOT = 20;
 
@@ -65,9 +57,6 @@ export interface RelevantThread {
   fromSummary: boolean;
 }
 
-// Summary tier first (dense, topical, higher-signal), raw transcripts top up.
-// bm25 scores are not comparable across the two FTS indexes, so rank within each
-// tier and prefer the summary tier wholesale rather than merging scores.
 export const relevantThreads = (
   db: Database,
   prompt: string,
@@ -78,11 +67,10 @@ export const relevantThreads = (
   const match = toMatchQuery(prompt);
   if (!match) return [];
 
-  // Insertion order is the final order, and a root is only ever added once, so the
+  // Insertion order is the final order and a root is only added once, so the
   // summary tier always outranks the raw tier for the same thread.
   const chosen = new Map<string, { snippet: string; fromSummary: boolean }>();
 
-  // Tier 1: curated summaries. Over-fetch by bm25, then re-rank with recency decay.
   try {
     const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10)
       .map((hit) => ({
@@ -95,10 +83,9 @@ export const relevantThreads = (
       if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
     }
   } catch {
-    // A malformed MATCH (rare, toMatchQuery quotes tokens) falls through to raw.
+    // A malformed MATCH falls through to the raw tier.
   }
 
-  // Tier 2: raw transcripts, for threads not already covered by a summary match.
   if (chosen.size < limit) {
     const fetchWindow = (windowSize: number): RankedMessageHit[] => {
       try {
@@ -108,12 +95,10 @@ export const relevantThreads = (
       }
     };
 
-    // Deduped on this tier's own rank, not bm25, so the hit kept per thread is the
-    // one the decay and the boost actually rank it on. The target is the full
-    // `limit` (not the open slots) because this tier's roots may overlap the
-    // summary tier's. Growth is off at the default limit: `relevant` sits on a
-    // latency path, and the case where 80 rows hold too few threads is the one a
-    // deeper fetch cannot fix.
+    // Deduped on this tier's own rank (not bm25) so the kept hit is the one the
+    // decay and boost actually rank on; target the full limit because these
+    // roots may overlap the summary tier's. Growth stays off at the default
+    // limit: this runs on a latency path.
     const kept = dedupedHitWindow({
       fetch: fetchWindow,
       targetRoots: limit,

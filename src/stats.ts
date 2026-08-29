@@ -12,9 +12,8 @@ export interface Stats {
   topProjects: { project_path: string; threads: number }[];
 }
 
-// Read from the small sessions table, not a full scan of messages (ts is unindexed
-// there): first_ts/last_ts are recomputed on every session touch, so the
-// aggregates are equivalent.
+// Read from sessions, not a full scan of messages (ts is unindexed there); the
+// session aggregates are recomputed on every touch, so they are equivalent.
 export const archiveSpan = (db: Database): { first: string | null; last: string | null } => {
   const span = db.query("SELECT MIN(first_ts) AS mn, MAX(last_ts) AS mx FROM sessions").get() as {
     mn: string | null;

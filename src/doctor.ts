@@ -8,29 +8,23 @@ import { claudeDir } from "./paths.ts";
 import { orphanedCursorPaths } from "./scan.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
-// The health report `cerebro doctor` renders. Read-only by construction: doctor
-// never repairs, it reports and names the command that fixes each thing. Design
-// notes: docs/architecture.md ("Doctor").
+// Read-only by construction: doctor never repairs, it names the command that
+// does. Design notes: docs/architecture.md ("Doctor").
 
-// Only "fail" sets exit 1; "unknown" is what a check degrades to when its input is
-// unreadable, each check independently.
 export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface Check {
-  // Stable machine key for --json consumers.
   key: string;
   group: string;
   label: string;
   status: CheckStatus;
   detail: string;
-  // What to run to fix it, when there is such a command.
   remedy?: string;
 }
 
-// Identity declared once, one method per outcome: rebuilding the whole Check
-// literal per branch would let a typo hand --json consumers two different keys for
-// the same check. `remedy` stays absent rather than undefined so the JSON payload
-// keeps its shape.
+// Identity declared once per check: rebuilding the literal per branch would let a
+// typo hand --json consumers two keys for the same check. `remedy` stays absent
+// rather than undefined so the JSON shape is stable.
 interface CheckOutcomes {
   ok: (detail: string, remedy?: string) => Check;
   warn: (detail: string, remedy?: string) => Check;
@@ -61,9 +55,8 @@ export interface DoctorReport {
   ok: boolean;
 }
 
-// quick_check by default: integrity_check walks every page and is not instant on a
-// multi-hundred-megabyte archive, while quick_check catches the corruption that
-// actually happens and skips only the cross-page index verification.
+// quick_check by default: integrity_check walks every page and is slow on a large
+// archive.
 const integrityCheck = (db: Database, full: boolean): Check => {
   const check = defineCheck({ key: "integrity", group: "Database", label: "integrity" });
   const pragma = full ? "integrity_check" : "quick_check";
@@ -78,8 +71,6 @@ const integrityCheck = (db: Database, full: boolean): Check => {
   }
 };
 
-// FTS5 re-derives the index from the content table and throws when they disagree,
-// which is how a partially-applied schema change or a dropped trigger shows up.
 const ftsCheck = (db: Database, table: string): Check => {
   const check = defineCheck({ key: `fts:${table}`, group: "Database", label: table });
   try {
@@ -103,16 +94,12 @@ const schemaCheck = (db: Database): Check => {
       );
 };
 
-// A non-zero count means no index run has happened since those files were deleted,
-// not that anything is broken. Counted through orphanedCursorPaths, the same
-// reader the prune deletes through, so this can never disagree with what
-// `cerebro index` would remove.
+// Counted through the same reader the prune deletes through, so this can never
+// disagree with what `cerebro index` would remove.
 const orphanedCursors = (db: Database): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
   const cursors = (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
   if (cursors === 0) return check.ok("0 rows");
-  // null = empty scan (transient failure): report unknown rather than declaring
-  // every cursor orphaned.
   const orphans = orphanedCursorPaths(db, discoverAllSessionFiles());
   if (orphans === null) {
     return check.unknown("no session files discovered; cannot tell orphans from a failed scan");
@@ -122,9 +109,6 @@ const orphanedCursors = (db: Database): Check => {
     : check.warn(`${orphans.length} of ${cursors} point at files that are gone`, "cerebro index");
 };
 
-// Hidden from the listings by the threads view (#83) but the rows stay: the row is
-// the sidecar metadata that keeps a session known after Claude Code deletes its
-// transcript.
 const emptySessions = (db: Database): Check => {
   const count = (
     db.query("SELECT COUNT(*) AS c FROM sessions WHERE msg_count = 0").get() as { c: number }
@@ -138,14 +122,12 @@ const digestCoverage = (db: Database): Check => {
   const check = defineCheck({ key: "digest", group: "Archive", label: "digest coverage" });
   const { threads, summarized, stale } = summaryCoverage(db);
   const detail = `${summarized}/${threads} threads summarized, ${stale} stale`;
-  // Not just a quality metric: relevant's summary tier short-circuits the raw
-  // scan, so a backlog is lookup latency.
   return stale === 0
     ? check.ok(detail)
     : check.warn(detail, "run the reconciler (hooks/digest-stale-batch.sh)");
 };
 
-// A large WAL is untidy rather than broken, so this warns and never fails.
+// A large WAL is untidy, not broken: warn, never fail.
 const WAL_WARN_BYTES = 64 * 1024 * 1024;
 const walSize = (dbPath: string): Check => {
   const check = defineCheck({ key: "wal", group: "Database", label: "wal" });
@@ -155,7 +137,7 @@ const walSize = (dbPath: string): Check => {
       ? check.warn(`${bytes} bytes`, "cerebro maintain")
       : check.ok(`${bytes} bytes`);
   } catch {
-    // No -wal file at all is the normal state after a truncating checkpoint.
+    // No -wal file is the normal state after a truncating checkpoint.
     return check.ok("0 bytes");
   }
 };
@@ -164,8 +146,6 @@ const walSize = (dbPath: string): Check => {
 export const deployedBinaryPath = (): string =>
   join(process.env.CLAUDE_CONFIG_DIR || claudeDir(), "cerebro", "cerebro");
 
-// Ask the deployed binary what it was built from and compare it against the binary
-// doing the asking.
 const deployedDrift = (running: BuildStamp): Check => {
   const check = defineCheck({ key: "deployed", group: "Build", label: "deployed" });
   const path = deployedBinaryPath();
@@ -178,15 +158,13 @@ const deployedDrift = (running: BuildStamp): Check => {
   } catch (error) {
     return check.unknown(`could not run it: ${(error as Error).message}`);
   }
-  // A binary built before the stamp existed answers something else entirely, which
-  // is itself proof that it is behind.
   const deployedCommit = /\(([0-9a-f]{7,40}),/.exec(deployedLine)?.[1];
   if (!deployedCommit) {
     return check.warn("deployed binary predates the build stamp", "bun run deploy");
   }
   if (!running.stamped) {
-    // Running from source: there is no commit to compare against, and saying
-    // "behind" would be a guess.
+    // Running from source there is no commit to compare; "behind" would be a
+    // guess.
     return check.unknown(`${deployedCommit} (running from source, nothing to compare)`);
   }
   return deployedCommit === running.commit
@@ -194,8 +172,6 @@ const deployedDrift = (running: BuildStamp): Check => {
     : check.warn(`${deployedCommit}, this build is ${running.commit}`, "bun run deploy");
 };
 
-// Reported, never edited: doctor does not touch settings.json. One check because
-// cerebro ships one hook (see docs/hooks.md).
 const hookWiring = (): Check => {
   const check = defineCheck({ key: "hook:SessionEnd", group: "Hooks", label: "SessionEnd" });
   const path = join(claudeDir(), "settings.json");
@@ -212,8 +188,8 @@ const hookWiring = (): Check => {
     return check.unknown(`${path} is not valid JSON`);
   }
   const hooks = (settings as { hooks?: Record<string, unknown> }).hooks ?? {};
-  // A substring test on the serialized entry rather than a walk of the hook
-  // schema: the shape is Claude Code's, not cerebro's, and it can change.
+  // A substring test rather than a walk of the hook schema: the shape is Claude
+  // Code's, not cerebro's, and it can change.
   const entry = JSON.stringify(hooks.SessionEnd ?? null);
   return entry.includes("cerebro")
     ? check.ok("index + summarize on /clear")
@@ -238,7 +214,6 @@ export const runDoctor = (
     digestCoverage(db),
     hookWiring(),
   ];
-  // Only a hard failure (corruption, a schema this build cannot speak) is worth a
-  // non-zero exit; warnings are things to get around to.
+  // Only a hard failure exits non-zero; warnings are things to get around to.
   return { build, checks, ok: !checks.some((c) => c.status === "fail") };
 };

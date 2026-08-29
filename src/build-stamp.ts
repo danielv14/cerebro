@@ -1,10 +1,7 @@
-// Build identity, baked into the compiled binary so `doctor` can detect deployed-
-// binary drift (see docs/architecture.md, "Build stamp").
-//
 // The three identifiers are substituted by `bun build --define` and deliberately
 // do NOT exist when running from source: `typeof` on an undeclared identifier is
-// legal and yields "undefined", so a plain `bun run src/cli.ts` reports itself as
-// unbuilt rather than claiming a commit it does not have.
+// legal, so a source run reports itself as unbuilt rather than claiming a commit
+// it does not have.
 declare const __CEREBRO_VERSION__: string;
 declare const __CEREBRO_COMMIT__: string;
 declare const __CEREBRO_BUILT_AT__: string;
@@ -14,12 +11,9 @@ const defined = (value: unknown, fallback: string): string =>
 
 export interface BuildStamp {
   version: string;
-  // Short git sha, or "unknown" for a source run.
   commit: string;
-  // ISO-8601 build time, or "unknown" for a source run.
   builtAt: string;
   bun: string;
-  // Whether this is a compiled binary with a real stamp, as opposed to a source run.
   stamped: boolean;
 }
 
@@ -43,6 +37,5 @@ export const buildStamp = (): BuildStamp => {
   };
 };
 
-// The one-line identity `cerebro version` prints and `doctor` compares.
 export const buildStampLine = (stamp: BuildStamp): string =>
   `cerebro ${stamp.version} (${stamp.commit}, built ${stamp.builtAt}, bun ${stamp.bun})`;

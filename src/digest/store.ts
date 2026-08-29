@@ -3,13 +3,10 @@ import { toMatchQuery } from "../fts.ts";
 import { hydrateThreadMeta, rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
-// Summary storage and the summary FTS search. Design notes: docs/architecture.md
-// ("Digest").
+// Design notes: docs/architecture.md ("Digest").
 
-// The storage guard: a past incident stored a "Prompt is too long" error as a
-// summary through a pipeline that skipped the exit-code gate. Patterns match the
-// *start* of the text, where CLI/API failures announce themselves; a real summary
-// opening with one of these phrases is not a plausible output of the digest prompt.
+// Anchored at the start of the text, where CLI/API failures announce themselves;
+// a real summary opening with one of these is not a plausible prompt output.
 const SUMMARY_REJECT_PATTERNS: RegExp[] = [
   /^prompt is too long/i,
   /^api error/i,
@@ -19,11 +16,10 @@ const SUMMARY_REJECT_PATTERNS: RegExp[] = [
   /^invalid api key/i,
 ];
 
-// The legitimate minimum is the two-line empty-session form the prompt mandates,
-// ~50 chars; anything far below that is a fragment or an error.
+// The legitimate minimum is the ~50-char two-line empty-session form the prompt
+// mandates; far below that is a fragment or an error.
 export const SUMMARY_MIN_CHARS = 20;
 
-// Pure, so the CLI boundary and tests share one rule set.
 export const rejectSummaryReason = (text: string): string | null => {
   if (text.length < SUMMARY_MIN_CHARS) {
     return `too short to be a summary (${text.length} chars, minimum ${SUMMARY_MIN_CHARS})`;
@@ -34,10 +30,9 @@ export const rejectSummaryReason = (text: string): string | null => {
   return null;
 };
 
-// `coversLastTs` is the thread's last_ts *as it was when the transcript was
-// rendered*: a model call takes minutes, and messages indexed in the meantime must
-// stay stale rather than be stamped as covered by a summary that never saw them.
-// Omit it and the current last_ts is used, which is right for `digest write`.
+// `coversLastTs` is the thread's last_ts when the transcript was rendered:
+// messages indexed during the model call must stay stale rather than be stamped
+// as covered. Omitted, the current last_ts is used (right for `digest write`).
 export const writeSummary = (
   db: Database,
   sessionId: string,
@@ -79,18 +74,14 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
 export interface SummaryRootHit {
   root: string;
   snippet: string;
-  // score/last_ts/repo let `relevant` recency-weight the tier and boost same-repo
-  // threads; `digest search` ignores all four.
   score: number;
   last_ts: string | null;
   git_root: string | null;
   project_path: string | null;
 }
 
-// The single owner of the summaries_fts query shape, shared by `relevant`'s
-// summary tier and `digest search`. The thread rollup is joined LEFT so a summary
-// whose sessions rows are gone still returns its snippet. Throws on a malformed
-// MATCH so each caller keeps its own fallback.
+// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
+// throws on a malformed MATCH so each caller keeps its own fallback.
 export const searchSummaryRoots = (
   db: Database,
   match: string,

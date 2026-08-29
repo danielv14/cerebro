@@ -1,6 +1,4 @@
-// The digest package's public surface: code outside src/digest imports from here,
-// never from the package's internals, so the internal split can change without
-// touching a caller.
+// Public surface: code outside src/digest imports from here, never the internals.
 export { DIGEST_PROMPT_SIGNATURE } from "../digest-signature.ts";
 export {
   buildDigestInput,

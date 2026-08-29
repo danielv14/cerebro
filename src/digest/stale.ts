@@ -13,7 +13,6 @@ export interface StaleThread {
   summarized_at: string | null;
 }
 
-// The staleness predicate, defined once so the listing and the count cannot drift.
 // t.msgs > 0 is redundant since the view took over excluding empty threads (#83);
 // kept as a local statement of intent, harmless either way.
 const STALE_FROM_WHERE = `
@@ -25,8 +24,6 @@ const STALE_FROM_WHERE = `
       OR su.source_last_ts < t.last_ts
       OR su.prompt_version < ?)`;
 
-// Never summarized, summarized before the thread's latest activity, or summarized
-// by an older prompt version.
 export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
   db
     .query(
@@ -44,14 +41,12 @@ export const countStaleThreads = (db: Database): number =>
 
 export interface SummaryCoverage {
   threads: number;
-  // Summaries that still key on a current thread root: a relink can move a root,
-  // and a summary keyed on a stale id is not coverage (`relevant` never reaches it
-  // through the threads view).
+  // Joined to threads: a relink can move a root, and a summary keyed on a stale
+  // id is not coverage (`relevant` never reaches it through the view).
   summarized: number;
   stale: number;
 }
 
-// stats and doctor both call this instead of counting `summaries` themselves.
 export const summaryCoverage = (db: Database): SummaryCoverage => ({
   threads: countThreads(db),
   summarized: (

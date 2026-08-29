@@ -5,7 +5,6 @@ import { humanBytes } from "../render.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-// Fixed-width so failures are scannable in a wall of ok.
 const MARKER: Record<Check["status"], string> = {
   ok: "ok  ",
   warn: "warn",
@@ -13,8 +12,6 @@ const MARKER: Record<Check["status"], string> = {
   unknown: "?   ",
 };
 
-// Grouped in the order runDoctor emits them, so the listing and the --json array
-// stay in the same sequence.
 export const doctorReport = (
   report: DoctorReport,
   dbPath: string,
@@ -48,8 +45,6 @@ export const doctorReport = (
 
 const options = { full: flag(), json: flag() } satisfies OptionTable;
 
-// The report itself is the error message, so nothing is printed twice on the way
-// out.
 export const doctorCommand = defineCommand({
   options,
   run: ({ db, args, dbPath }) => {

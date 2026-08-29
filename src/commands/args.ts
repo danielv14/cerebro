@@ -1,27 +1,22 @@
-// CLI options as data: what a flag parses to, how it is validated, and what a
-// command receives when it is absent. See CLAUDE.md ("How a command is shaped").
+// CLI options as data. See CLAUDE.md ("How a command is shaped").
 
-// Thrown for anything the user can get wrong. runCli turns it into a clean message
-// plus exit 1, never a stack trace.
+// runCli turns this into a clean message plus exit 1, never a stack trace.
 export class CliError extends Error {}
 
 export interface OptionSpec<T> {
   kind: "string" | "boolean";
   // Throws CliError on bad input. Never called for a boolean or an absent option.
   coerce: (raw: string, name: string) => T;
-  // What the command receives when the flag is absent.
   absent: T;
 }
 
-// Declare with `satisfies OptionTable` so the literal keeps its precise per-flag
-// types and OptionValues can infer them.
+// Declare with `satisfies OptionTable` so the literal keeps its per-flag types.
 export type OptionTable = { readonly [name: string]: OptionSpec<unknown> };
 
 export type OptionValues<T extends OptionTable> = {
   [K in keyof T]: T[K] extends OptionSpec<infer V> ? V : never;
 };
 
-// Absent means false, never undefined, so a handler can branch on it directly.
 export const flag = (): OptionSpec<boolean> => ({
   kind: "boolean",
   coerce: () => true,
@@ -34,9 +29,8 @@ export const text = (): OptionSpec<string | undefined> => ({
   absent: undefined,
 });
 
-// Fractions are meaningful for some options (--days multiplies into a millisecond
-// cutoff), so integrality is opt-in. `label` is the noun phrase in the error, so
-// each option keeps the exact wording its tests pin.
+// Integrality is opt-in: fractions are meaningful for --days. `label` is the
+// exact noun phrase in the error, pinned by tests.
 export const numeric = (opts: {
   integer?: boolean;
   min: number;
@@ -56,15 +50,12 @@ export const numeric = (opts: {
   absent: undefined,
 });
 
-// One builder owns the row-count rule and its error wording, so the commands that
-// take one cannot drift on either.
 export const positiveInt = (): OptionSpec<number | undefined> =>
   numeric({ integer: true, min: 1, label: "a positive integer" });
 
-// Anchored shape check plus a round-trip calendar check: an unanchored regex would
-// let "2026-31-01" or trailing garbage through, and Date.parse alone is
-// engine-dependent (JSC rolls "2026-02-30" over to March 2). A bad date would make
-// the lexical ts comparison silently exclude everything instead of erroring.
+// Anchored shape check plus a round-trip calendar check: an unanchored regex lets
+// "2026-31-01" through, and Date.parse alone is engine-dependent (JSC rolls
+// "2026-02-30" over to March 2). A bad date would silently exclude everything.
 export const isoDate = (): OptionSpec<string | undefined> => ({
   kind: "string",
   coerce: (raw, name) => {
@@ -97,8 +88,7 @@ export interface MessageRange {
   to: number;
 }
 
-// `--range N` or `--range A..B`. Only the shape is checked here; whether the range
-// fits the thread is the command's business, because only it knows the length.
+// Shape only; whether the range fits the thread is the command's business.
 export const messageRange = (): OptionSpec<MessageRange | undefined> => ({
   kind: "string",
   coerce: (raw, name) => {
@@ -113,8 +103,6 @@ export const messageRange = (): OptionSpec<MessageRange | undefined> => ({
   absent: undefined,
 });
 
-// Absent flags take their declared absent value; supplied ones are coerced (and so
-// validated) here, once, instead of in every handler.
 export const readOptions = <T extends OptionTable>(
   table: T,
   parsed: Record<string, string | boolean | undefined>,

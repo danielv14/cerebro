@@ -4,9 +4,6 @@ import { classifyLines } from "../jsonl.ts";
 import { claudeDir } from "../paths.ts";
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
 
-// The Claude Code source: discovery and attribution for ~/.claude/projects; the
-// JSONL grammar lives in src/jsonl.ts.
-
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
 export const projectsDir = (): string => join(claudeDir(), "projects");

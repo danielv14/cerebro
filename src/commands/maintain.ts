@@ -3,8 +3,6 @@ import { defineCommand } from "./command.ts";
 
 const options = {} satisfies OptionTable;
 
-// The FTS indexes are fed by thousands of tiny incremental transactions and
-// fragment over time; 'optimize' merges their b-trees.
 export const maintainCommand = defineCommand({
   options,
   run: ({ db }) => {

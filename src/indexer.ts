@@ -15,17 +15,14 @@ interface FileMeta {
   provider: string;
   cwd: string | null;
   gitBranch: string | null;
-  // Last non-null model seen in the batch; null keeps the previously stored one.
   model: string | null;
   title: string | null;
   titlePriority: number;
 }
 
-// `rebuild` switches the dedup from ignore to refresh: still keyed on the message
-// UUID (invariant #4), but the payload is re-written from the fresh parse.
-// session_id is deliberately NOT refreshed: attribution belongs to the first owner
-// (invariant #6), and a resume file re-read in rebuild mode must not steal the
-// shared prefix.
+// The rebuild upsert deliberately does NOT refresh session_id: attribution
+// belongs to the first owner (invariant #6), and a resume file re-read in
+// rebuild mode must not steal the shared prefix.
 const ingestLines = (
   db: Database,
   file: SessionFile,
@@ -61,8 +58,6 @@ const ingestLines = (
 
   for (const classified of classify(lines)) {
     if (classified.kind === "message") {
-      // meta.sessionId is the file's owning session (invariant #6): a subagent
-      // file's messages fold into the parent thread.
       insert.run(
         classified.uuid,
         meta.sessionId,
@@ -74,9 +69,6 @@ const ingestLines = (
       );
       if (!meta.cwd && classified.cwd) meta.cwd = classified.cwd;
       if (!meta.gitBranch && classified.gitBranch) meta.gitBranch = classified.gitBranch;
-      // Last non-null wins: combined with upsertSession's incoming-wins COALESCE,
-      // every indexing path converges on the file's last recorded model regardless
-      // of how the bytes were batched.
       if (classified.model) meta.model = classified.model;
     } else if (classified.kind === "title") {
       if (classified.priority > meta.titlePriority) {
@@ -103,14 +95,13 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
     )
     .get(sessionId) as SessionAggregate;
 
-// The two session-row writers differ only in which operand wins the per-column
-// COALESCE on conflict, plus the title CASE. Kept as two functions on purpose
-// (invariant #7): merging them behind a flag hides the one thing that differs.
+// upsertSession and touchParentSession stay two functions (invariant #7): they
+// differ only in which operand wins each COALESCE, and merging them behind a
+// flag hides exactly that.
 
-// Top-level file: the authority for its session, so the incoming value wins.
-// The title is the exception: an incremental run only sees the *new* lines, so the
-// stored title_priority decides. >= (not >) so a fresh same-priority title, like a
-// renewed ai-title, still replaces the old.
+// Top-level file: incoming values win. Title is the exception: the stored
+// title_priority decides, with >= so a renewed same-priority title still
+// replaces the old.
 const upsertSession = (db: Database, meta: FileMeta): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -169,11 +160,8 @@ const upsertSession = (db: Database, meta: FileMeta): void => {
   );
 };
 
-// Subagent file: ensure the parent row exists and refresh its aggregate, but the
-// existing row wins, so a subagent only fills a not-yet-seen parent and never
-// clobbers the top-level's values (a subagent may run a different model than its
-// parent). The fields a subagent cannot know (git_root, git_remote, source_file,
-// title) are passed NULL, so a pure-subagent stub reads as body-unavailable.
+// Subagent file: existing values win, and the fields a subagent cannot know are
+// passed NULL, so a pure-subagent stub reads as body-unavailable.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
@@ -220,12 +208,9 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   );
 };
 
-// Reconcile the archive against what is on disk: flag sessions whose source file
-// is gone as body-unavailable and drop index_state cursors for vanished files.
 const reconcilePresence = (db: Database, files: SessionFile[]): void => {
-  // null = an empty scan, which orphanedCursorPaths treats as a transient readdir
-  // failure. Bail rather than flag the whole archive body-unavailable and wipe
-  // every cursor.
+  // null = an empty scan (transient readdir failure): bail rather than flag the
+  // whole archive body-unavailable and wipe every cursor.
   const orphans = orphanedCursorPaths(db, files);
   if (orphans === null) return;
 
@@ -236,15 +221,11 @@ const reconcilePresence = (db: Database, files: SessionFile[]): void => {
     for (const file of files) insert.run(file.path);
   });
   fill();
-  // A NULL source_file (a parent stub created only from subagent files) is
-  // correctly treated as unavailable.
   db.run(
     `UPDATE sessions
        SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
   );
   db.run("DROP TABLE _present");
-  // A pruned file that later reappears is re-read from byte 0 and UUID dedup makes
-  // that a no-op, so this cannot resurrect or duplicate anything.
   const drop = db.query("DELETE FROM index_state WHERE source_file = ?");
   const prune = db.transaction(() => {
     for (const path of orphans) drop.run(path);
@@ -256,14 +237,12 @@ export interface IndexResult {
   newMessages: number;
   filesScanned: number;
   filesIndexed: number;
-  // Whether relinkThreads ran; exists so the no-op gate is directly observable.
   relinked: boolean;
 }
 
-// True when these lines are cerebro's own headless summarization run rather than a
-// real session (its first turn is the digest prompt as a user message). Caller
-// gates on plan.start === 0 so it only inspects a file read whole from the start,
-// never a mid-file incremental read whose first line is an arbitrary turn.
+// cerebro's own headless summarization run: its first turn is the digest prompt
+// as a user message. Callers gate on plan.start === 0, so this never inspects a
+// mid-file incremental read whose first line is an arbitrary turn.
 const isDigestRunTranscript = (
   lines: string[],
   classify: SourceAdapter["classifyLines"],
@@ -279,11 +258,7 @@ export interface IndexOptions {
   full?: boolean;
   // Implies full.
   rebuild?: boolean;
-  // Defaults to every registered adapter; injectable so a test can index through a
-  // fake source without touching the registry.
   adapters?: SourceAdapter[];
-  // Where the per-file skip message goes when a file cannot be read or ingested
-  // (the run continues without it).
   onSkip?: (line: string) => void;
 }
 
@@ -312,13 +287,10 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
     readAll,
     ({ file, plan, lines, cursor }) => {
       const classify = adapterFor(file.provider, adapters).classifyLines;
-      // A mid-write file (cursor unchanged) inserts nothing, but unlike the dry run
-      // we do not skip it: saveState records the new mtime, so a touched-but-
-      // unchanged file settles to "unchanged" on the next run.
+      // A mid-write file is still saved (unlike the dry run's skip): recording
+      // the new mtime lets a touched-but-unchanged file settle to "unchanged".
       const tx = db.transaction(() => {
         if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
-          // Flagged so it is never read again (even if it grows), and none of it
-          // is indexed.
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return;
         }
@@ -331,18 +303,14 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
       filesIndexed++;
     },
     {
-      // One bad file must not abort the whole run and skip relinkThreads /
-      // reconcilePresence.
       onError: (file, error) => opts.onSkip?.(`cerebro: skipped ${file.path}: ${error.message}`),
     },
   );
 
-  // Unconditional: a source file can vanish without anything being indexed, and
-  // that is exactly what flips body_available and orphans a cursor.
+  // Unconditional: a source file can vanish without anything being indexed.
   reconcilePresence(db, files);
-  // A run that read no file inserted no message, so root_session_id cannot have
-  // changed; skipping the relink keeps a no-op index O(files discovered). Gated on
-  // filesIndexed, not the message delta: a file can contribute only title events.
+  // Gated on filesIndexed, not the message delta: a file can contribute only
+  // title events, and a no-op run must stay O(files discovered).
   const relinked = filesIndexed > 0;
   if (relinked) relinkThreads(db);
 
@@ -370,8 +338,7 @@ export interface DryRunResult {
   candidateMessages: number;
 }
 
-// Applies the exact same skip/cursor logic as runIndex, writing nothing.
-// `candidateMessages` is counted before UUID dedup: incremental bytes are genuinely
+// candidateMessages is counted before UUID dedup: incremental bytes are genuinely
 // new so it equals net-new, but a --full dry run reports the whole archive.
 export const dryRunIndex = (
   db: Database,
@@ -400,13 +367,10 @@ export const dryRunIndex = (
       if (cursor === plan.start) return; // mid-write, nothing indexable yet
       const classify = adapterFor(file.provider, adapters).classifyLines;
 
-      // Indexed as nothing by a real run, so not counted here either (invariant #2:
-      // dry-run numbers match a real run).
       if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify))
         return;
 
-      // In full mode every file re-reads from 0; the run does not categorize files
-      // as new/grown/truncated, so skip those counters.
+      // Full mode re-reads everything from 0 and does not categorize files.
       if (!full) {
         if (plan.status === "new") result.newFiles++;
         else if (plan.status === "truncated") result.truncatedFiles++;

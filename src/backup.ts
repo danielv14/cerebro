@@ -2,16 +2,12 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { dirname, join } from "node:path";
 
-// VACUUM INTO: a consistent snapshot even against a concurrently-writing WAL
-// database, as a compacted single file.
-
 export interface BackupResult {
   path: string;
   bytes: number;
   pruned: string[];
 }
 
-// Lexicographically sortable timestamp for the default filename: 20260702-101530.
 const stamp = (now: Date): string =>
   now
     .toISOString()

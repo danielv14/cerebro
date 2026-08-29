@@ -28,15 +28,12 @@ import { openDb } from "./db.ts";
 import { HELP } from "./help.ts";
 import { defaultDbPath } from "./paths.ts";
 
-// The dispatcher: parsing, option checking, db lifetime, rendering. Design notes:
-// docs/architecture.md ("CLI").
+// Design notes: docs/architecture.md ("CLI").
 
-// Routing every line through this is what makes runCli testable: a test passes a
-// capturing sink instead of spawning the binary.
 export interface CliIO {
-  log: (line: string) => void; // a normal output line (stdout + newline)
-  error: (line: string) => void; // an error line (stderr + newline)
-  write: (text: string) => void; // raw stdout, no trailing newline (digest input)
+  log: (line: string) => void;
+  error: (line: string) => void;
+  write: (text: string) => void; // raw stdout, no trailing newline
   setExitCode: (code: number) => void;
 }
 
@@ -49,15 +46,13 @@ const realIO: CliIO = {
   },
 };
 
-// The two options every command accepts; everything else belongs to exactly one
-// command.
 const GLOBAL_OPTIONS = {
   db: text(),
   help: flag(),
 } satisfies OptionTable;
 
-// db-less on purpose: doctor's drift check spawns the *deployed* binary's
-// `version`, and that answer must not depend on whether its archive is readable.
+// db-less on purpose: doctor's drift check spawns the deployed binary's
+// `version`, and that answer must not depend on the archive being readable.
 const versionCommand = defineDbLessCommand({
   options: { json: flag() } satisfies OptionTable,
   run: ({ dbPath }) => {
@@ -66,9 +61,8 @@ const versionCommand = defineDbLessCommand({
   },
 });
 
-// A Map, not a plain object, so a command name that collides with an
-// Object.prototype key (e.g. "toString") can never resolve to an inherited
-// function.
+// A Map, not a plain object, so a command name colliding with an
+// Object.prototype key can never resolve to an inherited function.
 export const commands = new Map<string, CommandNode>([
   ["index", indexCommand],
   ["search", searchCommand],
@@ -85,17 +79,12 @@ export const commands = new Map<string, CommandNode>([
   ["version", versionCommand],
 ]);
 
-// parseArgs needs the whole vocabulary before the command is known, so a name can
-// only be parsed one way. Two commands declaring the same name with different
-// kinds would silently break the loser for every user (a --limit redeclared as
-// boolean coerces "true" and errors; a --db redeclared as flag reads back absent),
-// so the collision throws here, where the table is built. Taking the entries as a
-// parameter lets a test hand this a clashing pair.
+// One table for the whole vocabulary, so a name declared with two different
+// kinds is caught here at startup instead of silently breaking the loser.
 export const buildParserOptions = (
   entries: Iterable<[string, CommandNode]>,
 ): Record<string, { type: "string" | "boolean"; short?: string }> => {
-  // `help` is seeded rather than declared, because only this table can carry the
-  // `-h` short alias.
+  // `help` is seeded rather than declared: only this table can carry the -h alias.
   const table: Record<string, { type: "string" | "boolean"; short?: string }> = {
     help: { type: "boolean", short: "h" },
   };
@@ -125,12 +114,9 @@ export const buildParserOptions = (
 
 const PARSER_OPTIONS = buildParserOptions(commands);
 
-// Wrapped so the parsed shape is inferred; parseArgs' own type is generic over the
-// option table and unpleasant to write by hand.
 const parseCliArgs = (args: string[]) =>
   parseArgs({ args, allowPositionals: true, tokens: true, options: PARSER_OPTIONS });
 
-// Injectable so a test can pin the clock and the working directory.
 export interface CliEnv {
   now?: number;
   cwd?: string;
@@ -147,9 +133,8 @@ export const runCli = (
     io.setExitCode(1);
   };
 
-  // parseArgs throws on an option no command knows at all; turn that into a clean
-  // message + exit 1. `tokens` records which options were actually supplied, which
-  // the values object cannot express.
+  // `tokens` records which options were actually supplied, which the values
+  // object cannot express.
   let parsed: ReturnType<typeof parseCliArgs>;
   try {
     parsed = parseCliArgs(args);
@@ -173,8 +158,6 @@ export const runCli = (
     return;
   }
 
-  // A group (digest) resolves one more positional to the action that owns the
-  // options and the run step.
   let command: Command;
   let rest: string[];
   let label: string;
@@ -194,8 +177,6 @@ export const runCli = (
     label = name;
   }
 
-  // A flag this command did not declare is an error, not something to swallow
-  // (`cerebro sessions --keep 3` used to parse fine and ignore --keep).
   const accepted = new Set([
     ...Object.keys(GLOBAL_OPTIONS),
     "help",
@@ -242,8 +223,6 @@ export const runCli = (
     return;
   }
 
-  // Opening can fail (permissions, corrupt file, a lost migration race): report it
-  // like any other error instead of an unhandled stack trace.
   let db: Database;
   try {
     db = makeDb(dbPath);
@@ -255,8 +234,6 @@ export const runCli = (
   try {
     emit(command.run({ ...context, db }));
   } catch (error) {
-    // A CliError, an ambiguous session prefix, or an unexpected SQL error: show
-    // the message, not a stack trace.
     fail((error as Error).message);
   } finally {
     db.close();
@@ -267,6 +244,5 @@ const main = (): void => {
   runCli(Bun.argv.slice(2), realIO);
 };
 
-// Importing this module (e.g. from a test that drives runCli directly) must not
-// execute a command.
+// Importing this module (a test driving runCli) must not execute a command.
 if (import.meta.main) main();

@@ -1,29 +1,21 @@
 import type { Database } from "bun:sqlite";
 import { escapeLike } from "./fts.ts";
 
-// Thread identity, membership, the `threads` rollup view and its readers.
 // Design notes: docs/architecture.md ("Threads").
 
-// A fixed literal the codebase owns (never user input), safe to interpolate; the
-// root id stays a bound `?` parameter at the call site.
+// Fixed literal the codebase owns; the root id stays a bound `?` at the call site.
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
 
-// Root-preferring rollup: the root session's value, falling back to MAX over the
-// resumes only when the root's is NULL. Callers that scope by project must filter
-// the view's output AFTER the rollup; filtering raw sessions before the GROUP BY
-// drops resume/subagent rows whose project_path is NULL or differs.
+// Callers that scope by project must filter the view's OUTPUT: filtering raw
+// sessions before the GROUP BY drops resume/subagent rows with NULL project_path.
 const rootPreferring = (column: string): string =>
   `COALESCE(
       MAX(CASE WHEN r.session_id = r.root_session_id THEN r.${column} END),
       MAX(r.${column})
     )`;
 
-// Single source of both the CREATE VIEW and the shape check openDb compares
-// against, so the two cannot drift.
-//
-// body_available is MIN so a thread is only body-available if every folded session
-// still has its source on disk.
+// Single source of both the CREATE VIEW and the shape check openDb runs.
 const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["id", "r.root_session_id"],
   ["last_ts", "MAX(r.last_ts)"],
@@ -39,10 +31,8 @@ const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["body_available", "MIN(r.body_available)"],
 ];
 
-// HAVING SUM(msg_count) > 0 hides zero-message sessions (sidecar rows) from every
-// reader at once (#83); the rows themselves are kept, so `show` still resolves.
-// Changing this definition needs a SCHEMA_VERSION bump in db.ts: on an existing
-// database CREATE VIEW IF NOT EXISTS silently keeps the old view.
+// Changing this view needs a SCHEMA_VERSION bump in db.ts: CREATE VIEW IF NOT
+// EXISTS silently keeps an old view.
 export const THREADS_VIEW_DDL = `
 DROP VIEW IF EXISTS threads;
 CREATE VIEW IF NOT EXISTS threads AS
@@ -55,16 +45,13 @@ CREATE VIEW IF NOT EXISTS threads AS
 
 const THREADS_VIEW_COLUMNS = THREADS_VIEW_COLUMN_EXPRS.map(([name]) => name).join(",");
 
-// Compared on every open: a binary built for a different SCHEMA_VERSION can leave a
-// current-looking version stamp over the other build's view, and version-gating
-// alone would trust that forever (see openDb).
 export const threadsViewIsCurrent = (db: Database): boolean => {
   const columns = db.query("PRAGMA table_info(threads)").all() as { name: string }[];
   return columns.map((column) => column.name).join(",") === THREADS_VIEW_COLUMNS;
 };
 
-// One projection for both thread listings. git_root is in the view but deliberately
-// not projected: recent filters on it, no listing shows it.
+// git_root is in the view but deliberately not projected: recent filters on it,
+// no listing shows it.
 const THREAD_ROW_COLUMNS =
   "id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, provider, model, " +
   "title, body_available";
@@ -76,7 +63,6 @@ export interface ThreadRow {
   msgs: number;
   sessions_in_thread: number;
   project_path: string | null;
-  // Root-preferring, display-grade: a thread that spans branches shows its root's.
   git_branch: string | null;
   provider: string | null;
   model: string | null;
@@ -84,9 +70,8 @@ export interface ThreadRow {
   body_available: number;
 }
 
-// Any-session, not root-preferring: branch work often starts in a resume of a
-// thread whose root sat on master. `rootExpr` is a fixed literal the codebase owns;
-// the branch fragment stays a bound `?`, LIKE-escaped by the caller.
+// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
+// LIKE-escaped by the caller.
 export const threadOnBranch = (rootExpr: string): string =>
   `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
   `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
@@ -123,8 +108,6 @@ export const listThreads = (
     .all(...params) as ThreadRow[];
 };
 
-// Matches on the thread's git_root when the cwd is in a git repo, else on the exact
-// project_path.
 export const recentThreads = (
   db: Database,
   opts: { repoRoot?: string | null; cwd?: string; since: string; limit?: number },
@@ -161,9 +144,8 @@ export interface ThreadMeta {
   model: string | null;
 }
 
-// Display metadata for a set of thread roots, from the rollup rather than the
-// root's own sessions row (#118). A root with no rollup row is simply absent from
-// the map: callers fall back to null metadata rather than dropping the hit.
+// A root with no rollup row is simply absent from the map: callers fall back to
+// null metadata rather than dropping the hit.
 export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, ThreadMeta> => {
   if (roots.length === 0) return new Map();
   const placeholders = roots.map(() => "?").join(", ");
@@ -176,8 +158,6 @@ export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, Th
   return new Map(rows.map(({ id, ...meta }) => [id, meta]));
 };
 
-// Falls back to the given id when the session row is absent or root_session_id is
-// NULL (a not-yet-relinked session).
 export const rootOf = (db: Database, sessionId: string): string => {
   const row = db
     .query("SELECT root_session_id FROM sessions WHERE session_id = ?")
@@ -205,8 +185,6 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
     .all(root) as ThreadMessage[];
 };
 
-// Earliest non-sidechain user turn, preferring prose over a bracket-tagged or
-// `<command-` tool echo.
 export const threadOpeningPrompt = (db: Database, root: string): string | null => {
   const row = db
     .query(
@@ -220,9 +198,7 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
   return row?.text ?? null;
 };
 
-// ROW_NUMBER over the exact ORDER BY (ts, id) that threadMessages sorts with, so
-// search's #N ordinals and show's numbering share one definition. The 0 fallback is
-// defensive only: search's FTS join guarantees the id is in the thread.
+// Same ORDER BY as threadMessages, so search's #N and show's numbering agree.
 export const messageOrdinal = (db: Database, root: string, id: number): number => {
   const row = db
     .query(
@@ -242,22 +218,15 @@ export const threadLastTs = (db: Database, root: string): string | null => {
   return row.mx;
 };
 
-// Counts rows of the `threads` view, so the count derives from the same thread
-// definition the listings use.
 export const countThreads = (db: Database): number => {
   const row = db.query("SELECT COUNT(*) AS c FROM threads").get() as { c: number };
   return row.c;
 };
 
-// The sole writer of root_session_id. Linear in archive size, which is why
-// runIndex only calls it when a file was read; the repair path for a crashed run
-// is `cerebro index --full`, which always relinks.
 export const relinkThreads = (db: Database): void => {
-  // Pass 1: each session's earliest main-chain message with its parentUuid, joined
-  // to the session owning that uuid. Sidechain rows are excluded: the resume link
-  // lives on the first main-chain turn. Ordered by id, not ts: insertion order
-  // equals conversational order on every path, and a tolerated NULL ts would
-  // shadow ts-based ordering. The <> guard drops in-session parents.
+  // Ordered by id, not ts: insertion order equals conversational order, and a
+  // tolerated NULL ts would shadow ts ordering. Sidechain rows are excluded
+  // because the resume link lives on the first main-chain turn.
   const links = db
     .query(
       `SELECT f.session_id AS session, m.session_id AS parent
@@ -274,7 +243,6 @@ export const relinkThreads = (db: Database): void => {
 
   const parentSession = new Map<string, string>(links.map((l) => [l.session, l.parent]));
 
-  // Pass 2: walk to the root, guarding against cycles.
   const rootOfSession = (session: string): string => {
     const seen = new Set<string>();
     let cur = session;

@@ -9,10 +9,8 @@ const recentThreadLine = (thread: ThreadRow, opts: { showMsgs: boolean }): strin
   return `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${msgs}${oneLine(thread.title ?? "(untitled)", 90)}`;
 };
 
-// The --context block's exact bytes are injected into the model by the consuming
-// SessionStart hook, so the intro/footer are exported for their own pinned tests.
-// The "Background only; ignore …" guardrail and the recall instructions are
-// load-bearing.
+// These exact bytes are injected into a model by the SessionStart hook, so the
+// intro/footer are exported for pinned tests; the guardrail is load-bearing.
 
 export const recentContextIntro = (repoLabel: string): string =>
   `Recent Claude Code sessions in this repo (${repoLabel}), from the cerebro archive. ` +
@@ -23,7 +21,6 @@ export const recentContextFooter = (): string =>
   "  cerebro show <id>          thread outline (add --full for the transcript)\n" +
   '  cerebro search "<terms>"   full-text search across all past sessions';
 
-// Openings are passed in so this stays db-free.
 export const recentBlock = (
   rows: { thread: ThreadRow; opening: string | null }[],
   opts: { repoPath: string; days: number; context: boolean },
@@ -47,7 +44,6 @@ export const recentBlock = (
   return lines;
 };
 
-// Fractional days are allowed: --days multiplies into a millisecond cutoff.
 const options = {
   cwd: text(),
   days: numeric({ min: 0, minExclusive: true, label: "a positive number" }),
@@ -76,7 +72,6 @@ export const recentCommand = defineCommand({
           ? recentBlock(rows, { repoPath: repoRoot ?? cwd, days, context: args.context })
           : [],
       empty: "No recent sessions for this repo.",
-      // Silent in --context mode so the SessionStart hook injects nothing.
       silentWhenEmpty: args.context,
     };
   },
