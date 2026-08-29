@@ -15,8 +15,8 @@ that fails is left for the next run and never aborts the current one.
 
 Working through the backlog buys speed as much as tidiness: every thread that
 gains a summary is one more prompt that `relevant` can answer from the cheap
-summary tier instead of scanning raw transcripts (see "Curated summaries" in the
-[README](../README.md)). Cap the per-run count so a large backlog is worked off
+summary tier instead of scanning raw transcripts (measured in
+[digest.md](digest.md)). Cap the per-run count so a large backlog is worked off
 over several runs instead of one token burst; raise the cap (or run it by hand)
 to catch up faster:
 

@@ -26,8 +26,8 @@ change (or a digest-prompt change) does not reach the automated path until you r
 ## Index + summarize on /clear
 
 A `SessionEnd` hook with `matcher: "clear"` runs `summarize-on-clear.sh` the moment you
-clear a session. It indexes first, while the hook waits (so the just-finished session is
-captured immediately), and then starts `cerebro digest run --stdin` in the background,
+clear a session. It indexes first, while the hook waits, so it captures the just-finished
+session immediately, and then starts `cerebro digest run --stdin` in the background,
 so `/clear` is never blocked by the model call. The script pipes the SessionEnd payload
 straight through: cerebro pulls the session id out of it and runs the whole summarize
 sequence itself (render the transcript, pick the model, call it, check the output,
@@ -43,8 +43,8 @@ store it). In `~/.claude/settings.json`:
 }
 ```
 
-`cerebro index` is incremental, so it only reads changed files; anything not yet written
-to disk is caught by the next index. The background summary is best-effort: if it dies
+`cerebro index` is incremental, so it only reads changed files; the next index catches
+anything not yet written to disk. The background summary is best-effort: if it dies
 (no auth, rate limit, killed on teardown), nothing is stored and `cerebro digest drain`
 retries the thread on its next run. To index
 on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
@@ -79,10 +79,10 @@ measurements, taken on a 540-thread archive:
 - **Nothing followed the breadcrumbs.** Every measured recall event over two months
   started from the skill, not from an injected block.
 
-Moving it to `SessionStart` was considered and rejected: that payload has no `prompt`,
-so relevance would come from cwd alone, which is `cerebro recent` under another name.
-And standing context belongs in the system prompt rather than the first conversation
-turn, which no hook event can write to.
+Moving it to `SessionStart` does not help either: that payload has no `prompt`, so
+relevance would come from cwd alone, which is `cerebro recent` under another name. And
+standing context belongs in the system prompt rather than the first conversation turn,
+which no hook event can write to.
 
 `relevant` still accepts `--context` and `--stdin`, so the block can be wired into a
 hook by hand. Nothing in cerebro does it for you.

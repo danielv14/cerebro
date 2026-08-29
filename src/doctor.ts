@@ -65,7 +65,7 @@ const integrityCheck = (db: Database, full: boolean): Check => {
     const messages = rows.map((r) => Object.values(r)[0]).filter((v) => v && v !== "ok");
     return messages.length === 0
       ? check.ok(pragma)
-      : check.fail(messages.join("; "), "restore from a backup (see README, Backups)");
+      : check.fail(messages.join("; "), "restore from a backup (see docs/operations.md)");
   } catch (error) {
     return check.unknown((error as Error).message);
   }
