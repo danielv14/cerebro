@@ -12,13 +12,13 @@ can read its own real session logs while implementing.
 
 Three files under `src/sources/`:
 
-- `adapter.ts` - the contract: `SessionFile`, the normalized `Classified` event
-  shape, and the `SourceAdapter` interface. Read its doc comments first; they
-  state the guarantees below next to the types that carry them.
-- `claude-code.ts` - the reference implementation's discovery half (the
+- `adapter.ts` holds the contract: `SessionFile`, the normalized `Classified`
+  event shape, and the `SourceAdapter` interface. Read its doc comments first;
+  they state the guarantees below next to the types that carry them.
+- `claude-code.ts` is the reference implementation's discovery half (the
   `~/.claude/projects` walk). Its normalization half is `src/jsonl.ts`.
-- `registry.ts` - the list of active adapters, the provider -> adapter lookup,
-  and the global oldest-first merge of every source's files.
+- `registry.ts` holds the list of active adapters, the provider -> adapter
+  lookup, and the global oldest-first merge of every source's files.
 
 An adapter is two functions and an id:
 
@@ -47,7 +47,7 @@ corrupts the archive.
    dedup key: re-reads and rebuilds are idempotent only because the same
    message always classifies to the same id. If the source has no native
    per-message ids, synthesize one that is (a) stable across re-reads and
-   (b) collision-free against other sources - prefix it with the provider id
+   (b) collision-free against other sources. Prefix it with the provider id
    (`"codex:<...>"`). Do not derive it from anything that changes when the file
    is appended to.
 3. **A provider id you never rename** (`SourceAdapter.id`). It is stamped on
@@ -97,7 +97,7 @@ Optional but wired through when present:
    project's I/O-boundary rule.
 3. Register it in `src/sources/registry.ts`.
 4. Test it. `test/sources.test.ts` already contains a complete fake adapter
-   ("fake-agent") exercised end to end through `runIndex` - use it as the
+   ("fake-agent") exercised end to end through `runIndex`. Use it as the
    template, then add the same coverage for the real adapter against fixture
    files copied from real logs: normalization, dedup idempotency (index twice,
    zero new), incremental append, provider + model on the session row, and FTS
@@ -106,8 +106,8 @@ Optional but wired through when present:
    take an injected adapter list, so tests never touch the registry or a real
    archive; index the same fixtures through both and assert the counts agree, so
    dry-run parity (invariant #2) holds for your source too.
-5. Run `bun run typecheck`, `bun test`, `bun run check`, and update the README
-   layout section plus this document's status line below.
+5. Run `bun run typecheck`, `bun test`, `bun run check`, and update
+   [layout.md](layout.md) plus this document's status line below.
 
 What you do NOT need to touch: the schema, the indexer, the scan layer, search,
 threads, or digests. If a new source seems to need a change there, stop and

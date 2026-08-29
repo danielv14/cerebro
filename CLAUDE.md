@@ -211,14 +211,22 @@ scheduling change belongs there rather than on the front page:
 
 - `docs/architecture.md` - how the modules fit together and why they are shaped
   the way they are: the module-level story that used to live in source comments.
+- `docs/layout.md` - the inventory architecture.md is not: the source tree, one
+  line per module, plus the dependency rationale.
 - `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
   deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd
   plist and the cron equivalent.
+- `docs/digest.md` - the digest workflows: the latency measurement, the
+  one-command route, driving the verbs by hand, keeping coverage up.
 - `docs/digest-model-tiering.md` - the size-to-model tiering, its token budget, the
   `[1m]` suffix requirement and the `CEREBRO_DIGEST_*` overrides.
+- `docs/operations.md` - backups and restore, `maintain`, and the `doctor` health
+  report as a runbook (architecture.md has the design behind it).
 - `docs/source-adapters.md` - the SourceAdapter contract, the guarantees an adapter
   must give, and the step-by-step for adding a new source (e.g. a Codex adapter).
 
 README keeps the command table as the single canonical list next to `src/help.ts`;
-do not grow a competing one under `docs/`.
+do not grow a competing one under `docs/`. It is the user guide and stays short:
+a command that needs a page of explanation gets a `docs/` page and a pointer, not
+a longer README section.

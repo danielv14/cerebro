@@ -44,10 +44,10 @@ cerebro show <session-id> [--full] [--range A..B]  # outline (default), full tra
                                             #   (a long outline shows the first and last 50
                                             #    messages with an omitted marker in between)
 cerebro stats                               # archive counts
-cerebro skills [--since D] [--limit N]      # how often each skill was invoked (see "Skill usage")
-cerebro doctor [--full]                     # read-only health report (see "Health checks")
+cerebro skills [--since D] [--limit N]      # how often each skill was invoked
+cerebro doctor [--full]                     # read-only health report (docs/operations.md)
 cerebro version                             # build identity of this binary
-cerebro backup [--to <path>] [--keep N]     # snapshot the database (see "Backups")
+cerebro backup [--to <path>] [--keep N]     # snapshot the database (docs/operations.md)
 cerebro maintain                            # compact the search indexes and tidy the database
 cerebro digest <action>                     # curated session summaries (see "Curated summaries")
 ```
@@ -56,7 +56,7 @@ cerebro digest <action>                     # curated session summaries (see "Cu
 listings); an ambiguous prefix errors. The reader commands (`search`, `sessions`,
 `recent`, `relevant`, `show`, `stats`, `skills`, `doctor`, `version`,
 `digest stale|search|show`) take `--json` to print the results as JSON instead of
-the human listing -- the stable format for scripts and agents.
+the human listing. That is the stable format for scripts and agents.
 
 ### Database location
 
@@ -76,39 +76,10 @@ data that grows large (tens of MB) and holds your private conversations word for
 word. `*.sqlite` is gitignored regardless. Keeping it next to the Claude data it
 indexes (the default) keeps the repo pure source.
 
-### Backups
+### Skill invocation counts
 
-For sessions whose source files Claude Code has already deleted, the archive is
-the only copy, so back it up. `cerebro backup` snapshots the database into a
-single compact file at `<db-dir>/backups/archive-<timestamp>.sqlite`, using a
-method (`VACUUM INTO`) that is safe to run while the database is being written
-to. `--to <path>` picks an explicit target, and `--keep N` deletes the oldest
-default-named backups beyond N. A natural place to hang it is the scheduled
-digest batch, e.g. append `~/.claude/cerebro/cerebro backup --keep 8` to
-`digest-stale-batch.sh`'s schedule or run it from the same launchd/cron entry.
-
-To restore one, stop whatever writes to the archive first (disable the hook or
-the launchd agent), then:
-
-```sh
-cp ~/.claude/cerebro/backups/archive-<timestamp>.sqlite ~/.claude/cerebro/archive.sqlite
-rm -f ~/.claude/cerebro/archive.sqlite-wal ~/.claude/cerebro/archive.sqlite-shm
-cerebro index      # catch up on everything written since the snapshot
-cerebro doctor     # confirm integrity and schema before re-enabling the hook
-```
-
-Deleting the stale `-wal` / `-shm` files matters: they are SQLite working files
-that belong to the replaced database, and SQLite would otherwise try to replay
-them onto the snapshot.
-
-`cerebro maintain` is the other housekeeping command: it compacts the search
-indexes, refreshes SQLite's internal statistics, and trims the working files.
-The scheduled digest batch runs it automatically at the end of each run.
-
-### Skill usage
-
-`cerebro skills` answers how often each skill was actually invoked, counted out of
-the archive:
+`cerebro skills` answers how often each skill was actually invoked, counted out
+of the archive:
 
 ```
 $ cerebro skills --limit 4
@@ -121,151 +92,21 @@ changelog                              61      1     62      0  2026-08-18
 ```
 
 A skill call leaves no field of its own in the session JSONL, so the count comes
-from two markers in the turn text, and both are needed: `slash` is the expansion of
-a typed `/name` in the user turn, `model` is a Skill tool call the model made, and
-`sub` is the part of `total` that came from a subagent turn (a subagent using a skill
-is using it). One of the two markers is *cerebro's own* rendering of a tool block,
-which is the reason this command exists rather than a one-line grep in whatever wants
-the numbers: a caller matching that string is coupled to this repo's flattener, and
-would report every skill as unused the day it changes.
-
-Counting takes three more rules, all of them learned from wrong numbers. Roles: a
-transcript that quotes a marker, this README included, must not count itself. Line
-starts: a real marker opens a line, while cerebro's own `show` output collapses a
-quoted call onto one line, so recall would otherwise inflate the counts it just
-reported. And a shape bound on the name, because the text between two markers is
-foreign input and an unclosed tag would otherwise print an arbitrary slice of a
-transcript as a skill name.
+from two markers in the turn text: `slash` is the expansion of a typed `/name` in
+the user turn, `model` is a Skill tool call the model made. Both are needed;
+counting one undercounts by a factor. `sub` is the part of `total` that came from
+a subagent turn, since a subagent using a skill is using it.
 
 The header says *names*, not skills, because the slash marker is Claude Code's
-expansion of any `/name`: its own commands (`/clear`, `/model`) are in the list, and
-a renamed skill appears under both names. Deciding which of those to merge or ignore
-is the caller's business, not the archive's. There is no default limit, because the
-question is usually which skills are *unused* and a trimmed tail would turn a rarely
-called skill into a missing one. `--since D` narrows the window; the window itself is
-printed, so "never called" stays distinguishable from "called before the archive
-begins".
-
-### Health checks
-
-`cerebro doctor` is one read-only report over everything that can quietly go
-wrong: database and search-index integrity, the schema version, leftover index
-state, sessions with no messages, oversized working files, summary coverage and
-staleness, whether the deployed binary is out of date with the repo, and whether
-the hook is wired in `settings.json` at all. It never repairs anything; each
-finding names the command that does.
-
-```sh
-cerebro doctor            # quick integrity check, the everyday form
-cerebro doctor --full     # the thorough integrity check (slower on a large archive)
-cerebro doctor --json     # the same checks as structured rows
-```
-
-The exit code is 1 only on a hard failure (corruption, or a database schema this
-build does not understand), so it works as a cron or CI guard without going red
-on a warning like a summary backlog. `cerebro version` prints the build identity
-on its own, which is what makes the out-of-date check possible: a binary built
-from source reports itself as unbuilt rather than claiming a commit it does not
-have.
-
-## Automation
-
-cerebro only runs when asked, so a Claude Code hook and a scheduled job are what
-keep it current -- there is no background process. Those are operational details
-rather than everyday usage, so they live in `docs/`:
-
-- **[docs/hooks.md](docs/hooks.md)** - the `SessionEnd` hook that indexes and
-  summarizes on `/clear`, and why it runs a deployed binary rather than the source.
-- **[docs/scheduling.md](docs/scheduling.md)** - `digest-stale-batch.sh`, the
-  catch-up script that works through the summary backlog, with a launchd plist
-  and the cron equivalent.
-- **[docs/digest-model-tiering.md](docs/digest-model-tiering.md)** - how the
-  summary model is chosen by transcript size, the token budget behind the
-  threshold, and the `CEREBRO_DIGEST_*` overrides.
-
-The deployed binary is a frozen snapshot: a code change does not reach the
-automated paths until `bun run deploy`. `cerebro doctor` reports when it is out
-of date (see "Health checks").
-
-
-## Curated summaries (`digest`)
-
-On top of the word-for-word archive sits an optional layer of summaries: one
-short, LLM-written summary per thread, stored in the same database and
-searchable on its own. Summaries are dense and topical, so searching them
-answers "what did I work on around X" far better than searching raw
-transcripts, and they are cheap for a Claude session to read when relating past
-work.
-
-Summaries also make things faster. `relevant` only falls back to scanning raw
-transcripts when the summaries come up short of `--limit`. That raw scan is the
-expensive part: it touches one row per message, where the summary scan touches
-one row per thread. Measured with the compiled binary against a synthetic archive
-of 300 000 messages (1200 sessions, 148 MB) and no summaries at all, the worst
-case where every lookup falls through to the raw scan:
-
-```
-cerebro relevant "<prose prompt>" --limit 5    386 ms
-```
-
-That is what a lookup costs on an archive with no summaries; it shrinks as more
-threads get summarized.
-
-cerebro owns the whole summarization step: the prompt, the choice of model by
-transcript size, the storage format, and a guard that refuses to store output
-that cannot be a real summary. It has no model of its own and never summarizes
-on its own initiative: the model call is a single `claude` subprocess, and it
-only happens when you ask for it:
-
-```sh
-cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (never summarized,
-                                            #   new activity since, or older prompt version).
-                                            #   --ids: one full id per line, for scripts
-cerebro digest run <id>                     # summarize one thread: render, pick the model,
-                                            #   call it, check the output, store it
-cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
-                                            #   (default 8); one failure never aborts the run
-cerebro digest prompt                       # print the canonical summarization prompt
-cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
-                                            #   (--bytes: tier an already-measured size
-                                            #    without re-rendering the transcript)
-cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
-                                            #   rejects error-looking or too-short input with
-                                            #   exit 1 so the thread stays stale and is retried)
-cerebro digest search <query> [--limit N]   # full-text search the summaries
-cerebro digest show <id>                    # print a thread's stored summary
-```
-
-`digest run` is the whole sequence in one command, and it is what the hooks call:
-
-```sh
-cerebro digest run <id>              # one thread
-cerebro digest drain --limit 8       # the stalest N, newest first
-```
-
-It spawns `claude -p --no-session-persistence` with the model the size tiering
-picked, hands it the transcript on stdin, and stores the result only if the
-call succeeded and the output looks like an actual summary rather than an error
-message or a fragment. Nothing is stored on failure, so the thread stays stale
-and the next `drain` retries it. `CEREBRO_CLAUDE_BIN` overrides which binary is
-spawned.
-
-The individual steps are still there when you want to drive them yourself, or
-summarize inline as an agent without spawning anything:
-
-```sh
-cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
-```
-
-Pipe `digest input` rather than `show --full`: it renders the same transcript
-but trimmed to fit a single model context, so a giant thread does not overflow
-it. Either route keeps the contract in one place: the prompt asks for exactly
-what `digest write` stores, and `digest stale` re-surfaces a thread whenever it
-gains messages or the prompt version (`DIGEST_PROMPT_VERSION`) is bumped.
-`digest drain` is the catch-up command, run "now and then" or on a schedule;
-the summary fired on `/clear` is an optional fast path on top of it, never the
-source of truth.
+expansion of any `/name`: its own commands (`/clear`, `/model`) are in the list,
+and a renamed skill appears under both names. Deciding which of those to merge or
+ignore is the caller's business, not the archive's. There is no default limit,
+because the question is usually which skills are *unused* and a trimmed tail
+would turn a rarely called skill into a missing one. `--since D` narrows the
+window; the window itself is printed, so "never called" stays distinguishable
+from "called before the archive begins". Why the counting lives in cerebro at
+all, and the rules it takes, is in
+[docs/architecture.md](docs/architecture.md).
 
 ## How it works
 
@@ -302,7 +143,7 @@ source of truth.
   both ride along in every `--json` listing (`sessions`, `recent`, `relevant`,
   `search`, `digest search`), read from the thread rollup so the five agree.
   Adding a source (e.g. a Codex CLI adapter) is described in
-  `docs/source-adapters.md`.
+  [docs/source-adapters.md](docs/source-adapters.md).
 - **Tool output is capped.** Prose and reasoning are kept in full, but each
   tool call and tool result is truncated to its first 1 KB (plus a
   `[+N chars truncated]` marker). The first kilobyte holds the searchable part
@@ -332,91 +173,88 @@ tokenizer with `remove_diacritics 1`.) Changing this later means recreating the
 search indexes and re-running `cerebro index --rebuild`, so revisit it only
 with a concrete missed-match problem in hand.
 
-## Tests
+## Curated summaries (`digest`)
+
+On top of the word-for-word archive, cerebro can store one short LLM-written
+summary per thread. The summaries live in the same database and are searchable
+on their own. They are dense and topical, so searching them answers "what did I
+work on around X" far better than searching raw transcripts, they are cheap for
+a Claude session to read when relating past work, and they make `relevant`
+faster by keeping it off the raw scan.
+
+cerebro owns the whole summarization step: the prompt, the choice of model by
+transcript size, the storage format, and a guard that refuses to store output
+that cannot be a real summary. It has no model of its own and never summarizes
+on its own initiative. The model call is a single `claude` subprocess, and it
+only happens when you ask for it.
 
 ```sh
-bun test
+cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (never summarized,
+                                            #   new activity since, or older prompt version).
+                                            #   --ids: one full id per line, for scripts
+cerebro digest run <id>                     # summarize one thread: render, pick the model,
+                                            #   call it, check the output, store it
+cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
+                                            #   (default 8); one failure never aborts the run
+cerebro digest prompt                       # print the canonical summarization prompt
+cerebro digest input <id>                   # print the size-bounded transcript to summarize
+cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
+                                            #   (--bytes: tier an already-measured size
+                                            #    without re-rendering the transcript)
+cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
+                                            #   rejects error-looking or too-short input with
+                                            #   exit 1 so the thread stays stale and is retried)
+cerebro digest search <query> [--limit N]   # full-text search the summaries
+cerebro digest show <id>                    # print a thread's stored summary
 ```
 
-The suite under `test/` runs against an in-memory SQLite DB plus temp fixture
-session files (`CEREBRO_CLAUDE_DIR`), never the real archive. It covers the
-critical paths: byte/cursor splitting and partial-line handling, dedup +
-incremental indexing, truncation reset, subagent folding, thread relinking,
-session-file discovery (ordering, tiebreak, the subagent walk), git resolution
-(repo root + remote, missing-dir tolerance), dry-run parity, every query function,
-and the digest layer (staleness detection, upsert + FTS sync, root attribution,
-summary search).
+`digest run` does the whole sequence in one command and is what the hooks call;
+`digest drain` does it for the stalest N. [docs/digest.md](docs/digest.md) covers
+the workflows: what summaries buy in lookup latency, how to drive the steps
+yourself or summarize inline as an agent, and how coverage is kept up.
 
-## Lint and format
+## Automation
 
-[Biome](https://biomejs.dev) handles both linting and formatting (config in
-`biome.json`):
+cerebro has no background process; it only runs when asked. A Claude Code hook
+and a scheduled job are what keep it current. Those are operational details
+rather than everyday usage, so they live in `docs/`:
+
+- [docs/hooks.md](docs/hooks.md) covers the `SessionEnd` hook that indexes and
+  summarizes on `/clear`, and why it runs a deployed binary rather than the source.
+- [docs/scheduling.md](docs/scheduling.md) covers `digest-stale-batch.sh`, the
+  catch-up script that works through the summary backlog, with a launchd plist
+  and the cron equivalent.
+- [docs/digest-model-tiering.md](docs/digest-model-tiering.md) covers how
+  transcript size picks the summary model, the token budget behind the
+  threshold, and the `CEREBRO_DIGEST_*` overrides.
+
+The deployed binary is a frozen snapshot: a code change does not reach the
+automated paths until `bun run deploy`. `cerebro doctor` reports when it is out
+of date.
+
+## Operations
+
+[docs/operations.md](docs/operations.md) covers backups, the restore procedure,
+`cerebro maintain` and the `cerebro doctor` health report. The short version:
+for sessions Claude Code has already deleted the archive is the only copy, so
+run `cerebro backup --keep 8` on a schedule and `cerebro doctor` when something
+looks off.
+
+## Development
 
 ```sh
+bun test            # the suite under test/
+bun run typecheck   # tsc, must stay green
 bun run check       # lint + format check, read-only (the same biome ci runs in CI)
 bun run check:fix   # apply lint fixes + formatting
-bun run format      # format only, write
-bun run lint        # lint only
 ```
 
-CI runs `biome ci` on every PR alongside typecheck, tests, and a compile build.
+The suite runs against an in-memory SQLite database plus temp fixture session
+files (`CEREBRO_CLAUDE_DIR`), never the real archive. CI runs `biome ci`,
+typecheck, tests and a compile build on every PR.
 
-## Layout
-
-```
-src/
-  cli.ts        parseArgs + the dispatch table + option checking + db lifetime
-                + the ambient clock/cwd + rendering (a command returns data;
-                runCli prints it)
-  help.ts       the HELP text
-  commands/     one module per command: its declared options, its run step, and
-                its output formatting
-    args.ts     options as data (flag/text/numeric/isoDate/choice/range) + CliError
-    command.ts  defineCommand + defineDbLessCommand, CommandContext/
-                CommandInput/CommandOutput, the group shape
-    helpers.ts  readStdin() + resolveSession()/resolveOrThrow()
-  db.ts         openDb() + schema/migrations + dbFileSize()
-  paths.ts      cerebro's own home paths (claudeDir, defaultDbPath)
-  sources/      the source-adapter seam (see docs/source-adapters.md):
-    adapter.ts    SessionFile + Classified + the SourceAdapter contract
-    claude-code.ts  the Claude Code source: projects-dir discovery
-    registry.ts   the adapter list + the global oldest-first file merge
-  jsonl.ts      classify() + flattenContent(): the Claude Code JSONL grammar
-  git.ts        gitInfo(cwd) with cache
-  scan.ts       the source-file scan layer: splitBuffer(), planFileRead(),
-                eachIndexableFile(), orphanedCursorPaths()
-  indexer.ts    runIndex() + dryRunIndex() (ingest, session rows, presence
-                reconciliation)
-  thread.ts     what a thread is, end to end: the threads view DDL + row shape,
-                rootOf(), threadMessages(), listThreads(), recentThreads(),
-                hydrateThreadMeta(), relinkThreads()
-  fts.ts        the message-FTS layer: rankedMessageHits(), dedupedHitWindow()
-                (fetch + dedup + growth), escapeLike(), toMatchQuery()
-  search.ts     search(): the search command's filters, first-window sizing and
-                display hydration
-  stats.ts      stats() + archiveSpan()
-  relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo
-                boost)
-  skills.ts     skillUsage(): the two skill-call markers and the counting rules
-                (roles, occurrences, subagent turns)
-  render.ts     shared formatting primitives (shortId, shortTime, oneLine, ...)
-  digest/       DIGEST_PROMPT + model tiering (prompt.ts), staleThreads() +
-                summaryCoverage() (stale.ts), writeSummary() + the summary
-                full-text search (store.ts), the summarize pipeline + the
-                Summarizer seam (run.ts)
-  digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
-                digest-transcript skipping on it)
-  backup.ts     runBackup() (VACUUM INTO snapshots + pruning)
-test/
-  *.test.ts     bun test suite + fixtures.ts (temp claude dir + sessions);
-                per-command formatting tests under test/commands/
-```
-
-How the modules fit together, and the design rationale behind them, is
-documented in [docs/architecture.md](docs/architecture.md).
-
-Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
-pure-JS dependencies: `stopword` filters filler words out of relevance queries,
-and `valibot` validates the untrusted input boundaries (the session JSONL and
-the two hook stdin payloads). Ranked search comes from SQLite FTS5 full-text
-indexes over the messages and summaries.
+`CLAUDE.md` has the working rules and the archive invariants,
+[docs/layout.md](docs/layout.md) maps the source tree module by module, and
+[docs/architecture.md](docs/architecture.md) explains how the modules fit
+together and why. Built on Bun (`bun:sqlite`, synchronous) with two small
+pure-JS dependencies and no native or network ones.
