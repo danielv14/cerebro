@@ -30,15 +30,18 @@ code.
   repo is English: commits, comments, CLI output, `README.md`, `docs/` and the skill.
   The repo is public and cloneable, so Swedish prose does not belong in it (the only
   Swedish that does is data: the `swe` stopword list and the tokenizer examples).
-- **Comments are banned by default; keep the code clean.** The full policy is the
-  `no-comments` skill (`.claude/skills/no-comments/SKILL.md`); load it before
-  writing or reviewing code here. The test: a comment stays only if deleting it
-  loses something the code cannot say (a why, a landmine, a deliberate omission),
-  in a line or two. Function and flow documentation goes to `docs/` when it is
-  needed at all, never into the source. And do not document reflexively in the
-  other direction either: every documented detail is a detail that can drift, so
-  docs are for what a reader cannot get from the code in reasonable time. Prefer
-  clearer names and smaller functions over both comments and docs.
+- **Comments are banned by default; keep the code clean.** The test: a comment
+  stays only if deleting it loses something the code cannot say. That means a
+  why the code cannot express, a landmine (a change that looks safe but is not),
+  a deliberate omission a reader would mistake for a bug, a durable external
+  pointer, or a toolchain pragma - in a line or two. Never narration of the next
+  line, signature restatement, section banners, change notes (the commit
+  message's job), or module essays. Function and flow documentation goes to
+  `docs/` when it is needed at all, never into the source. And do not document
+  reflexively in the other direction either: every documented detail is a detail
+  that can drift, so docs are for what a reader cannot get from the code in
+  reasonable time. Prefer clearer names and smaller functions over both comments
+  and docs.
 
 ## Developing and testing
 
