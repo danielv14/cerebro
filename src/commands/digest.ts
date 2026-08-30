@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import type { DigestConfig } from "../digest/config.ts";
 import {
   buildDigestInput,
   createClaudeSummarizer,
@@ -122,6 +123,13 @@ export const parseSessionEndPayload = (raw: string): string | null => {
   }
 };
 
+// The summarizer and the tiering must come from the same resolved config, so
+// they are derived together rather than at two call sites.
+const digestPipeline = (config: DigestConfig) => ({
+  summarize: createClaudeSummarizer(config),
+  models: config.models,
+});
+
 // Matches the reconciler's default cap.
 const DEFAULT_DRAIN_LIMIT = 8;
 
@@ -157,10 +165,8 @@ export const digestCommand: CommandGroup = {
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
-        const config = digestConfigFromEnv();
         const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
-          summarize: createClaudeSummarizer(config),
-          models: config.models,
+          ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
         });
         return {
@@ -176,10 +182,8 @@ export const digestCommand: CommandGroup = {
       options: { limit: limitOption } satisfies OptionTable,
       run: ({ db, args, progress }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
-        const config = digestConfigFromEnv();
         const result = runDrain(db, cap, {
-          summarize: createClaudeSummarizer(config),
-          models: config.models,
+          ...digestPipeline(digestConfigFromEnv()),
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
           onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),

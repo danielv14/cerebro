@@ -3,7 +3,6 @@ import { rootOf, threadLastTs, threadMessages } from "../thread.ts";
 import type { DigestConfig } from "./config.ts";
 import {
   buildDigestInput,
-  DEFAULT_DIGEST_MODELS,
   DIGEST_PROMPT,
   type DigestModelConfig,
   pickDigestModel,
@@ -87,8 +86,7 @@ export interface DigestOutcome {
 
 export interface DigestOptions {
   summarize: Summarizer;
-  // Defaults to the shipped tiering; the CLI edge passes the env-resolved one.
-  models?: DigestModelConfig;
+  models: DigestModelConfig;
   // Called before the model call, so a wedged call still leaves a trace of which
   // thread, how big, and which model.
   onStart?: (about: { root: string; bytes: number; model: string }) => void;
@@ -105,7 +103,7 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
   if (input.length === 0) return { status: "skipped", root, reason: "nothing to summarize" };
 
   const bytes = Buffer.byteLength(input, "utf8");
-  const model = pickDigestModel(bytes, opts.models ?? DEFAULT_DIGEST_MODELS);
+  const model = pickDigestModel(bytes, opts.models);
   opts.onStart?.({ root, bytes, model });
 
   const result = opts.summarize({ input, model, prompt: DIGEST_PROMPT });
@@ -131,7 +129,7 @@ export interface DrainResult {
 
 export interface DrainOptions {
   summarize: Summarizer;
-  models?: DigestModelConfig;
+  models: DigestModelConfig;
   onStart?: (count: number) => void;
   onThreadStart?: (about: { root: string; bytes: number; model: string }) => void;
   onOutcome?: (outcome: DigestOutcome) => void;
