@@ -136,8 +136,6 @@ export const recentThreads = (
     .all(...params) as ThreadRow[];
 };
 
-// The field order below is the JSON key order of `relevant` and `digest search`,
-// which spread this whole shape into their result rows.
 export interface ThreadDisplay {
   last_ts: string | null;
   project_path: string | null;
@@ -145,6 +143,20 @@ export interface ThreadDisplay {
   model: string | null;
   title: string | null;
 }
+
+// The sole construction site, so there is one field order to keep: `relevant` and
+// `digest search` spread this shape straight into their result rows, which makes
+// the order below their JSON key order. A rest-spread of the SELECT would follow
+// the column order instead.
+export const threadDisplay = (row: Partial<ThreadDisplay>): ThreadDisplay => ({
+  last_ts: row.last_ts ?? null,
+  project_path: row.project_path ?? null,
+  provider: row.provider ?? null,
+  model: row.model ?? null,
+  title: row.title ?? null,
+});
+
+export const noThreadDisplay = (): ThreadDisplay => threadDisplay({});
 
 // A root with no rollup row is simply absent from the map; attachThreadDisplay
 // applies the caller's fallback.
@@ -157,42 +169,20 @@ const hydrateThreadDisplay = (db: Database, roots: string[]): Map<string, Thread
        FROM threads WHERE id IN (${placeholders})`,
     )
     .all(...roots) as (ThreadDisplay & { id: string })[];
-  return new Map(
-    rows.map((row) => [
-      row.id,
-      {
-        last_ts: row.last_ts,
-        project_path: row.project_path,
-        provider: row.provider,
-        model: row.model,
-        title: row.title,
-      },
-    ]),
-  );
+  return new Map(rows.map((row) => [row.id, threadDisplay(row)]));
 };
-
-export const noThreadDisplay = (): ThreadDisplay => ({
-  last_ts: null,
-  project_path: null,
-  provider: null,
-  model: null,
-  title: null,
-});
 
 // `fallback` is a parameter because the two policies for a thread with no rollup
 // row are both deliberate and used to be three copies that could drift: `search`
 // answers from the matched session's own columns, the summary-backed callers from
 // nothing.
-export const attachThreadDisplay = <H extends { root: string }, R>(
+export const attachThreadDisplay = <H extends { root: string }>(
   db: Database,
   hits: H[],
-  opts: {
-    fallback: (hit: H) => ThreadDisplay;
-    build: (hit: H, display: ThreadDisplay) => R;
-  },
-): R[] => {
+  fallback: (hit: H) => ThreadDisplay,
+): { hit: H; display: ThreadDisplay }[] => {
   const byRoot = hydrateThreadDisplay(db, [...new Set(hits.map((hit) => hit.root))]);
-  return hits.map((hit) => opts.build(hit, byRoot.get(hit.root) ?? opts.fallback(hit)));
+  return hits.map((hit) => ({ hit, display: byRoot.get(hit.root) ?? fallback(hit) }));
 };
 
 export const rootOf = (db: Database, sessionId: string): string => {

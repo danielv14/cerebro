@@ -12,7 +12,7 @@ import { stats } from "../src/stats.ts";
 import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
   assistantMsg,
-  countHitQueries,
+  countQueriesMatching,
   makeClaudeDir,
   type TempClaude,
   ts,
@@ -347,7 +347,7 @@ describe("query (populated archive)", () => {
     runIndex(db);
 
     let hits: string[] = [];
-    const queries = countHitQueries(db, () => {
+    const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
       hits = search(db, 'limiter"', 2).map((hit) => hit.session_id);
     });
     expect(hits.sort()).toEqual(["CHATTY", "OTHER"]);

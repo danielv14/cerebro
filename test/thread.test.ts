@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
+import { searchSummaries, writeSummary } from "../src/digest/index.ts";
 import { runIndex } from "../src/indexer.ts";
+import { relevantThreads } from "../src/relevance.ts";
+import { search } from "../src/search.ts";
 import {
   attachThreadDisplay,
   countThreads,
@@ -15,6 +18,7 @@ import {
 } from "../src/thread.ts";
 import {
   assistantMsg,
+  countQueriesMatching,
   makeClaudeDir,
   type TempClaude,
   ts,
@@ -207,10 +211,9 @@ describe("thread (identity + membership)", () => {
 
     test("attaches the thread's rollup identity to each hit", () => {
       seedTwo();
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], {
-        fallback: noThreadDisplay,
-        build: (hit, display) => ({ id: hit.root, ...display }),
-      });
+      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], noThreadDisplay).map(
+        ({ hit, display }) => ({ id: hit.root, ...display }),
+      );
       expect(rows).toEqual([
         {
           id: "A",
@@ -236,10 +239,9 @@ describe("thread (identity + membership)", () => {
       // identity emptied rather than be dropped.
       seedTwo();
       db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const rows = attachThreadDisplay(db, [{ root: "B" }], {
-        fallback: noThreadDisplay,
-        build: (hit, display) => ({ id: hit.root, ...display }),
-      });
+      const rows = attachThreadDisplay(db, [{ root: "B" }], noThreadDisplay).map(
+        ({ hit, display }) => ({ id: hit.root, ...display }),
+      );
       expect(rows).toEqual([
         { id: "B", last_ts: null, project_path: null, provider: null, model: null, title: null },
       ]);
@@ -257,10 +259,9 @@ describe("thread (identity + membership)", () => {
         model: "opus-test",
         title: "From the session row",
       };
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], {
-        fallback: () => own,
-        build: (hit, display) => ({ id: hit.root, title: display.title }),
-      });
+      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], () => own).map(
+        ({ hit, display }) => ({ id: hit.root, title: display.title }),
+      );
       // A alone has a rollup, so only B falls back.
       expect(rows).toEqual([
         { id: "A", title: "Alpha thread" },
@@ -272,29 +273,73 @@ describe("thread (identity + membership)", () => {
       // Two hits in one thread must not mean two rollup queries; the ordering and
       // the per-hit result stay unchanged.
       seedTwo();
-      let queries = 0;
-      const real = db.query.bind(db);
-      db.query = ((sql: string) => {
-        if (sql.includes("FROM threads WHERE id IN")) queries++;
-        return real(sql);
-      }) as typeof db.query;
-      try {
-        const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }, { root: "A" }], {
-          fallback: noThreadDisplay,
-          build: (hit, display) => ({ id: hit.root, title: display.title }),
-        });
-        expect(rows.map((row) => row.id)).toEqual(["A", "B", "A"]);
-        expect(rows[2]!.title).toBe("Alpha thread");
-      } finally {
-        Reflect.deleteProperty(db, "query");
-      }
+      let rows: { id: string; title: string | null }[] = [];
+      const queries = countQueriesMatching(db, "FROM threads WHERE id IN", () => {
+        rows = attachThreadDisplay(
+          db,
+          [{ root: "A" }, { root: "B" }, { root: "A" }],
+          noThreadDisplay,
+        ).map(({ hit, display }) => ({ id: hit.root, title: display.title }));
+      });
       expect(queries).toBe(1);
+      expect(rows.map((row) => row.id)).toEqual(["A", "B", "A"]);
+      expect(rows[2]!.title).toBe("Alpha thread");
+    });
+
+    // The JSON these commands print is consumed by hooks and agents, so the key
+    // order is part of the contract, not an accident of how the row is built.
+    // threadDisplay is the only thing that decides it for the two spreading
+    // callers, which is why the order is asserted rather than described.
+    test("the display fields land in one order across every listing", () => {
+      seedTwo();
+      writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");
+
+      expect(Object.keys(noThreadDisplay())).toEqual([
+        "last_ts",
+        "project_path",
+        "provider",
+        "model",
+        "title",
+      ]);
+      expect(Object.keys(relevantThreads(db, "alpha limiter", 3)[0]!)).toEqual([
+        "id",
+        "last_ts",
+        "project_path",
+        "provider",
+        "model",
+        "title",
+        "snippet",
+        "opening",
+        "fromSummary",
+      ]);
+      expect(Object.keys(searchSummaries(db, "alpha limiter")[0]!)).toEqual([
+        "id",
+        "last_ts",
+        "project_path",
+        "provider",
+        "model",
+        "title",
+        "snippet",
+      ]);
+      // search builds its row by hand and shows the message's own ts and branch,
+      // so it carries no thread last_ts at all.
+      expect(Object.keys(search(db, "alpha")[0]!)).toEqual([
+        "id",
+        "session_id",
+        "ts",
+        "role",
+        "project_path",
+        "git_branch",
+        "provider",
+        "model",
+        "title",
+        "snippet",
+        "ordinal",
+      ]);
     });
 
     test("an empty hit list does no work", () => {
-      expect(
-        attachThreadDisplay(db, [], { fallback: noThreadDisplay, build: (hit) => hit }),
-      ).toEqual([]);
+      expect(attachThreadDisplay(db, [], noThreadDisplay)).toEqual([]);
     });
   });
 });

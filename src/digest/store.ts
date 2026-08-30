@@ -124,8 +124,9 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
-  return attachThreadDisplay(db, rows, {
-    fallback: noThreadDisplay,
-    build: (row, display) => ({ id: row.root, ...display, snippet: row.snippet }),
-  });
+  return attachThreadDisplay(db, rows, noThreadDisplay).map(({ hit, display }) => ({
+    id: hit.root,
+    ...display,
+    snippet: hit.snippet,
+  }));
 };

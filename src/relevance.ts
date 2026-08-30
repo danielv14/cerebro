@@ -116,14 +116,11 @@ export const relevantThreads = (
   }
 
   const hits = [...chosen.entries()].map(([root, info]) => ({ root, ...info }));
-  return attachThreadDisplay(db, hits, {
-    fallback: noThreadDisplay,
-    build: (hit, display) => ({
-      id: hit.root,
-      ...display,
-      snippet: hit.snippet,
-      opening: threadOpeningPrompt(db, hit.root),
-      fromSummary: hit.fromSummary,
-    }),
-  });
+  return attachThreadDisplay(db, hits, noThreadDisplay).map(({ hit, display }) => ({
+    id: hit.root,
+    ...display,
+    snippet: hit.snippet,
+    opening: threadOpeningPrompt(db, hit.root),
+    fromSummary: hit.fromSummary,
+  }));
 };
