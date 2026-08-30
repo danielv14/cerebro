@@ -29,11 +29,14 @@ context.
 The threshold comes from a token budget, not the raw window size. `claude -p`
 prepends its own system prompt and tool definitions (~77k tokens measured), so
 the default reserves 90k tokens of the small model's 200k window and treats the
-rest (about 330k bytes at 3 bytes per token) as the transcript budget. Override
-via `CEREBRO_DIGEST_MODEL` (small model, default Haiku),
+rest (about 330k bytes at 3 bytes per token) as the transcript budget. The
+rendered transcript is measured in bytes and capped at this budget: multi-byte
+UTF-8 sequences (Swedish å, ä, ö; CJK ideographs; emoji) are counted correctly,
+and truncation respects character boundaries so no output sequence is split.
+Override via `CEREBRO_DIGEST_MODEL` (small model, default Haiku),
 `CEREBRO_DIGEST_MODEL_LARGE` (large model, default `claude-sonnet-4-6[1m]`), and
-`CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 330000) in the
-hook's environment.
+`CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold in bytes, default 330000)
+in the hook's environment.
 
 Each model call also carries a timeout: a hung `claude -p` would otherwise hang
 `digest run` (and every drain behind it) forever. After

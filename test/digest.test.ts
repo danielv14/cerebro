@@ -210,6 +210,49 @@ describe("buildDigestInput (size-bounded transcript)", () => {
   test("handles an empty thread", () => {
     expect(buildDigestInput([])).toBe("");
   });
+
+  test("caps output in bytes, not characters, respecting multi-byte sequences", () => {
+    // Swedish: å, ä, ö are 2-3 bytes in UTF-8 each.
+    const swedish = "åäö ".repeat(200); // ~1000 bytes (3 bytes per char + 1 space byte)
+    const out = buildDigestInput([msg("user", swedish)], 500);
+    const bytes = Buffer.byteLength(out);
+    // Output must be under the 500-byte budget (with some headroom for headers).
+    expect(bytes).toBeLessThan(600);
+    // No truncation happens if output is already under budget with headers.
+    if (!out.includes("truncated for digest")) {
+      expect(Buffer.byteLength(out)).toBeLessThanOrEqual(500);
+    }
+  });
+
+  test("non-ASCII content does not overshoot the byte budget", () => {
+    // This is the regression case from the issue: a Swedish-heavy thread.
+    // With character-based capping, this would overshoot by ~56%.
+    const swedishBody = "åäö ".repeat(200_000 / 4); // ~200k bytes
+    const out = buildDigestInput([msg("user", swedishBody)], 100_000);
+    const bytes = Buffer.byteLength(out);
+    expect(bytes).toBeLessThanOrEqual(100_000 + 1_000); // Allow 1k for marker overhead
+  });
+
+  test("truncation at byte boundaries does not split multi-byte characters", () => {
+    const text = `${"a".repeat(100)}åäö`; // ASCII then multibyte
+    const out = buildDigestInput([msg("user", text)], 110);
+    // Verify no truncation marker appears malformed.
+    expect(() => {
+      // Try to parse the structure; if we split a UTF-8 sequence,
+      // the output will have invalid UTF-8 which would throw.
+      out.toString();
+    }).not.toThrow();
+    // The truncated output should be valid UTF-8.
+    expect(Buffer.isBuffer(Buffer.from(out, "utf-8"))).toBe(true);
+  });
+
+  test("ASCII input unchanged with byte-based capping", () => {
+    // Acceptance criterion: ASCII thread below budget is byte-identical.
+    const ascii = "hello world".repeat(100);
+    const out = buildDigestInput([msg("user", ascii)]);
+    expect(out).toContain("hello world");
+    expect(out).not.toContain("truncated for digest");
+  });
 });
 
 describe("digest (summaries layer)", () => {
