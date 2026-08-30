@@ -24,7 +24,9 @@ inspection (`--bytes <n>` decides from an already-measured size, `<id>` renders
 and measures). The input is the rendered transcript's byte size (the same
 size-bounded render `cerebro digest input` prints; see [digest.md](digest.md)),
 which is capped so that even the largest thread cannot overflow the 1M
-context.
+context. The threshold and that cap are both byte counts, and a body that has to
+be trimmed is cut on a character boundary, so a Swedish or CJK thread is measured
+in the same unit the budget was derived in.
 
 The threshold comes from a token budget, not the raw window size. `claude -p`
 prepends its own system prompt and tool definitions (~77k tokens measured), so
@@ -32,8 +34,8 @@ the default reserves 90k tokens of the small model's 200k window and treats the
 rest (about 330k bytes at 3 bytes per token) as the transcript budget. Override
 via `CEREBRO_DIGEST_MODEL` (small model, default Haiku),
 `CEREBRO_DIGEST_MODEL_LARGE` (large model, default `claude-sonnet-4-6[1m]`), and
-`CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold, default 330000) in the
-hook's environment.
+`CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold in bytes, default 330000)
+in the hook's environment.
 
 Each model call also carries a timeout: a hung `claude -p` would otherwise hang
 `digest run` (and every drain behind it) forever. After

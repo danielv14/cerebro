@@ -4,7 +4,7 @@ export { type DigestConfig, digestConfigFromEnv } from "./config.ts";
 export {
   buildDigestInput,
   DEFAULT_DIGEST_MODELS,
-  DIGEST_INPUT_MAX_CHARS,
+  DIGEST_INPUT_MAX_BYTES,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   type DigestModelConfig,

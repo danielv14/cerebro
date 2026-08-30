@@ -210,6 +210,49 @@ describe("buildDigestInput (size-bounded transcript)", () => {
   test("handles an empty thread", () => {
     expect(buildDigestInput([])).toBe("");
   });
+
+  test("caps a non-ASCII thread within the byte budget", () => {
+    // 7 bytes per 4 characters, the ratio the character-count budget overshot on.
+    const swedish = "åäö ".repeat(50_000);
+    const out = buildDigestInput([msg("user", swedish), msg("assistant", swedish)], 20_000);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(20_000);
+    expect(out).toContain("truncated for digest");
+    expect((out.match(/──── /g) ?? []).length).toBe(2);
+  });
+
+  test("truncation never splits a multi-byte character", () => {
+    const messages = Array.from({ length: 6 }, (_unused, i) =>
+      msg(i % 2 === 0 ? "user" : "assistant", "åäö🎉".repeat(2_000)),
+    );
+    // Sweep budgets so the cap lands mid-character in both the 2-byte and the
+    // 4-byte sequences rather than only on a lucky boundary.
+    for (let budget = 1_000; budget < 1_040; budget++) {
+      const out = buildDigestInput(messages, budget);
+      expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(budget);
+      // A split sequence survives the round trip as U+FFFD, so the strings differ.
+      expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
+      expect(out).not.toContain("\ufffd");
+    }
+  });
+
+  test("an ASCII thread below budget renders byte-identically to `show --full`", () => {
+    const out = buildDigestInput([msg("user", "hello there"), msg("assistant", "general kenobi")]);
+    expect(out).toBe(
+      "──── user · 2026-01-01T00:00:00.000Z ────\nhello there\n\n" +
+        "──── assistant · 2026-01-01T00:00:00.000Z ────\ngeneral kenobi\n",
+    );
+  });
+
+  test("caps a large multi-byte body in linear time", () => {
+    // A quadratic truncation walk took 14s on this input; the budget is loose
+    // enough to catch a regression without going flaky on a busy machine.
+    const body = "åäö ".repeat(200_000);
+    const started = performance.now();
+    const out = buildDigestInput([msg("user", body)], 400_000);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(400_000);
+  });
 });
 
 describe("digest (summaries layer)", () => {

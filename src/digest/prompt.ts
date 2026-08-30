@@ -44,7 +44,7 @@ const DEFAULT_HAIKU_MAX_BYTES = transcriptByteBudget(SMALL_MODEL_CONTEXT_TOKENS)
 
 // Final backstop so even the 1M model never overflows; pickDigestModel is the
 // primary size control.
-export const DIGEST_INPUT_MAX_CHARS = transcriptByteBudget(LARGE_MODEL_CONTEXT_TOKENS);
+export const DIGEST_INPUT_MAX_BYTES = transcriptByteBudget(LARGE_MODEL_CONTEXT_TOKENS);
 
 export interface DigestModelConfig {
   small: string;
@@ -78,40 +78,59 @@ const renderHeader = (message: RenderableMessage): string => {
   return `──── ${message.role}${tag} · ${message.ts ?? ""} ────\n`;
 };
 
+const truncationNote = (droppedBytes: number): string =>
+  `\n[+${droppedBytes} bytes truncated for digest]`;
+
+// Walks code points, so the kept prefix never ends inside a multi-byte sequence
+// or between the halves of a surrogate pair.
+const sliceToBytes = (text: string, maxBytes: number): string => {
+  let bytes = 0;
+  let end = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char);
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += char.length;
+  }
+  return text.slice(0, end);
+};
+
 // Below budget every message renders verbatim (identical to `show --full`).
 // Above it, a water-fill caps each body to a fair share: short messages stay
-// whole while the longest essays are trimmed first.
+// whole while the longest essays are trimmed first. Everything is measured in
+// bytes, because the budget is a byte count derived from a token estimate.
 export const buildDigestInput = (
   messages: RenderableMessage[],
-  maxChars = DIGEST_INPUT_MAX_CHARS,
+  maxBytes = DIGEST_INPUT_MAX_BYTES,
 ): string => {
   const headers = messages.map(renderHeader);
   const bodies = messages.map((message) => message.text);
-  const fixed = headers.reduce((sum, header) => sum + header.length + 2, 0);
-  const total = fixed + bodies.reduce((sum, body) => sum + body.length, 0);
+  const bodyBytes = bodies.map((body) => Buffer.byteLength(body));
+  const fixed = headers.reduce((sum, header) => sum + Buffer.byteLength(header) + 2, 0);
+  const total = fixed + bodyBytes.reduce((sum, bytes) => sum + bytes, 0);
 
   const render = (cap: number | null): string =>
     messages
       .map((_message, i) => {
         const body = bodies[i]!;
-        const capped =
-          cap !== null && body.length > cap
-            ? `${body.slice(0, cap)}\n[+${body.length - cap} chars truncated for digest]`
-            : body;
-        return `${headers[i]}${capped}\n`;
+        if (cap === null || bodyBytes[i]! <= cap) return `${headers[i]}${body}\n`;
+        // The note is charged to the cap so the block stays within it. Reserving
+        // against the whole body is safe, since the dropped count can never have
+        // more digits than the body's own byte length.
+        const kept = sliceToBytes(body, cap - truncationNote(bodyBytes[i]!).length);
+        return `${headers[i]}${kept}${truncationNote(bodyBytes[i]! - Buffer.byteLength(kept))}\n`;
       })
       .join("\n");
 
-  if (total <= maxChars) return render(null);
+  if (total <= maxBytes) return render(null);
 
-  // Largest cap C with sum(min(len, C)) <= bodyBudget, by binary search. The
-  // truncation markers are bounded and inside the headroom baked into maxChars.
-  const bodyBudget = Math.max(0, maxChars - fixed);
+  // Largest cap C with sum(min(bytes, C)) <= bodyBudget, by binary search.
+  const bodyBudget = Math.max(0, maxBytes - fixed);
   let lo = 0;
-  let hi = bodies.reduce((max, body) => Math.max(max, body.length), 0);
+  let hi = bodyBytes.reduce((max, bytes) => Math.max(max, bytes), 0);
   while (lo < hi) {
     const mid = Math.floor((lo + hi + 1) / 2);
-    const used = bodies.reduce((sum, body) => sum + Math.min(body.length, mid), 0);
+    const used = bodyBytes.reduce((sum, bytes) => sum + Math.min(bytes, mid), 0);
     if (used <= bodyBudget) lo = mid;
     else hi = mid - 1;
   }
