@@ -25,6 +25,7 @@ import { showCommand } from "./commands/show.ts";
 import { skillsCommand } from "./commands/skills.ts";
 import { statsCommand } from "./commands/stats.ts";
 import { openDb } from "./db.ts";
+import { createGitResolver, type GitResolver } from "./git.ts";
 import { HELP } from "./help.ts";
 import { defaultDbPath } from "./paths.ts";
 
@@ -120,6 +121,7 @@ const parseCliArgs = (args: string[]) =>
 export interface CliEnv {
   now?: number;
   cwd?: string;
+  resolveGit?: GitResolver;
 }
 
 export const runCli = (
@@ -201,12 +203,15 @@ export const runCli = (
   // Read once per run, so every command in one dispatch sees the same instant.
   const now = env.now ?? Date.now();
   const cwd = env.cwd ?? process.cwd();
+  // One resolver per dispatch, so its per-cwd cache lives exactly as long as the run.
+  const resolveGit = env.resolveGit ?? createGitResolver();
   const context: CommandContext<Record<string, unknown>> = {
     args: commandArgs,
     rest,
     dbPath,
     now,
     cwd,
+    resolveGit,
     progress: io.log,
   };
 

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
-import { gitInfo } from "./git.ts";
+import { createGitResolver, type GitResolver } from "./git.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
 import { adapterFor, discoverAllSessionFiles, sourceAdapters } from "./sources/registry.ts";
@@ -102,13 +102,13 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 // Top-level file: incoming values win. Title is the exception: the stored
 // title_priority decides, with >= so a renewed same-priority title still
 // replaces the old.
-const upsertSession = (db: Database, meta: FileMeta): void => {
+const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
     .get(meta.sessionId) as { cwd: string | null } | null;
 
   const cwd = meta.cwd ?? existing?.cwd ?? null;
-  const git = gitInfo(cwd);
+  const git = resolveGit(cwd);
   const agg = sessionAggregate(db, meta.sessionId);
 
   db.query(
@@ -259,6 +259,7 @@ export interface IndexOptions {
   // Implies full.
   rebuild?: boolean;
   adapters?: SourceAdapter[];
+  resolveGit?: GitResolver;
   onSkip?: (line: string) => void;
 }
 
@@ -269,6 +270,7 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   const adapters = opts.adapters ?? sourceAdapters();
+  const resolveGit = opts.resolveGit ?? createGitResolver();
   const files = discoverAllSessionFiles(adapters);
   const saveState = db.query(
     `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
@@ -297,7 +299,7 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
         const meta = ingestLines(db, file, lines, classify, rebuild);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
-        else upsertSession(db, meta);
+        else upsertSession(db, meta, resolveGit);
       });
       tx();
       filesIndexed++;

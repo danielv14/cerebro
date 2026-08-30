@@ -47,10 +47,12 @@ const options = {
 // index import.
 export const indexCommand = defineCommand({
   options,
-  run: ({ db, args, progress }) => {
+  run: ({ db, args, progress, resolveGit }) => {
     if (args["dry-run"]) return { lines: dryRunReport(dryRunIndex(db, args.full || args.rebuild)) };
     if (args.rebuild)
-      return { lines: rebuildResult(runIndex(db, { rebuild: true, onSkip: progress })) };
-    return { lines: indexResult(runIndex(db, { full: args.full, onSkip: progress })) };
+      return {
+        lines: rebuildResult(runIndex(db, { rebuild: true, resolveGit, onSkip: progress })),
+      };
+    return { lines: indexResult(runIndex(db, { full: args.full, resolveGit, onSkip: progress })) };
   },
 });
