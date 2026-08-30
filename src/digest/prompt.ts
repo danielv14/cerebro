@@ -52,24 +52,19 @@ export interface DigestModelConfig {
   thresholdChars: number;
 }
 
-export const digestModelConfig = (): DigestModelConfig => {
-  const threshold = process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS;
-  const parsed = threshold ? Number(threshold) : DEFAULT_HAIKU_MAX_CHARS;
-  return {
-    small: process.env.CEREBRO_DIGEST_MODEL || "claude-haiku-4-5",
-    large: process.env.CEREBRO_DIGEST_MODEL_LARGE || "claude-sonnet-4-6[1m]",
-    // A non-numeric override falls back rather than becoming NaN, which would
-    // wedge every thread on the small model.
-    thresholdChars: Number.isFinite(parsed) ? parsed : DEFAULT_HAIKU_MAX_CHARS,
-  };
+// The shipped tiering. config.ts layers the env overrides on top of it.
+export const DEFAULT_DIGEST_MODELS: DigestModelConfig = {
+  small: "claude-haiku-4-5",
+  // The [1m] suffix is what actually buys the 1M window; without it the model
+  // answers on 200k and a large thread overflows.
+  large: "claude-sonnet-4-6[1m]",
+  thresholdChars: DEFAULT_HAIKU_MAX_CHARS,
 };
 
 // Bytes, not characters, so multibyte threads tier correctly; `>` is strict so a
 // thread exactly at the threshold stays on the small model.
-export const pickDigestModel = (
-  byteCount: number,
-  config: DigestModelConfig = digestModelConfig(),
-): string => (byteCount > config.thresholdChars ? config.large : config.small);
+export const pickDigestModel = (byteCount: number, models: DigestModelConfig): string =>
+  byteCount > models.thresholdChars ? models.large : models.small;
 
 interface RenderableMessage {
   role: string;

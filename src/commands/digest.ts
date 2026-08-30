@@ -1,10 +1,12 @@
 import * as v from "valibot";
 import {
   buildDigestInput,
+  createClaudeSummarizer,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   type DigestOutcome,
   type DrainResult,
+  digestConfigFromEnv,
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
@@ -155,7 +157,10 @@ export const digestCommand: CommandGroup = {
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
+        const config = digestConfigFromEnv();
         const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+          summarize: createClaudeSummarizer(config),
+          models: config.models,
           onStart: (about) => progress(digestStartLine(about)),
         });
         return {
@@ -171,7 +176,10 @@ export const digestCommand: CommandGroup = {
       options: { limit: limitOption } satisfies OptionTable,
       run: ({ db, args, progress }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
+        const config = digestConfigFromEnv();
         const result = runDrain(db, cap, {
+          summarize: createClaudeSummarizer(config),
+          models: config.models,
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
           onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
@@ -202,11 +210,12 @@ export const digestCommand: CommandGroup = {
         bytes: numeric({ integer: true, min: 0, label: "a non-negative integer" }),
       } satisfies OptionTable,
       run: ({ db, args, rest }) => {
-        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes)] };
+        const { models } = digestConfigFromEnv();
+        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes, models)] };
         const input = buildDigestInput(
           threadMessages(db, resolveOrThrow(db, rest[0], "digest model")),
         );
-        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"))] };
+        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"), models)] };
       },
     }),
 

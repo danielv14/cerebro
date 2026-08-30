@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { parseSessionEndPayload } from "../src/commands/digest.ts";
 import { openDb } from "../src/db.ts";
 import {
-  claudeSummarizer,
+  createClaudeSummarizer,
+  DEFAULT_DIGEST_MODELS,
+  type DigestConfig,
   getSummary,
   runDigest,
   runDrain,
@@ -181,22 +183,21 @@ describe("runDigest", () => {
   });
 });
 
-describe("claudeSummarizer", () => {
+describe("createClaudeSummarizer", () => {
   let dir: string;
-  let saved: string | undefined;
-  let savedTimeout: string | undefined;
 
   beforeEach(() => {
     dir = fs.mkdtempSync(join(tmpdir(), "cerebro-claude-"));
-    saved = process.env.CEREBRO_CLAUDE_BIN;
-    savedTimeout = process.env.CEREBRO_DIGEST_TIMEOUT_MS;
   });
   afterEach(() => {
-    if (saved === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
-    else process.env.CEREBRO_CLAUDE_BIN = saved;
-    if (savedTimeout === undefined) delete process.env.CEREBRO_DIGEST_TIMEOUT_MS;
-    else process.env.CEREBRO_DIGEST_TIMEOUT_MS = savedTimeout;
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const config = (over: Partial<DigestConfig> = {}): DigestConfig => ({
+    models: DEFAULT_DIGEST_MODELS,
+    timeoutMs: 30_000,
+    claudeBin: join(dir, "claude"),
+    ...over,
   });
 
   // A stand-in for the claude CLI, so the adapter's wiring (transcript on stdin,
@@ -205,14 +206,17 @@ describe("claudeSummarizer", () => {
     const path = join(dir, "claude");
     fs.writeFileSync(path, `#!/usr/bin/env bash\n${script}\n`);
     fs.chmodSync(path, 0o755);
-    process.env.CEREBRO_CLAUDE_BIN = path;
     return path;
   };
 
   test("passes the transcript on stdin and the prompt as an argument", () => {
     // Echo back what arrived, so the assertion covers both channels at once.
     fakeClaude('printf "stdin:%s args:%s model:%s" "$(cat)" "$5" "$4"');
-    const result = claudeSummarizer({ input: "TRANSCRIPT", model: "some-model", prompt: "PROMPT" });
+    const result = createClaudeSummarizer(config())({
+      input: "TRANSCRIPT",
+      model: "some-model",
+      prompt: "PROMPT",
+    });
 
     expect(result.ok).toBe(true);
     expect(result.text).toBe("stdin:TRANSCRIPT args:PROMPT model:some-model");
@@ -220,7 +224,7 @@ describe("claudeSummarizer", () => {
 
   test("reports a non-zero exit as a failure and keeps the stderr reason", () => {
     fakeClaude('echo "Prompt is too long" >&2; exit 1');
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const result = createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" });
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("exited 1");
@@ -229,15 +233,20 @@ describe("claudeSummarizer", () => {
 
   test("reports empty output as a failure", () => {
     fakeClaude("exit 0");
-    expect(claudeSummarizer({ input: "T", model: "m", prompt: "P" }).ok).toBe(false);
+    expect(createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" }).ok).toBe(
+      false,
+    );
   });
 
   test("a call that exceeds the timeout is killed and reported, not hung", () => {
     // The stand-in sleeps far past the timeout; without the kill this test (and a
     // real drain) would hang.
     fakeClaude("sleep 30");
-    process.env.CEREBRO_DIGEST_TIMEOUT_MS = "250";
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const result = createClaudeSummarizer(config({ timeoutMs: 250 }))({
+      input: "T",
+      model: "m",
+      prompt: "P",
+    });
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("timed out after 250ms");
@@ -246,8 +255,8 @@ describe("claudeSummarizer", () => {
   });
 
   test("a binary that cannot be run at all is fatal", () => {
-    process.env.CEREBRO_CLAUDE_BIN = join(dir, "does-not-exist");
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const summarize = createClaudeSummarizer(config({ claudeBin: join(dir, "does-not-exist") }));
+    const result = summarize({ input: "T", model: "m", prompt: "P" });
 
     expect(result.ok).toBe(false);
     expect(result.fatal).toBe(true);
