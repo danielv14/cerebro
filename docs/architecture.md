@@ -381,9 +381,7 @@ touching callers.
   need would add another field. The cost is paid in `test/cli.test.ts`, where
   the tests that assert the shipped tiering clear the overrides in a
   `beforeEach` because they drive `runCli` and env is the contract they are
-  testing. `DigestModelConfig.thresholdBytes` is named in bytes while
-  `CEREBRO_DIGEST_HAIKU_MAX_CHARS` keeps the name it shipped with; `config.ts`
-  is the one place the two meet.
+  testing.
 - **`run.ts`** is the summarize pipeline (render, tier, call, guard, store) and
   the one place cerebro spawns a model, behind the `Summarizer` seam
   (`createClaudeSummarizer` builds one that spawns the CLI with the configured
