@@ -1,16 +1,17 @@
 // Public surface: code outside src/digest imports from here, never the internals.
 export { DIGEST_PROMPT_SIGNATURE } from "../digest-signature.ts";
+export { type DigestConfig, digestConfigFromEnv } from "./config.ts";
 export {
   buildDigestInput,
+  DEFAULT_DIGEST_MODELS,
   DIGEST_INPUT_MAX_CHARS,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   type DigestModelConfig,
-  digestModelConfig,
   pickDigestModel,
 } from "./prompt.ts";
 export {
-  claudeSummarizer,
+  createClaudeSummarizer,
   type DigestOutcome,
   type DrainResult,
   runDigest,

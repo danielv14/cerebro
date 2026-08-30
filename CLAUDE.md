@@ -57,7 +57,8 @@ code.
   the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
   subagent walk, the pinned registered provider ids, and a fake second adapter
   indexed end to end plus dry-run parity through it),
-  git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance),
+  git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance, the
+  per-instance cache) and its injection through `runIndex` and `runCli`,
   dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option
   tables, per-command rejection of foreign flags, and each command via an injected
   db and capturing sink), option coercion (`test/commands/args.test.ts`), the
@@ -108,8 +109,9 @@ pins that list.
 (this is why `cerebro sessions --keep 3` errors instead of being ignored),
 coercing and validating the declared ones, opening and closing the database for
 the commands that declared they need it,
-supplying the ambient clock and working directory (`now`/`cwd` on the command
-input, injectable so a test can pin an instant), and rendering the result. A bad argument is a `CliError` thrown from wherever the rule
+supplying the ambient clock, working directory and git resolver
+(`now`/`cwd`/`resolveGit` on the command input, injectable so a test can pin an
+instant or a repo state), and rendering the result. A bad argument is a `CliError` thrown from wherever the rule
 lives; runCli turns it into one message plus exit 1.
 
 When adding a command: declare its options, return data, and add it to the
@@ -123,10 +125,13 @@ disagree, naming both sides. Pick a different name rather than reusing one with 
 different kind.
 
 The `digest run` / `digest drain` pipeline (`src/digest/run.ts`) is the one place
-cerebro spawns a model. It sits behind the `Summarizer` seam: `claudeSummarizer`
-spawns the CLI, tests pass a fake. cerebro owns the prompt, the size tiering and
-the storage guard, and never summarizes on its own initiative; the hooks decide
-when. `CEREBRO_CLAUDE_BIN` overrides the binary.
+cerebro spawns a model. It sits behind the `Summarizer` seam:
+`createClaudeSummarizer` builds one that spawns the CLI, tests pass a fake.
+cerebro owns the prompt, the size tiering and the storage guard, and never
+summarizes on its own initiative; the hooks decide when. The pipeline reads no
+environment: `src/digest/config.ts` resolves `CEREBRO_DIGEST_*` and
+`CEREBRO_CLAUDE_BIN` into a `DigestConfig` once at the CLI edge, and the tiering,
+timeout and binary path travel down as arguments.
 
 ## Invariants you must not break
 
@@ -171,7 +176,8 @@ These are load-bearing. Violating one silently corrupts the archive.
 8. **Use `cwd` from the line for the true path, never the decoded directory name.**
    The dash-encoding of project dirs is lossy when paths contain hyphens.
 9. **git resolution must tolerate a missing directory** -> null, not a crash
-   (`git.ts` already does; keep it cached per cwd).
+   (`createGitResolver` already does; keep the per-cwd cache on the instance so
+   nothing leaks between runs or tests).
 10. **`bun:sqlite` `.changes` is inflated by the FTS trigger** (one insert reports
     ~7). Never trust its magnitude; measure `COUNT(*)` deltas for reporting.
 

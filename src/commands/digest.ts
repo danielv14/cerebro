@@ -1,10 +1,13 @@
 import * as v from "valibot";
+import type { DigestConfig } from "../digest/config.ts";
 import {
   buildDigestInput,
+  createClaudeSummarizer,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
   type DigestOutcome,
   type DrainResult,
+  digestConfigFromEnv,
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
@@ -120,6 +123,13 @@ export const parseSessionEndPayload = (raw: string): string | null => {
   }
 };
 
+// The summarizer and the tiering must come from the same resolved config, so
+// they are derived together rather than at two call sites.
+const digestPipeline = (config: DigestConfig) => ({
+  summarize: createClaudeSummarizer(config),
+  models: config.models,
+});
+
 // Matches the reconciler's default cap.
 const DEFAULT_DRAIN_LIMIT = 8;
 
@@ -156,6 +166,7 @@ export const digestCommand: CommandGroup = {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
         const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+          ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
         });
         return {
@@ -172,6 +183,7 @@ export const digestCommand: CommandGroup = {
       run: ({ db, args, progress }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
         const result = runDrain(db, cap, {
+          ...digestPipeline(digestConfigFromEnv()),
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
           onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
@@ -202,11 +214,12 @@ export const digestCommand: CommandGroup = {
         bytes: numeric({ integer: true, min: 0, label: "a non-negative integer" }),
       } satisfies OptionTable,
       run: ({ db, args, rest }) => {
-        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes)] };
+        const { models } = digestConfigFromEnv();
+        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes, models)] };
         const input = buildDigestInput(
           threadMessages(db, resolveOrThrow(db, rest[0], "digest model")),
         );
-        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"))] };
+        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"), models)] };
       },
     }),
 

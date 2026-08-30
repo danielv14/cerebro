@@ -1,5 +1,4 @@
 import * as v from "valibot";
-import { gitInfo } from "../git.ts";
 import { DEFAULT_RELEVANT_LIMIT, type RelevantThread, relevantThreads } from "../relevance.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { CliError, flag, type OptionTable, positiveInt, text } from "./args.ts";
@@ -63,7 +62,7 @@ const options = {
 
 export const relevantCommand = defineCommand({
   options,
-  run: ({ db, args, rest, now }) => {
+  run: ({ db, args, rest, now, resolveGit }) => {
     let prompt = rest.join(" ");
     // Deliberately NOT defaulted to the input's cwd: a manual `relevant "..."`
     // must rank globally, exactly as before.
@@ -80,7 +79,7 @@ export const relevantCommand = defineCommand({
       throw new CliError("relevant: missing <prompt>");
     }
     const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
-      repoRoot: gitInfo(cwd).root,
+      repoRoot: resolveGit(cwd).root,
       cwd,
     });
     return {

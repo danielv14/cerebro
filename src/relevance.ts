@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/index.ts";
 import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
-import { hydrateThreadMeta, threadOpeningPrompt } from "./thread.ts";
+import { attachThreadDisplay, noThreadDisplay, threadOpeningPrompt } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Relevance").
 
@@ -115,19 +115,12 @@ export const relevantThreads = (
     }
   }
 
-  const metaByRoot = hydrateThreadMeta(db, [...chosen.keys()]);
-  return [...chosen.entries()].map(([root, info]) => {
-    const meta = metaByRoot.get(root);
-    return {
-      id: root,
-      last_ts: meta?.last_ts ?? null,
-      project_path: meta?.project_path ?? null,
-      provider: meta?.provider ?? null,
-      model: meta?.model ?? null,
-      title: meta?.title ?? null,
-      snippet: info.snippet,
-      opening: threadOpeningPrompt(db, root),
-      fromSummary: info.fromSummary,
-    };
-  });
+  const hits = [...chosen.entries()].map(([root, info]) => ({ root, ...info }));
+  return attachThreadDisplay(db, hits, noThreadDisplay).map(({ hit, display }) => ({
+    id: hit.root,
+    ...display,
+    snippet: hit.snippet,
+    opening: threadOpeningPrompt(db, hit.root),
+    fromSummary: hit.fromSummary,
+  }));
 };

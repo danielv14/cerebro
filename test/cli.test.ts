@@ -8,6 +8,7 @@ import { type CommandNode, defineCommand, eachCommand } from "../src/commands/co
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
+import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   assistantMsg,
@@ -786,6 +787,64 @@ describe("runCli", () => {
     expect(JSON.parse(wide.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
       "FRESHTHREAD",
       "OLDTHREAD",
+    ]);
+  });
+
+  test("recent scopes by git_root when the cwd is inside a repo (#164)", () => {
+    // The branch every real invocation takes: a real working directory is a real
+    // repo, so recentThreads filters on git_root rather than project_path. Every
+    // other end-to-end recent test lands on the project_path fallback because the
+    // fixture cwds are not repos, which left this branch uncovered.
+    const resolveGit: GitResolver = (cwd) =>
+      cwd === "/checkout/mine" || cwd === "/checkout/mine/packages/api"
+        ? { root: "/checkout/mine", remote: null }
+        : { root: null, remote: null };
+
+    // Two threads in the same repo but under different working directories, plus
+    // one outside it. Only git_root scoping can return the first two together.
+    writeSession(env.projects, "-mine", "ROOTDIR", [
+      userMsg("ROOTDIR", "u1", "work at the root", { cwd: "/checkout/mine", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-mine-api", "SUBDIR", [
+      userMsg("SUBDIR", "u2", "work in a package", {
+        cwd: "/checkout/mine/packages/api",
+        timestamp: ts(1),
+      }),
+    ]);
+    writeSession(env.projects, "-other", "OUTSIDE", [
+      userMsg("OUTSIDE", "u3", "work elsewhere", { cwd: "/checkout/other", timestamp: ts(2) }),
+    ]);
+
+    const seededInRepo = () => (): ReturnType<typeof openDb> => {
+      const db = openDb(":memory:");
+      runIndex(db, { resolveGit });
+      return db;
+    };
+
+    const cap = makeIO();
+    runCli(["recent", "--cwd", "/checkout/mine/packages/api", "--json"], cap.io, seededInRepo(), {
+      now: NOW,
+      resolveGit,
+    });
+    expect(JSON.parse(cap.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
+      "SUBDIR",
+      "ROOTDIR",
+    ]);
+
+    // Without a repo the same cwd falls back to an exact project_path match, so
+    // only the session recorded in that very directory comes back.
+    const noRepo = makeIO();
+    runCli(
+      ["recent", "--cwd", "/checkout/mine/packages/api", "--json"],
+      noRepo.io,
+      seededInRepo(),
+      {
+        now: NOW,
+        resolveGit: () => ({ root: null, remote: null }),
+      },
+    );
+    expect(JSON.parse(noRepo.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
+      "SUBDIR",
     ]);
   });
 

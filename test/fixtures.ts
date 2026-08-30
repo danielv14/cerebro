@@ -96,14 +96,15 @@ export const assistantMsg = (
   ...over,
 });
 
-// Count the ranked-hit queries a call issues, so a test can pin how many over-fetch
-// rounds it ran. Wrapping db.query is the only seam for that: the window policy is
-// internal to the FTS layer on purpose, and the round count is not in the result.
-export const countHitQueries = (db: Database, run: () => void): number => {
+// Count the queries a call issues whose SQL contains `fragment`, so a test can pin
+// how many over-fetch rounds the window ran or that a batch hydrated once. Wrapping
+// db.query is the only seam for either: both policies are internal on purpose and
+// neither count is in the result.
+export const countQueriesMatching = (db: Database, fragment: string, run: () => void): number => {
   let queries = 0;
   const real = db.query.bind(db);
   db.query = ((sql: string) => {
-    if (sql.includes("messages_fts MATCH")) queries++;
+    if (sql.includes(fragment)) queries++;
     return real(sql);
   }) as typeof db.query;
   try {

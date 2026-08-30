@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/index.ts";
+import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import { decayedRank, relevantThreads } from "../src/relevance.ts";
 import {
@@ -176,12 +177,11 @@ describe("relevance ranking", () => {
         timestamp: ts(month),
       }),
     ]);
-    runIndex(db);
-    // The fixture cwds are not real directories, so indexing resolved no git root;
-    // set the roots the way an index inside a real repo would (gitInfo itself is
-    // covered in git.test.ts).
-    db.run("UPDATE sessions SET git_root = '/checkout/mine' WHERE session_id = 'MINE'");
-    db.run("UPDATE sessions SET git_root = '/checkout/other' WHERE session_id = 'OTHER'");
+    // The fixture cwds are not real directories, so a fake resolver stands in for
+    // an index run inside a real repo. The resolver itself is covered in
+    // git.test.ts; here it is what makes git_root reach the sessions rows.
+    const resolveGit: GitResolver = (cwd) => ({ root: cwd ?? null, remote: null });
+    runIndex(db, { resolveGit });
     const now = Date.parse(ts(month));
 
     // repoRoot matches on git_root, and takes precedence over the cwd path.

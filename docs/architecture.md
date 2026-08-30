@@ -198,13 +198,23 @@ Key design points:
   starts in a resume of a thread whose root sat on master, so a thread touches
   a branch when any of its sessions was recorded on it. `search --branch` and
   `sessions --branch` compose the same `threadOnBranch` fragment.
-- **`hydrateThreadMeta`** reads display metadata from the rollup, not the
-  root's own sessions row: for a thread with resumes the root's row carries the
-  first session's `last_ts` and often no title, which made `relevant` and
-  `digest search` disagree with `sessions` and `recent` on the same thread. A
-  root with no rollup row is absent from the map and callers fall back to null
-  metadata rather than dropping the hit (a summary must survive its sessions
-  rows being deleted).
+- **`attachThreadDisplay`** is the step every ranked-hit path runs after dedup:
+  hydrate the rollup once for the whole batch and pair each hit with its
+  thread's display identity, leaving the caller to map that into its own result
+  shape. It reads that identity from the
+  rollup, not the root's own sessions row: for a thread with resumes the root's
+  row carries the first session's `last_ts` and often no title, which made
+  `relevant` and `digest search` disagree with `sessions` and `recent` on the
+  same thread. A root with no rollup row gets the caller's fallback rather than
+  being dropped (a summary must survive its sessions rows being deleted), and
+  the fallback is an argument because the two policies in use are both
+  deliberate and used to be invisible: `search` answers from the matched
+  session's own columns, `relevant` and `digest search` from nothing.
+  `threadDisplay` is the single construction site for the shape, which is what
+  fixes the JSON key order of the two callers that spread it whole; a test pins
+  that order for all three listings. Owning
+  the step here is what keeps a new display column (`provider` and `model` cost
+  five source files and five test files) from being paid for three times.
 - **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER
   over the exact ORDER BY that `threadMessages` sorts with, owned next to it so
   search's `#N` ordinals and `show`'s numbering share one definition.
@@ -224,8 +234,10 @@ One owner of the ranked-hit query shape over `messages_fts`. `search` and
 `relevantThreads` used to carry their own copy of the FTS-join-sessions-join-
 rollup query and their own spelling of "best hit per thread root", and the two
 paths repeatedly disagreed about the same thread. The join, the dedup and the
-window growth live here once; a caller keeps its ranking function, the size of
-its first fetch, and display hydration.
+window growth live here once, and the step after them (hydrating the thread
+rollup and attaching it to each hit) is `attachThreadDisplay` in the thread
+module, which owns that metadata. A caller keeps its ranking function, the size
+of its first fetch, its fallback policy and its own result shape.
 
 - `escapeLike` escapes user-supplied LIKE fragments; every LIKE built from user
   input pairs it with an explicit `ESCAPE '\'`.
@@ -274,10 +286,14 @@ Filter semantics worth knowing:
   starts with `[tool_` as `flattenContent` renders it. A message that opens
   with prose and calls a tool further down is kept on purpose.
 
-Title and project on a hit are the thread's, hydrated in one query over the
-kept hits; `ts` and `git_branch` stay the matched message's own. The ordinal is
-computed once per kept hit rather than in the hit query, where it would run a
-thread-wide COUNT for every matched row the sorter sees.
+Title, project, provider and model on a hit are the thread's, attached by
+`attachThreadDisplay` in one query over the kept hits; `ts` and `git_branch`
+stay the matched message's own, and a search hit carries no thread `last_ts` at
+all. `search` passes the session-row fallback policy, so a hit whose thread has
+no rollup renders on its own session row instead of losing its title and
+project. The ordinal is computed once per kept hit rather than in the hit
+query, where it would run a thread-wide COUNT for every matched row the sorter
+sees.
 
 ## Relevance (`src/relevance.ts`)
 
@@ -302,6 +318,10 @@ was typed in, matched on the thread's git_root when the cwd is in a repo, else
 on exact project_path (the same pairing `recent` scopes by). 1.5x is worth
 roughly two months of recency at the 90-day half-life. It is a boost, never a
 filter, so a much stronger cross-repo match stays reachable.
+
+Both tiers hand their chosen roots to `attachThreadDisplay` with the
+null-fallback policy, so the display identity is read once for the whole result
+and lives in the thread module rather than here.
 
 The raw tier's window is deduped on the tier's own decayed-and-boosted rank
 (not on bm25), so the hit kept per thread is the one it actually ranks on.
@@ -343,10 +363,20 @@ touching callers.
   indexed in between must stay stale rather than be marked covered by a summary
   that never saw them. `searchSummaryRoots` is the single owner of the
   summaries_fts query shape, shared by `relevant`'s summary tier and
-  `digest search`.
+  `digest search`; `searchSummaries` attaches display identity through
+  `attachThreadDisplay` on the null-fallback policy, which is what lets a
+  summary outlive its sessions rows.
+- **`config.ts`** resolves the digest environment (`CEREBRO_DIGEST_MODEL`,
+  `CEREBRO_DIGEST_MODEL_LARGE`, `CEREBRO_DIGEST_HAIKU_MAX_CHARS`,
+  `CEREBRO_DIGEST_TIMEOUT_MS`, `CEREBRO_CLAUDE_BIN`) into one `DigestConfig`.
+  The CLI edge calls it once per invocation and passes the result down, so
+  nothing in the pipeline reads `process.env`: the tiering, the timeout and the
+  binary path are arguments, and a test supplies them directly instead of
+  mutating the process's environment and restoring it.
 - **`run.ts`** is the summarize pipeline (render, tier, call, guard, store) and
   the one place cerebro spawns a model, behind the `Summarizer` seam
-  (`claudeSummarizer` spawns the CLI; tests pass a fake). The pipeline used to
+  (`createClaudeSummarizer` builds one that spawns the CLI with the configured
+  binary and timeout; tests pass a fake). The pipeline used to
   live twice in bash, untestable and drifting. The spawn passes
   `--no-session-persistence` so the one-shot run is not recorded as a session
   the indexer would then have to skip, and enforces a generous timeout so a
@@ -392,6 +422,12 @@ opts in. The deployed-drift check spawns the deployed binary's `version` and
 compares build stamps, which is why `version` must answer without opening the
 archive.
 
+The two checks that probe the machine rather than the archive (that binary and
+`settings.json`) take their paths as arguments, resolved at the CLI edge from
+`deployedBinaryPath()` and `claudeDir()`. Doctor stays read-only by
+construction and stops deciding on its own where to look, so a test points them
+at a fixture instead of steering `CLAUDE_CONFIG_DIR` and restoring it.
+
 ## CLI (`src/cli.ts`, `src/commands/`)
 
 The command shape (options as data, one dispatcher owning parsing, validation,
@@ -417,6 +453,12 @@ shaped"). Details that live in the code:
 - `version` is db-less on purpose: doctor's drift check spawns the deployed
   binary's `version`, and that answer must not depend on whether its archive is
   readable.
+- The ambient values a command reads (`now`, `cwd`, `resolveGit`) come from the
+  dispatcher, one per run, and are injectable. `resolveGit` is the
+  `GitResolver` seam: `index` hands it to `runIndex`, `recent` and `relevant`
+  scope by the root it returns, and a test drives the whole command with a
+  known repo state instead of depending on which directories on the machine
+  happen to be git repos.
 
 Renderers live with their commands; `render.ts` keeps only the shared
 vocabulary (id/time/path/size shorthands). CLI output is consumed by hooks and

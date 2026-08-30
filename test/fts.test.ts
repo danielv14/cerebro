@@ -6,7 +6,7 @@ import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { search } from "../src/search.ts";
 import {
-  countHitQueries,
+  countQueriesMatching,
   makeClaudeDir,
   type TempClaude,
   ts,
@@ -233,7 +233,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
     runIndex(db);
 
     let threads: string[] = [];
-    const queries = countHitQueries(db, () => {
+    const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
       threads = relevantThreads(db, "limiter").map((thread) => thread.id);
     });
     expect(threads).toEqual(["CHATTY"]);

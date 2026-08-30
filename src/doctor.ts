@@ -1,10 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
 import { summaryCoverage } from "./digest/index.ts";
-import { claudeDir } from "./paths.ts";
 import { orphanedCursorPaths } from "./scan.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
@@ -142,13 +140,8 @@ const walSize = (dbPath: string): Check => {
   }
 };
 
-// One expression so doctor and the deploy script cannot disagree about the path.
-export const deployedBinaryPath = (): string =>
-  join(process.env.CLAUDE_CONFIG_DIR || claudeDir(), "cerebro", "cerebro");
-
-const deployedDrift = (running: BuildStamp): Check => {
+const deployedDrift = (running: BuildStamp, path: string): Check => {
   const check = defineCheck({ key: "deployed", group: "Build", label: "deployed" });
-  const path = deployedBinaryPath();
   if (!existsSync(path)) return check.unknown(`no binary at ${path}`, "bun run deploy");
   let deployedLine: string;
   try {
@@ -172,9 +165,8 @@ const deployedDrift = (running: BuildStamp): Check => {
     : check.warn(`${deployedCommit}, this build is ${running.commit}`, "bun run deploy");
 };
 
-const hookWiring = (): Check => {
+const hookWiring = (path: string): Check => {
   const check = defineCheck({ key: "hook:SessionEnd", group: "Hooks", label: "SessionEnd" });
-  const path = join(claudeDir(), "settings.json");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -196,14 +188,18 @@ const hookWiring = (): Check => {
     : check.warn("not wired to cerebro", "add a SessionEnd hook (see README, Automation)");
 };
 
-export const runDoctor = (
-  db: Database,
-  dbPath: string,
-  opts: { full?: boolean } = {},
-): DoctorReport => {
+export interface DoctorOptions {
+  // The two probes of the machine rather than the archive. Resolved at the CLI
+  // edge so doctor never decides on its own where to look.
+  deployedBinary: string;
+  settingsFile: string;
+  full?: boolean;
+}
+
+export const runDoctor = (db: Database, dbPath: string, opts: DoctorOptions): DoctorReport => {
   const build = buildStamp();
   const checks: Check[] = [
-    deployedDrift(build),
+    deployedDrift(build, opts.deployedBinary),
     schemaCheck(db),
     integrityCheck(db, opts.full ?? false),
     ftsCheck(db, "messages_fts"),
@@ -212,7 +208,7 @@ export const runDoctor = (
     orphanedCursors(db),
     emptySessions(db),
     digestCoverage(db),
-    hookWiring(),
+    hookWiring(opts.settingsFile),
   ];
   // Only a hard failure exits non-zero; warnings are things to get around to.
   return { build, checks, ok: !checks.some((c) => c.status === "fail") };

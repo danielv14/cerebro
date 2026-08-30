@@ -2,15 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitInfo } from "../src/git.ts";
+import { createGitResolver } from "../src/git.ts";
 
-// git.ts was the last source module with no test. Its positive path (a real repo
-// resolving to its root + origin remote) populates the git_root that `recent` scopes
-// by, and invariant #9 requires it to tolerate a missing directory by returning
-// nulls rather than throwing (it runs for every top-level session inside the
-// per-file index transaction). These drive the real `git` over throwaway dirs; each
-// case uses a distinct cwd so the module-level cache does not bleed between cases.
-describe("gitInfo", () => {
+// The resolver's positive path (a real repo resolving to its root + origin remote)
+// populates the git_root that `recent` scopes by, and invariant #9 requires it to
+// tolerate a missing directory by returning nulls rather than throwing (it runs
+// for every top-level session inside the per-file index transaction). These drive
+// the real `git` over throwaway dirs; the cache is per instance, so each case makes
+// its own resolver rather than needing a distinct cwd.
+describe("createGitResolver", () => {
   const made: string[] = [];
 
   const tempDir = (): string => {
@@ -32,7 +32,7 @@ describe("gitInfo", () => {
     git(repo, ["init"]);
     git(repo, ["remote", "add", "origin", "https://example.com/foo.git"]);
 
-    const info = gitInfo(repo);
+    const info = createGitResolver()(repo);
     // git rev-parse --show-toplevel returns the canonical (symlink-resolved) path;
     // on macOS the temp dir is under a /private symlink, so compare to realpath.
     expect(info.root).toBe(fs.realpathSync(repo));
@@ -43,34 +43,47 @@ describe("gitInfo", () => {
     const repo = tempDir();
     git(repo, ["init"]);
 
-    const info = gitInfo(repo);
+    const info = createGitResolver()(repo);
     expect(info.root).toBe(fs.realpathSync(repo));
     expect(info.remote).toBeNull();
   });
 
-  test("caches per cwd: a second call returns the identical object", () => {
+  test("caches per cwd: a second call on one resolver returns the identical object", () => {
     const repo = tempDir();
     git(repo, ["init"]);
 
-    const first = gitInfo(repo);
-    const second = gitInfo(repo);
-    expect(second).toBe(first); // same reference, served from the per-cwd cache
+    const resolveGit = createGitResolver();
+    const first = resolveGit(repo);
+    expect(resolveGit(repo)).toBe(first); // same reference, served from the per-cwd cache
+  });
+
+  test("the cache is per instance: a fresh resolver re-resolves the same cwd", () => {
+    // What makes the seam testable: nothing a resolver saw leaks into the next one.
+    const repo = tempDir();
+    git(repo, ["init"]);
+
+    const first = createGitResolver()(repo);
+    const second = createGitResolver()(repo);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
   });
 
   test("a non-repo directory resolves to nulls", () => {
     const dir = tempDir(); // created but never `git init`-ed
-    expect(gitInfo(dir)).toEqual({ root: null, remote: null });
+    expect(createGitResolver()(dir)).toEqual({ root: null, remote: null });
   });
 
   test("a missing directory resolves to nulls without throwing (invariant #9)", () => {
     const missing = join(tmpdir(), "cerebro-git-does-not-exist-zzz");
-    expect(() => gitInfo(missing)).not.toThrow();
-    expect(gitInfo(missing)).toEqual({ root: null, remote: null });
+    const resolveGit = createGitResolver();
+    expect(() => resolveGit(missing)).not.toThrow();
+    expect(resolveGit(missing)).toEqual({ root: null, remote: null });
   });
 
   test("a falsy cwd resolves to nulls without spawning git", () => {
-    expect(gitInfo(null)).toEqual({ root: null, remote: null });
-    expect(gitInfo(undefined)).toEqual({ root: null, remote: null });
-    expect(gitInfo("")).toEqual({ root: null, remote: null });
+    const resolveGit = createGitResolver();
+    expect(resolveGit(null)).toEqual({ root: null, remote: null });
+    expect(resolveGit(undefined)).toEqual({ root: null, remote: null });
+    expect(resolveGit("")).toEqual({ root: null, remote: null });
   });
 });

@@ -136,17 +136,31 @@ export const recentThreads = (
     .all(...params) as ThreadRow[];
 };
 
-export interface ThreadMeta {
-  title: string | null;
+export interface ThreadDisplay {
   last_ts: string | null;
   project_path: string | null;
   provider: string | null;
   model: string | null;
+  title: string | null;
 }
 
-// A root with no rollup row is simply absent from the map: callers fall back to
-// null metadata rather than dropping the hit.
-export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, ThreadMeta> => {
+// The sole construction site, so there is one field order to keep: `relevant` and
+// `digest search` spread this shape straight into their result rows, which makes
+// the order below their JSON key order. A rest-spread of the SELECT would follow
+// the column order instead.
+export const threadDisplay = (row: Partial<ThreadDisplay>): ThreadDisplay => ({
+  last_ts: row.last_ts ?? null,
+  project_path: row.project_path ?? null,
+  provider: row.provider ?? null,
+  model: row.model ?? null,
+  title: row.title ?? null,
+});
+
+export const noThreadDisplay = (): ThreadDisplay => threadDisplay({});
+
+// A root with no rollup row is simply absent from the map; attachThreadDisplay
+// applies the caller's fallback.
+const hydrateThreadDisplay = (db: Database, roots: string[]): Map<string, ThreadDisplay> => {
   if (roots.length === 0) return new Map();
   const placeholders = roots.map(() => "?").join(", ");
   const rows = db
@@ -154,8 +168,21 @@ export const hydrateThreadMeta = (db: Database, roots: string[]): Map<string, Th
       `SELECT id, title, last_ts, project_path, provider, model
        FROM threads WHERE id IN (${placeholders})`,
     )
-    .all(...roots) as (ThreadMeta & { id: string })[];
-  return new Map(rows.map(({ id, ...meta }) => [id, meta]));
+    .all(...roots) as (ThreadDisplay & { id: string })[];
+  return new Map(rows.map((row) => [row.id, threadDisplay(row)]));
+};
+
+// `fallback` is a parameter because the two policies for a thread with no rollup
+// row are both deliberate and used to be three copies that could drift: `search`
+// answers from the matched session's own columns, the summary-backed callers from
+// nothing.
+export const attachThreadDisplay = <H extends { root: string }>(
+  db: Database,
+  hits: H[],
+  fallback: (hit: H) => ThreadDisplay,
+): { hit: H; display: ThreadDisplay }[] => {
+  const byRoot = hydrateThreadDisplay(db, [...new Set(hits.map((hit) => hit.root))]);
+  return hits.map((hit) => ({ hit, display: byRoot.get(hit.root) ?? fallback(hit) }));
 };
 
 export const rootOf = (db: Database, sessionId: string): string => {

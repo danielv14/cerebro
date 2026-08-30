@@ -7,7 +7,7 @@ import {
   DIGEST_PROMPT,
   DIGEST_PROMPT_SIGNATURE,
   DIGEST_PROMPT_VERSION,
-  digestModelConfig,
+  digestConfigFromEnv,
   getSummary,
   pickDigestModel,
   rejectSummaryReason,
@@ -99,34 +99,21 @@ describe("pickDigestModel (size -> model tiering)", () => {
   });
 });
 
-describe("digestModelConfig (env overrides)", () => {
-  const keys = [
-    "CEREBRO_DIGEST_MODEL",
-    "CEREBRO_DIGEST_MODEL_LARGE",
-    "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
-  ];
-  const saved: Record<string, string | undefined> = {};
-  beforeEach(() => {
-    for (const k of keys) {
-      saved[k] = process.env[k];
-      delete process.env[k];
-    }
-  });
-  afterEach(() => {
-    for (const k of keys) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  });
-
+// The env is an argument here, so these read a given environment rather than
+// mutating the process's own and restoring it afterwards.
+describe("digestConfigFromEnv", () => {
   test("defaults to the token-derived threshold", () => {
     // (SMALL_MODEL_CONTEXT_TOKENS 200k - RESERVED_CONTEXT_TOKENS 90k) * BYTES_PER_TOKEN 3.
     // Leaves room for claude -p's ~77k-token system-prompt/tools overhead so a thread
     // that fits on size also fits the real request.
-    expect(digestModelConfig()).toEqual({
-      small: "claude-haiku-4-5",
-      large: "claude-sonnet-4-6[1m]",
-      thresholdChars: 330_000,
+    expect(digestConfigFromEnv({})).toEqual({
+      models: {
+        small: "claude-haiku-4-5",
+        large: "claude-sonnet-4-6[1m]",
+        thresholdChars: 330_000,
+      },
+      timeoutMs: 600_000,
+      claudeBin: "claude",
     });
   });
 
@@ -135,14 +122,33 @@ describe("digestModelConfig (env overrides)", () => {
     // request reached ~213k tokens once claude -p added its overhead, overflowing
     // Haiku's 200k window. The old 540k-char threshold kept it on Haiku; the
     // token-derived 330k threshold escalates it to the large model.
-    expect(pickDigestModel(535_524, digestModelConfig())).toBe("claude-sonnet-4-6[1m]");
+    expect(pickDigestModel(535_524, digestConfigFromEnv({}).models)).toBe("claude-sonnet-4-6[1m]");
   });
 
   test("env vars override each field", () => {
-    process.env.CEREBRO_DIGEST_MODEL = "tiny";
-    process.env.CEREBRO_DIGEST_MODEL_LARGE = "huge";
-    process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS = "12345";
-    expect(digestModelConfig()).toEqual({ small: "tiny", large: "huge", thresholdChars: 12_345 });
+    expect(
+      digestConfigFromEnv({
+        CEREBRO_DIGEST_MODEL: "tiny",
+        CEREBRO_DIGEST_MODEL_LARGE: "huge",
+        CEREBRO_DIGEST_HAIKU_MAX_CHARS: "12345",
+        CEREBRO_DIGEST_TIMEOUT_MS: "250",
+        CEREBRO_CLAUDE_BIN: "/tmp/claude",
+      }),
+    ).toEqual({
+      models: { small: "tiny", large: "huge", thresholdChars: 12_345 },
+      timeoutMs: 250,
+      claudeBin: "/tmp/claude",
+    });
+  });
+
+  test("a non-numeric override falls back instead of becoming NaN", () => {
+    // NaN would wedge every thread on the small model and disable the timeout.
+    const config = digestConfigFromEnv({
+      CEREBRO_DIGEST_HAIKU_MAX_CHARS: "lots",
+      CEREBRO_DIGEST_TIMEOUT_MS: "soon",
+    });
+    expect(config.models.thresholdChars).toBe(330_000);
+    expect(config.timeoutMs).toBe(600_000);
   });
 });
 

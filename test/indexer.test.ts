@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { DIGEST_PROMPT } from "../src/digest/index.ts";
+import type { GitResolver } from "../src/git.ts";
 import { dryRunIndex, runIndex } from "../src/indexer.ts";
 import {
   appendRaw,
@@ -32,6 +33,46 @@ describe("runIndex", () => {
   afterEach(() => {
     db.close();
     env.cleanup();
+  });
+
+  // The git_root/git_remote half of upsertSession, driven through runIndex's own
+  // interface. Without the seam this branch could only be exercised by whatever
+  // repos happened to exist on the machine running the tests.
+  test("git resolution comes from the injected resolver, per session cwd", () => {
+    const resolveGit: GitResolver = (cwd) =>
+      cwd === "/checkout/mine"
+        ? { root: "/checkout/mine", remote: "git@example.com:mine.git" }
+        : { root: null, remote: null };
+
+    writeSession(env.projects, "-repo", "INREPO", [
+      userMsg("INREPO", "u1", "work", { cwd: "/checkout/mine" }),
+    ]);
+    writeSession(env.projects, "-elsewhere", "NOREPO", [
+      userMsg("NOREPO", "u2", "work", { cwd: "/somewhere/else" }),
+    ]);
+    runIndex(db, { resolveGit });
+
+    const rows = db
+      .query("SELECT session_id, git_root, git_remote FROM sessions ORDER BY session_id")
+      .all() as { session_id: string; git_root: string | null; git_remote: string | null }[];
+    expect(rows).toEqual([
+      { session_id: "INREPO", git_root: "/checkout/mine", git_remote: "git@example.com:mine.git" },
+      { session_id: "NOREPO", git_root: null, git_remote: null },
+    ]);
+  });
+
+  test("a resolver that reports nothing leaves the git columns null (invariant #9)", () => {
+    // The moved/deleted-directory case: resolution degrades to nulls and the row
+    // is still written.
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { cwd: "/gone" })]);
+    runIndex(db, { resolveGit: () => ({ root: null, remote: null }) });
+
+    const row = db.query("SELECT git_root, git_remote, cwd FROM sessions").get() as {
+      git_root: string | null;
+      git_remote: string | null;
+      cwd: string | null;
+    };
+    expect(row).toEqual({ git_root: null, git_remote: null, cwd: "/gone" });
   });
 
   test("cold index stores user/assistant messages and skips bookkeeping", () => {

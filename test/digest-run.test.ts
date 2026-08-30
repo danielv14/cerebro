@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { parseSessionEndPayload } from "../src/commands/digest.ts";
 import { openDb } from "../src/db.ts";
 import {
-  claudeSummarizer,
+  createClaudeSummarizer,
+  DEFAULT_DIGEST_MODELS,
+  type DigestConfig,
   getSummary,
   runDigest,
   runDrain,
@@ -24,6 +26,10 @@ import {
   userMsg,
   writeSession,
 } from "./fixtures.ts";
+
+// The tiering is a required argument now; these tests assert on the pipeline, not
+// on which model it picked, so they all pass the shipped one.
+const models = DEFAULT_DIGEST_MODELS;
 
 // A valid summary has to clear SUMMARY_MIN_CHARS and must not look like an error.
 const GOOD_SUMMARY = "Worked on the limiter in cerebro. Keywords: limiter, cerebro";
@@ -61,7 +67,7 @@ describe("runDigest", () => {
 
   test("stores the summary and reports the size and model it used", () => {
     const { summarize, calls } = fakeSummarizer();
-    const outcome = runDigest(db, "SESS", { summarize });
+    const outcome = runDigest(db, "SESS", { summarize, models });
 
     expect(outcome.status).toBe("summarized");
     expect(outcome.root).toBe("SESS");
@@ -86,7 +92,7 @@ describe("runDigest", () => {
       "INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('EMPTY', 'EMPTY', 0)",
     );
     const { summarize, calls } = fakeSummarizer();
-    const outcome = runDigest(db, "EMPTY", { summarize });
+    const outcome = runDigest(db, "EMPTY", { summarize, models });
 
     expect(outcome.status).toBe("skipped");
     expect(outcome.reason).toBe("nothing to summarize");
@@ -96,7 +102,7 @@ describe("runDigest", () => {
 
   test("a non-zero exit from the model stores nothing", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
-    const outcome = runDigest(db, "SESS", { summarize });
+    const outcome = runDigest(db, "SESS", { summarize, models });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.reason).toBe("claude exited 1");
@@ -109,14 +115,14 @@ describe("runDigest", () => {
       text: "",
       detail: "claude produced no output",
     });
-    expect(runDigest(db, "SESS", { summarize }).status).toBe("failed");
+    expect(runDigest(db, "SESS", { summarize, models }).status).toBe("failed");
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
   test("output that looks like an error is rejected by the storage guard", () => {
     // The incident this guard exists for: an API failure stored as a summary.
     const { summarize } = fakeSummarizer({ text: "Prompt is too long: 213000 tokens" });
-    const outcome = runDigest(db, "SESS", { summarize });
+    const outcome = runDigest(db, "SESS", { summarize, models });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.reason).toContain("rejected");
@@ -125,7 +131,7 @@ describe("runDigest", () => {
 
   test("a fragment too short to be a summary is rejected", () => {
     const { summarize } = fakeSummarizer({ text: "ok" });
-    expect(runDigest(db, "SESS", { summarize }).status).toBe("failed");
+    expect(runDigest(db, "SESS", { summarize, models }).status).toBe("failed");
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
@@ -136,7 +142,7 @@ describe("runDigest", () => {
       detail: "could not run claude: not found",
       fatal: true,
     });
-    const outcome = runDigest(db, "SESS", { summarize });
+    const outcome = runDigest(db, "SESS", { summarize, models });
 
     expect(outcome.status).toBe("failed");
     expect(outcome.fatal).toBe(true);
@@ -157,7 +163,7 @@ describe("runDigest", () => {
       return { ok: true, text: GOOD_SUMMARY, detail: "" };
     };
 
-    expect(runDigest(db, "SESS", { summarize }).status).toBe("summarized");
+    expect(runDigest(db, "SESS", { summarize, models }).status).toBe("summarized");
     expect(getSummary(db, "SESS")?.source_last_ts).toBe(beforeCall);
     // ...so the thread is stale again immediately, and the new message gets covered.
     expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
@@ -166,7 +172,7 @@ describe("runDigest", () => {
   test("reports the thread and the model before the call, for a hung one", () => {
     const started: { root: string; bytes: number; model: string }[] = [];
     const { summarize } = fakeSummarizer();
-    runDigest(db, "SESS", { summarize, onStart: (about) => started.push(about) });
+    runDigest(db, "SESS", { summarize, models, onStart: (about) => started.push(about) });
 
     expect(started.length).toBe(1);
     expect(started[0]!.root).toBe("SESS");
@@ -176,27 +182,26 @@ describe("runDigest", () => {
 
   test("every failure leaves the thread stale so a later run retries it", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
-    runDigest(db, "SESS", { summarize });
+    runDigest(db, "SESS", { summarize, models });
     expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
   });
 });
 
-describe("claudeSummarizer", () => {
+describe("createClaudeSummarizer", () => {
   let dir: string;
-  let saved: string | undefined;
-  let savedTimeout: string | undefined;
 
   beforeEach(() => {
     dir = fs.mkdtempSync(join(tmpdir(), "cerebro-claude-"));
-    saved = process.env.CEREBRO_CLAUDE_BIN;
-    savedTimeout = process.env.CEREBRO_DIGEST_TIMEOUT_MS;
   });
   afterEach(() => {
-    if (saved === undefined) delete process.env.CEREBRO_CLAUDE_BIN;
-    else process.env.CEREBRO_CLAUDE_BIN = saved;
-    if (savedTimeout === undefined) delete process.env.CEREBRO_DIGEST_TIMEOUT_MS;
-    else process.env.CEREBRO_DIGEST_TIMEOUT_MS = savedTimeout;
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const config = (over: Partial<DigestConfig> = {}): DigestConfig => ({
+    models: DEFAULT_DIGEST_MODELS,
+    timeoutMs: 30_000,
+    claudeBin: join(dir, "claude"),
+    ...over,
   });
 
   // A stand-in for the claude CLI, so the adapter's wiring (transcript on stdin,
@@ -205,14 +210,17 @@ describe("claudeSummarizer", () => {
     const path = join(dir, "claude");
     fs.writeFileSync(path, `#!/usr/bin/env bash\n${script}\n`);
     fs.chmodSync(path, 0o755);
-    process.env.CEREBRO_CLAUDE_BIN = path;
     return path;
   };
 
   test("passes the transcript on stdin and the prompt as an argument", () => {
     // Echo back what arrived, so the assertion covers both channels at once.
     fakeClaude('printf "stdin:%s args:%s model:%s" "$(cat)" "$5" "$4"');
-    const result = claudeSummarizer({ input: "TRANSCRIPT", model: "some-model", prompt: "PROMPT" });
+    const result = createClaudeSummarizer(config())({
+      input: "TRANSCRIPT",
+      model: "some-model",
+      prompt: "PROMPT",
+    });
 
     expect(result.ok).toBe(true);
     expect(result.text).toBe("stdin:TRANSCRIPT args:PROMPT model:some-model");
@@ -220,7 +228,7 @@ describe("claudeSummarizer", () => {
 
   test("reports a non-zero exit as a failure and keeps the stderr reason", () => {
     fakeClaude('echo "Prompt is too long" >&2; exit 1');
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const result = createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" });
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("exited 1");
@@ -229,15 +237,20 @@ describe("claudeSummarizer", () => {
 
   test("reports empty output as a failure", () => {
     fakeClaude("exit 0");
-    expect(claudeSummarizer({ input: "T", model: "m", prompt: "P" }).ok).toBe(false);
+    expect(createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" }).ok).toBe(
+      false,
+    );
   });
 
   test("a call that exceeds the timeout is killed and reported, not hung", () => {
     // The stand-in sleeps far past the timeout; without the kill this test (and a
     // real drain) would hang.
     fakeClaude("sleep 30");
-    process.env.CEREBRO_DIGEST_TIMEOUT_MS = "250";
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const result = createClaudeSummarizer(config({ timeoutMs: 250 }))({
+      input: "T",
+      model: "m",
+      prompt: "P",
+    });
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("timed out after 250ms");
@@ -246,8 +259,8 @@ describe("claudeSummarizer", () => {
   });
 
   test("a binary that cannot be run at all is fatal", () => {
-    process.env.CEREBRO_CLAUDE_BIN = join(dir, "does-not-exist");
-    const result = claudeSummarizer({ input: "T", model: "m", prompt: "P" });
+    const summarize = createClaudeSummarizer(config({ claudeBin: join(dir, "does-not-exist") }));
+    const result = summarize({ input: "T", model: "m", prompt: "P" });
 
     expect(result.ok).toBe(false);
     expect(result.fatal).toBe(true);
@@ -276,8 +289,8 @@ describe("runDrain", () => {
 
   test("an empty backlog does no work", () => {
     const { summarize, calls } = fakeSummarizer();
-    runDrain(db, 8, { summarize }); // first pass summarizes everything
-    const second = runDrain(db, 8, { summarize });
+    runDrain(db, 8, { summarize, models }); // first pass summarizes everything
+    const second = runDrain(db, 8, { summarize, models });
 
     expect(second.outcomes).toEqual([]);
     expect(second.summarized).toBe(0);
@@ -286,7 +299,7 @@ describe("runDrain", () => {
 
   test("stops at the limit and leaves the rest for the next run", () => {
     const { summarize } = fakeSummarizer();
-    const result = runDrain(db, 2, { summarize });
+    const result = runDrain(db, 2, { summarize, models });
 
     expect(result.summarized).toBe(2);
     expect(result.outcomes.length).toBe(2);
@@ -301,7 +314,7 @@ describe("runDrain", () => {
         ? { ok: false, text: "", detail: "claude exited 1" }
         : { ok: true, text: GOOD_SUMMARY, detail: "" };
     };
-    const result = runDrain(db, 8, { summarize });
+    const result = runDrain(db, 8, { summarize, models });
 
     expect(result.summarized).toBe(2);
     expect(result.failed).toBe(1);
@@ -321,7 +334,7 @@ describe("runDrain", () => {
         ? { ok: false, text: "", detail: "claude timed out after 250ms and was killed" }
         : { ok: true, text: GOOD_SUMMARY, detail: "" };
     };
-    const result = runDrain(db, 8, { summarize });
+    const result = runDrain(db, 8, { summarize, models });
 
     expect(result.failed).toBe(1);
     expect(result.summarized).toBe(2);
@@ -340,7 +353,7 @@ describe("runDrain", () => {
       if (call === 1) throw new Error("something unexpected");
       return { ok: true, text: GOOD_SUMMARY, detail: "" };
     };
-    const result = runDrain(db, 8, { summarize });
+    const result = runDrain(db, 8, { summarize, models });
 
     expect(result.outcomes.length).toBe(3);
     expect(result.summarized).toBe(2);
@@ -354,10 +367,10 @@ describe("runDrain", () => {
     db.run(
       "INSERT INTO sessions (session_id, root_session_id, msg_count, last_ts) VALUES ('EMPTY', 'EMPTY', 0, '2026-01-01T00:00:00Z')",
     );
-    const outcome = runDigest(db, "EMPTY", { summarize: fakeSummarizer().summarize });
+    const outcome = runDigest(db, "EMPTY", { summarize: fakeSummarizer().summarize, models });
     expect(outcome.status).toBe("skipped");
 
-    const result = runDrain(db, 8, { summarize: fakeSummarizer().summarize });
+    const result = runDrain(db, 8, { summarize: fakeSummarizer().summarize, models });
     expect(result.failed).toBe(0);
     expect(result.skipped).toBe(0); // the threads view keeps empty threads out entirely
   });
@@ -369,7 +382,7 @@ describe("runDrain", () => {
       detail: "could not run claude: not found",
       fatal: true,
     });
-    const result = runDrain(db, 8, { summarize });
+    const result = runDrain(db, 8, { summarize, models });
 
     expect(result.aborted).toContain("could not run claude");
     expect(calls.length).toBe(1); // no point trying the other two

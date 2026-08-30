@@ -1,4 +1,3 @@
-import { gitInfo } from "../git.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts";
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
@@ -54,11 +53,11 @@ const options = {
 
 export const recentCommand = defineCommand({
   options,
-  run: ({ db, args, now, cwd: invokedIn }) => {
+  run: ({ db, args, now, cwd: invokedIn, resolveGit }) => {
     const cwd = args.cwd || invokedIn;
     const days = args.days ?? 14;
     const since = new Date(now - days * 86_400_000).toISOString();
-    const repoRoot = gitInfo(cwd).root;
+    const repoRoot = resolveGit(cwd).root;
     const threads = recentThreads(db, { repoRoot, cwd, since, limit: args.limit ?? 5 });
     const rows = threads.map((thread) => ({
       thread,
