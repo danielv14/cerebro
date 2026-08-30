@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { dedupedHitWindow, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { hydrateThreadMeta, messageOrdinal, threadOnBranch } from "./thread.ts";
+import { attachThreadDisplay, messageOrdinal, threadOnBranch } from "./thread.ts";
 
 // Filter semantics and design notes: docs/architecture.md ("Search").
 
@@ -92,24 +92,30 @@ export const search = (
     kept = collect(sanitized);
   }
 
-  const metaByRoot = hydrateThreadMeta(db, [...new Set(kept.map((hit) => hit.root))]);
-
-  return kept.map((hit) => {
+  return attachThreadDisplay(db, kept, {
     // No rollup row (sessions rows gone) falls back to what the matched session
     // carries, rather than dropping the hit.
-    const meta = metaByRoot.get(hit.root);
-    return {
+    fallback: (hit) => ({
+      last_ts: hit.last_ts,
+      project_path: hit.session_project_path,
+      provider: hit.session_provider,
+      model: hit.session_model,
+      title: hit.session_title,
+    }),
+    // A search hit is a message, so it shows the message's own ts and branch and
+    // leaves the thread's last_ts out.
+    build: (hit, display) => ({
       id: hit.id,
       session_id: hit.session_id,
       ts: hit.ts,
       role: hit.role,
-      project_path: meta ? meta.project_path : hit.session_project_path,
+      project_path: display.project_path,
       git_branch: hit.session_git_branch,
-      provider: meta ? meta.provider : hit.session_provider,
-      model: meta ? meta.model : hit.session_model,
-      title: meta ? meta.title : hit.session_title,
+      provider: display.provider,
+      model: display.model,
+      title: display.title,
       snippet: hit.snippet,
       ordinal: messageOrdinal(db, hit.root, hit.id),
-    };
+    }),
   });
 };

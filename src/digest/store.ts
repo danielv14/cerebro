@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { toMatchQuery } from "../fts.ts";
-import { hydrateThreadMeta, rootOf, threadLastTs } from "../thread.ts";
+import { attachThreadDisplay, noThreadDisplay, rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Design notes: docs/architecture.md ("Digest").
@@ -124,20 +124,8 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
-  const metaByRoot = hydrateThreadMeta(
-    db,
-    rows.map((row) => row.root),
-  );
-  return rows.map((row) => {
-    const meta = metaByRoot.get(row.root);
-    return {
-      id: row.root,
-      last_ts: meta?.last_ts ?? null,
-      project_path: meta?.project_path ?? null,
-      provider: meta?.provider ?? null,
-      model: meta?.model ?? null,
-      title: meta?.title ?? null,
-      snippet: row.snippet,
-    };
+  return attachThreadDisplay(db, rows, {
+    fallback: noThreadDisplay,
+    build: (row, display) => ({ id: row.root, ...display, snippet: row.snippet }),
   });
 };

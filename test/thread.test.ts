@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
+  attachThreadDisplay,
   countThreads,
   messageOrdinal,
+  noThreadDisplay,
   rootOf,
+  type ThreadDisplay,
   threadLastTs,
   threadMessages,
   threadOpeningPrompt,
@@ -184,6 +187,114 @@ describe("thread (identity + membership)", () => {
       writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "b", { timestamp: ts(1) })]);
       runIndex(db);
       expect(countThreads(db)).toBe(2);
+    });
+  });
+
+  // The step every ranked-hit path runs after dedup. Its whole reason to exist is
+  // that the two fallback policies used to be three copies that could drift apart
+  // without anything noticing.
+  describe("attachThreadDisplay", () => {
+    const seedTwo = (): void => {
+      writeSession(env.projects, "-repo", "A", [
+        userMsg("A", "ua", "alpha", { timestamp: ts(0) }),
+        { type: "custom-title", customTitle: "Alpha thread", sessionId: "A" },
+      ]);
+      writeSession(env.projects, "-other", "B", [
+        userMsg("B", "ub", "beta", { cwd: "/other", timestamp: ts(1) }),
+      ]);
+      runIndex(db);
+    };
+
+    test("attaches the thread's rollup identity to each hit", () => {
+      seedTwo();
+      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], {
+        fallback: noThreadDisplay,
+        build: (hit, display) => ({ id: hit.root, ...display }),
+      });
+      expect(rows).toEqual([
+        {
+          id: "A",
+          last_ts: ts(0),
+          project_path: "/repo",
+          provider: "claude-code",
+          model: null,
+          title: "Alpha thread",
+        },
+        {
+          id: "B",
+          last_ts: ts(1),
+          project_path: "/other",
+          provider: "claude-code",
+          model: null,
+          title: null,
+        },
+      ]);
+    });
+
+    test("the null policy keeps a hit whose thread has no rollup row", () => {
+      // A summary outlives its sessions rows, so the hit must survive with its
+      // identity emptied rather than be dropped.
+      seedTwo();
+      db.run("DELETE FROM sessions WHERE session_id = 'B'");
+      const rows = attachThreadDisplay(db, [{ root: "B" }], {
+        fallback: noThreadDisplay,
+        build: (hit, display) => ({ id: hit.root, ...display }),
+      });
+      expect(rows).toEqual([
+        { id: "B", last_ts: null, project_path: null, provider: null, model: null, title: null },
+      ]);
+    });
+
+    test("the session-row policy answers from what the hit itself carries", () => {
+      // `search`'s policy: the matched message's own session row is a better answer
+      // than nothing when the rollup has nothing to say.
+      seedTwo();
+      db.run("DELETE FROM sessions WHERE session_id = 'B'");
+      const own: ThreadDisplay = {
+        last_ts: null,
+        project_path: "/from-the-session",
+        provider: "claude-code",
+        model: "opus-test",
+        title: "From the session row",
+      };
+      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], {
+        fallback: () => own,
+        build: (hit, display) => ({ id: hit.root, title: display.title }),
+      });
+      // A alone has a rollup, so only B falls back.
+      expect(rows).toEqual([
+        { id: "A", title: "Alpha thread" },
+        { id: "B", title: "From the session row" },
+      ]);
+    });
+
+    test("hydrates once for the whole batch, deduplicating repeated roots", () => {
+      // Two hits in one thread must not mean two rollup queries; the ordering and
+      // the per-hit result stay unchanged.
+      seedTwo();
+      let queries = 0;
+      const real = db.query.bind(db);
+      db.query = ((sql: string) => {
+        if (sql.includes("FROM threads WHERE id IN")) queries++;
+        return real(sql);
+      }) as typeof db.query;
+      try {
+        const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }, { root: "A" }], {
+          fallback: noThreadDisplay,
+          build: (hit, display) => ({ id: hit.root, title: display.title }),
+        });
+        expect(rows.map((row) => row.id)).toEqual(["A", "B", "A"]);
+        expect(rows[2]!.title).toBe("Alpha thread");
+      } finally {
+        Reflect.deleteProperty(db, "query");
+      }
+      expect(queries).toBe(1);
+    });
+
+    test("an empty hit list does no work", () => {
+      expect(
+        attachThreadDisplay(db, [], { fallback: noThreadDisplay, build: (hit) => hit }),
+      ).toEqual([]);
     });
   });
 });
