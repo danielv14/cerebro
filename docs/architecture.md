@@ -199,8 +199,9 @@ Key design points:
   a branch when any of its sessions was recorded on it. `search --branch` and
   `sessions --branch` compose the same `threadOnBranch` fragment.
 - **`attachThreadDisplay`** is the step every ranked-hit path runs after dedup:
-  hydrate the rollup once for the whole batch, then build each result row from
-  the hit plus its thread's display identity. It reads that identity from the
+  hydrate the rollup once for the whole batch and pair each hit with its
+  thread's display identity, leaving the caller to map that into its own result
+  shape. It reads that identity from the
   rollup, not the root's own sessions row: for a thread with resumes the root's
   row carries the first session's `last_ts` and often no title, which made
   `relevant` and `digest search` disagree with `sessions` and `recent` on the
@@ -208,7 +209,10 @@ Key design points:
   being dropped (a summary must survive its sessions rows being deleted), and
   the fallback is an argument because the two policies in use are both
   deliberate and used to be invisible: `search` answers from the matched
-  session's own columns, `relevant` and `digest search` from nothing. Owning
+  session's own columns, `relevant` and `digest search` from nothing.
+  `threadDisplay` is the single construction site for the shape, which is what
+  fixes the JSON key order of the two callers that spread it whole; a test pins
+  that order for all three listings. Owning
   the step here is what keeps a new display column (`provider` and `model` cost
   five source files and five test files) from being paid for three times.
 - **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER
