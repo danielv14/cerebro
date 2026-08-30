@@ -1,6 +1,8 @@
+import { join } from "node:path";
 import { buildStampLine } from "../build-stamp.ts";
 import { dbFileSize } from "../db.ts";
 import { type Check, type DoctorReport, runDoctor } from "../doctor.ts";
+import { claudeDir, deployedBinaryPath } from "../paths.ts";
 import { humanBytes } from "../render.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
@@ -48,7 +50,11 @@ const options = { full: flag(), json: flag() } satisfies OptionTable;
 export const doctorCommand = defineCommand({
   options,
   run: ({ db, args, dbPath }) => {
-    const report = runDoctor(db, dbPath, { full: args.full });
+    const report = runDoctor(db, dbPath, {
+      deployedBinary: deployedBinaryPath(),
+      settingsFile: join(claudeDir(), "settings.json"),
+      full: args.full,
+    });
     const dbBytes = dbFileSize(dbPath);
     return {
       json: { ...report, dbPath, dbBytes },

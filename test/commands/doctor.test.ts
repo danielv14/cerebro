@@ -6,7 +6,7 @@ import { doctorReport } from "../../src/commands/doctor.ts";
 import { statsCommand } from "../../src/commands/stats.ts";
 import { openDb, SCHEMA_VERSION } from "../../src/db.ts";
 import { writeSummary } from "../../src/digest/index.ts";
-import { type Check, type DoctorReport, deployedBinaryPath, runDoctor } from "../../src/doctor.ts";
+import { type Check, type DoctorReport, runDoctor } from "../../src/doctor.ts";
 import { runIndex } from "../../src/indexer.ts";
 import { rootOf } from "../../src/thread.ts";
 import {
@@ -27,27 +27,31 @@ const byKey = (report: DoctorReport, key: string): Check => {
 describe("runDoctor", () => {
   let env: TempClaude;
   let db: Database;
-  const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  let deployedBinary: string;
+  let settingsFile: string;
+
+  // Both probes are arguments, so these point at the fixture directly: no binary
+  // in the developer's ~/.claude and no real settings.json can make the
+  // assertions flap, and no env var has to be saved and restored.
+  const doctor = (opts: { full?: boolean } = {}): DoctorReport =>
+    runDoctor(db, ":memory:", { deployedBinary, settingsFile, ...opts });
 
   beforeEach(() => {
     env = makeClaudeDir();
     process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
-    // Point the deployed-binary lookup at the fixture too, so a real binary in the
-    // developer's ~/.claude cannot make these assertions flap.
-    process.env.CLAUDE_CONFIG_DIR = env.claudeRoot;
+    deployedBinary = join(env.claudeRoot, "cerebro", "cerebro");
+    settingsFile = join(env.claudeRoot, "settings.json");
     db = openDb(":memory:");
   });
   afterEach(() => {
     db.close();
     env.cleanup();
-    if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
   });
 
   test("a healthy archive passes every hard check", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
-    const report = runDoctor(db, ":memory:");
+    const report = doctor();
     expect(report.ok).toBe(true);
     expect(report.checks.some((c) => c.status === "fail")).toBe(false);
     expect(byKey(report, "schema")).toMatchObject({
@@ -64,7 +68,7 @@ describe("runDoctor", () => {
     // key, handing --json consumers two entries for one check.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
-    const keys = runDoctor(db, ":memory:").checks.map((c) => c.key);
+    const keys = doctor().checks.map((c) => c.key);
     expect(keys.length).toBe(new Set(keys).size);
     expect(keys.every((key) => key.length > 0)).toBe(true);
   });
@@ -72,15 +76,13 @@ describe("runDoctor", () => {
   test("--full runs the complete integrity_check instead of quick_check", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
-    expect(byKey(runDoctor(db, ":memory:"), "integrity").detail).toBe("quick_check");
-    expect(byKey(runDoctor(db, ":memory:", { full: true }), "integrity").detail).toBe(
-      "integrity_check",
-    );
+    expect(byKey(doctor(), "integrity").detail).toBe("quick_check");
+    expect(byKey(doctor({ full: true }), "integrity").detail).toBe("integrity_check");
   });
 
   test("a schema from another build is a hard failure, not a warning", () => {
     db.run(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
-    const report = runDoctor(db, ":memory:");
+    const report = doctor();
     expect(byKey(report, "schema").status).toBe("fail");
     expect(report.ok).toBe(false);
   });
@@ -89,12 +91,12 @@ describe("runDoctor", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
     db.run("INSERT INTO index_state (source_file) VALUES ('/gone/nowhere.jsonl')");
-    const check = byKey(runDoctor(db, ":memory:"), "cursors");
+    const check = byKey(doctor(), "cursors");
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("1 of 2");
     expect(check.remedy).toBe("cerebro index");
     // A warning is not a failure: doctor stays usable as a cron guard.
-    expect(runDoctor(db, ":memory:").ok).toBe(true);
+    expect(doctor().ok).toBe(true);
   });
 
   test("the doctor count and the prune target agree on the same fixture set (#137)", () => {
@@ -106,7 +108,7 @@ describe("runDoctor", () => {
     runIndex(db);
     fs.rmSync(goneAfter);
 
-    const check = byKey(runDoctor(db, ":memory:"), "cursors");
+    const check = byKey(doctor(), "cursors");
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("1 of 2");
 
@@ -116,7 +118,7 @@ describe("runDoctor", () => {
     }[];
     expect(remaining.map((r) => r.source_file)).not.toContain(goneAfter);
     expect(remaining).toHaveLength(1);
-    expect(byKey(runDoctor(db, ":memory:"), "cursors").detail).toBe("1 rows, no orphans");
+    expect(byKey(doctor(), "cursors").detail).toBe("1 rows, no orphans");
   });
 
   test("zero-message sessions are reported without being treated as a problem", () => {
@@ -125,59 +127,58 @@ describe("runDoctor", () => {
       { type: "custom-title", customTitle: "Title only", sessionId: "EMPTY" },
     ]);
     runIndex(db);
-    const check = byKey(runDoctor(db, ":memory:"), "empty-sessions");
+    const check = byKey(doctor(), "empty-sessions");
     expect(check.status).toBe("ok");
     expect(check.detail).toContain("1");
     expect(check.detail).toContain("rows kept on purpose");
   });
 
   test("a missing deployed binary is an unknown, not a throw", () => {
-    expect(fs.existsSync(deployedBinaryPath())).toBe(false);
-    const check = byKey(runDoctor(db, ":memory:"), "deployed");
+    expect(fs.existsSync(deployedBinary)).toBe(false);
+    const check = byKey(doctor(), "deployed");
     expect(check.status).toBe("unknown");
     expect(check.remedy).toBe("bun run deploy");
   });
 
   test("a missing settings.json degrades the hook check to unknown", () => {
-    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("unknown");
+    expect(byKey(doctor(), "hook:SessionEnd").status).toBe("unknown");
   });
 
   test("an unparseable settings.json degrades instead of throwing", () => {
-    fs.writeFileSync(join(env.claudeRoot, "settings.json"), "{ not json");
-    const check = byKey(runDoctor(db, ":memory:"), "hook:SessionEnd");
+    fs.writeFileSync(settingsFile, "{ not json");
+    const check = byKey(doctor(), "hook:SessionEnd");
     expect(check.status).toBe("unknown");
     expect(check.detail).toContain("not valid JSON");
   });
 
   test("hook wiring is detected from settings.json and reported, never edited", () => {
-    const path = join(env.claudeRoot, "settings.json");
     const settings = {
       hooks: {
         SessionEnd: [{ matcher: "clear", hooks: [{ type: "command", command: "cerebro index" }] }],
       },
     };
-    fs.writeFileSync(path, JSON.stringify(settings));
-    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("ok");
+    fs.writeFileSync(settingsFile, JSON.stringify(settings));
+    expect(byKey(doctor(), "hook:SessionEnd").status).toBe("ok");
     // Read-only: the file is byte-identical afterwards.
-    expect(fs.readFileSync(path, "utf8")).toBe(JSON.stringify(settings));
+    expect(fs.readFileSync(settingsFile, "utf8")).toBe(JSON.stringify(settings));
   });
 
   test("a SessionEnd hook wired to something other than cerebro warns", () => {
     fs.writeFileSync(
-      join(env.claudeRoot, "settings.json"),
+      settingsFile,
       JSON.stringify({
         hooks: {
           SessionEnd: [{ matcher: "clear", hooks: [{ type: "command", command: "/bin/true" }] }],
         },
       }),
     );
-    expect(byKey(runDoctor(db, ":memory:"), "hook:SessionEnd").status).toBe("warn");
+    expect(byKey(doctor(), "hook:SessionEnd").status).toBe("warn");
   });
 
   test("digest coverage warns while a backlog exists and passes once it is drained", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db);
-    const stale = byKey(runDoctor(db, ":memory:"), "digest");
+    const stale = byKey(doctor(), "digest");
     expect(stale.status).toBe("warn");
     expect(stale.detail).toBe("0/1 threads summarized, 1 stale");
   });
@@ -209,13 +210,12 @@ describe("runDoctor", () => {
         dbPath: ":memory:",
         now: Date.parse(ts(0)),
         cwd: "/repo",
+        resolveGit: () => ({ root: null, remote: null }),
         progress: () => {},
       })
       .lines!.find((line) => line.startsWith("Threads:"));
     expect(threadsLine).toBe("Threads:          1 (0 summarized, 1 stale)");
-    expect(byKey(runDoctor(db, ":memory:"), "digest").detail).toBe(
-      "0/1 threads summarized, 1 stale",
-    );
+    expect(byKey(doctor(), "digest").detail).toBe("0/1 threads summarized, 1 stale");
   });
 });
 
