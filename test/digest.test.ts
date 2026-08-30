@@ -211,47 +211,47 @@ describe("buildDigestInput (size-bounded transcript)", () => {
     expect(buildDigestInput([])).toBe("");
   });
 
-  test("caps output in bytes, not characters, respecting multi-byte sequences", () => {
-    // Swedish: å, ä, ö are 2-3 bytes in UTF-8 each.
-    const swedish = "åäö ".repeat(200); // ~1000 bytes (3 bytes per char + 1 space byte)
-    const out = buildDigestInput([msg("user", swedish)], 500);
-    const bytes = Buffer.byteLength(out);
-    // Output must be under the 500-byte budget (with some headroom for headers).
-    expect(bytes).toBeLessThan(600);
-    // No truncation happens if output is already under budget with headers.
-    if (!out.includes("truncated for digest")) {
-      expect(Buffer.byteLength(out)).toBeLessThanOrEqual(500);
+  test("caps a non-ASCII thread within the byte budget", () => {
+    // 7 bytes per 4 characters, the ratio the character-count budget overshot on.
+    const swedish = "åäö ".repeat(50_000);
+    const out = buildDigestInput([msg("user", swedish), msg("assistant", swedish)], 20_000);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(20_000);
+    expect(out).toContain("truncated for digest");
+    expect((out.match(/──── /g) ?? []).length).toBe(2);
+  });
+
+  test("truncation never splits a multi-byte character", () => {
+    const messages = Array.from({ length: 6 }, (_unused, i) =>
+      msg(i % 2 === 0 ? "user" : "assistant", "åäö🎉".repeat(2_000)),
+    );
+    // Sweep budgets so the cap lands mid-character in both the 2-byte and the
+    // 4-byte sequences rather than only on a lucky boundary.
+    for (let budget = 1_000; budget < 1_040; budget++) {
+      const out = buildDigestInput(messages, budget);
+      expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(budget);
+      // A split sequence survives the round trip as U+FFFD, so the strings differ.
+      expect(Buffer.from(out, "utf8").toString("utf8")).toBe(out);
+      expect(out).not.toContain("\ufffd");
     }
   });
 
-  test("non-ASCII content does not overshoot the byte budget", () => {
-    // This is the regression case from the issue: a Swedish-heavy thread.
-    // With character-based capping, this would overshoot by ~56%.
-    const swedishBody = "åäö ".repeat(200_000 / 4); // ~200k bytes
-    const out = buildDigestInput([msg("user", swedishBody)], 100_000);
-    const bytes = Buffer.byteLength(out);
-    expect(bytes).toBeLessThanOrEqual(100_000 + 1_000); // Allow 1k for marker overhead
+  test("an ASCII thread below budget renders byte-identically to `show --full`", () => {
+    const out = buildDigestInput([msg("user", "hello there"), msg("assistant", "general kenobi")]);
+    expect(out).toBe(
+      "──── user · 2026-01-01T00:00:00.000Z ────\nhello there\n\n" +
+        "──── assistant · 2026-01-01T00:00:00.000Z ────\ngeneral kenobi\n",
+    );
   });
 
-  test("truncation at byte boundaries does not split multi-byte characters", () => {
-    const text = `${"a".repeat(100)}åäö`; // ASCII then multibyte
-    const out = buildDigestInput([msg("user", text)], 110);
-    // Verify no truncation marker appears malformed.
-    expect(() => {
-      // Try to parse the structure; if we split a UTF-8 sequence,
-      // the output will have invalid UTF-8 which would throw.
-      out.toString();
-    }).not.toThrow();
-    // The truncated output should be valid UTF-8.
-    expect(Buffer.isBuffer(Buffer.from(out, "utf-8"))).toBe(true);
-  });
-
-  test("ASCII input unchanged with byte-based capping", () => {
-    // Acceptance criterion: ASCII thread below budget is byte-identical.
-    const ascii = "hello world".repeat(100);
-    const out = buildDigestInput([msg("user", ascii)]);
-    expect(out).toContain("hello world");
-    expect(out).not.toContain("truncated for digest");
+  test("caps a large multi-byte body in linear time", () => {
+    // A quadratic truncation walk took 14s on this input; the budget is loose
+    // enough to catch a regression without going flaky on a busy machine.
+    const body = "åäö ".repeat(200_000);
+    const started = performance.now();
+    const out = buildDigestInput([msg("user", body)], 400_000);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(400_000);
   });
 });
 
