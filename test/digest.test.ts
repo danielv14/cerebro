@@ -84,7 +84,7 @@ describe("rejectSummaryReason (digest write guard)", () => {
 });
 
 describe("pickDigestModel (size -> model tiering)", () => {
-  const config = { small: "small-model", large: "large-model", thresholdChars: 1000 };
+  const config = { small: "small-model", large: "large-model", thresholdBytes: 1000 };
 
   test("a thread below the threshold gets the small model", () => {
     expect(pickDigestModel(999, config)).toBe("small-model");
@@ -110,7 +110,7 @@ describe("digestConfigFromEnv", () => {
       models: {
         small: "claude-haiku-4-5",
         large: "claude-sonnet-4-6[1m]",
-        thresholdChars: 330_000,
+        thresholdBytes: 330_000,
       },
       timeoutMs: 600_000,
       claudeBin: "claude",
@@ -135,7 +135,7 @@ describe("digestConfigFromEnv", () => {
         CEREBRO_CLAUDE_BIN: "/tmp/claude",
       }),
     ).toEqual({
-      models: { small: "tiny", large: "huge", thresholdChars: 12_345 },
+      models: { small: "tiny", large: "huge", thresholdBytes: 12_345 },
       timeoutMs: 250,
       claudeBin: "/tmp/claude",
     });
@@ -147,7 +147,7 @@ describe("digestConfigFromEnv", () => {
       CEREBRO_DIGEST_HAIKU_MAX_CHARS: "lots",
       CEREBRO_DIGEST_TIMEOUT_MS: "soon",
     });
-    expect(config.models.thresholdChars).toBe(330_000);
+    expect(config.models.thresholdBytes).toBe(330_000);
     expect(config.timeoutMs).toBe(600_000);
   });
 });

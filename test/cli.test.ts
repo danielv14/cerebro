@@ -631,17 +631,32 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
-  test("digest model prints the tier-picked model for a small thread", () => {
-    // Neutralize the digest env overrides so the assertion holds regardless of the
-    // dev/CI environment, then restore them.
-    const keys = [
+  // `digest model` reports the tiering the CLI edge resolved, so these assert the
+  // shipped defaults and have to run with the digest overrides cleared: a
+  // developer or CI box that exports them would otherwise flip the expected model.
+  // Cleared once for the group rather than per test, so there is one place to get
+  // the restore right.
+  describe("digest model", () => {
+    const TIERING_KEYS = [
       "CEREBRO_DIGEST_MODEL",
       "CEREBRO_DIGEST_MODEL_LARGE",
       "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
     ];
-    const saved = keys.map((k) => process.env[k]);
-    for (const k of keys) delete process.env[k];
-    try {
+    let savedTiering: (string | undefined)[];
+
+    beforeEach(() => {
+      savedTiering = TIERING_KEYS.map((key) => process.env[key]);
+      for (const key of TIERING_KEYS) delete process.env[key];
+    });
+    afterEach(() => {
+      TIERING_KEYS.forEach((key, i) => {
+        const value = savedTiering[i];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      });
+    });
+
+    test("prints the tier-picked model for a small thread", () => {
       writeSession(env.projects, "-repo", "SESS", [
         userMsg("SESS", "u1", "short thread", { timestamp: ts(0) }),
       ]);
@@ -649,30 +664,16 @@ describe("runCli", () => {
       runCli(["digest", "model", "SESS"], cap.io, seeded());
       expect(cap.logs.join("\n")).toBe("claude-haiku-4-5");
       expect(cap.exitCode).toBe(0);
-    } finally {
-      keys.forEach((k, i) => {
-        if (saved[i] === undefined) delete process.env[k];
-        else process.env[k] = saved[i]!;
-      });
-    }
-  });
+    });
 
-  test("digest model without an id fails via the shared helper", () => {
-    const cap = makeIO();
-    runCli(["digest", "model"], cap.io, () => memDb());
-    expect(cap.errs.join("\n")).toContain("digest model: missing <session-id>");
-    expect(cap.exitCode).toBe(1);
-  });
+    test("without an id fails via the shared helper", () => {
+      const cap = makeIO();
+      runCli(["digest", "model"], cap.io, () => memDb());
+      expect(cap.errs.join("\n")).toContain("digest model: missing <session-id>");
+      expect(cap.exitCode).toBe(1);
+    });
 
-  test("digest model --bytes tiers on the given size without a session id (#47)", () => {
-    const keys = [
-      "CEREBRO_DIGEST_MODEL",
-      "CEREBRO_DIGEST_MODEL_LARGE",
-      "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
-    ];
-    const saved = keys.map((k) => process.env[k]);
-    for (const k of keys) delete process.env[k];
-    try {
+    test("--bytes tiers on the given size without a session id (#47)", () => {
       const small = makeIO();
       runCli(["digest", "model", "--bytes", "100"], small.io, () => memDb());
       expect(small.logs.join("\n")).toBe("claude-haiku-4-5");
@@ -682,19 +683,28 @@ describe("runCli", () => {
       runCli(["digest", "model", "--bytes", "5000000"], large.io, () => memDb());
       expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
       expect(large.exitCode).toBe(0);
-    } finally {
-      keys.forEach((k, i) => {
-        if (saved[i] === undefined) delete process.env[k];
-        else process.env[k] = saved[i]!;
-      });
-    }
-  });
+    });
 
-  test("digest model --bytes rejects a non-numeric size", () => {
-    const cap = makeIO();
-    runCli(["digest", "model", "--bytes", "lots"], cap.io, () => memDb());
-    expect(cap.errs.join("\n")).toContain("--bytes must be a non-negative integer");
-    expect(cap.exitCode).toBe(1);
+    test("--bytes rejects a non-numeric size", () => {
+      const cap = makeIO();
+      runCli(["digest", "model", "--bytes", "lots"], cap.io, () => memDb());
+      expect(cap.errs.join("\n")).toContain("--bytes must be a non-negative integer");
+      expect(cap.exitCode).toBe(1);
+    });
+
+    test("an override in the environment still reaches the tiering", () => {
+      // The other cases clear the env; this one proves the clearing is a test
+      // fixture and not the CLI ignoring the overrides.
+      process.env.CEREBRO_DIGEST_MODEL = "tiny-model";
+      process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS = "50";
+      const small = makeIO();
+      runCli(["digest", "model", "--bytes", "10"], small.io, () => memDb());
+      expect(small.logs.join("\n")).toBe("tiny-model");
+
+      const large = makeIO();
+      runCli(["digest", "model", "--bytes", "100"], large.io, () => memDb());
+      expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
+    });
   });
 
   test("digest show prints a stored summary", () => {

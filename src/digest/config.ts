@@ -17,8 +17,11 @@ export interface DigestConfig {
 export const digestConfigFromEnv = (
   env: Record<string, string | undefined> = process.env,
 ): DigestConfig => {
+  // The env var keeps _CHARS while the field it feeds is thresholdBytes: the
+  // name shipped and is someone's hook config. This is the one place the two
+  // meet, so do not "fix" either to match the other.
   const threshold = env.CEREBRO_DIGEST_HAIKU_MAX_CHARS;
-  const parsedThreshold = threshold ? Number(threshold) : DEFAULT_DIGEST_MODELS.thresholdChars;
+  const parsedThreshold = threshold ? Number(threshold) : DEFAULT_DIGEST_MODELS.thresholdBytes;
   const parsedTimeout = Number(env.CEREBRO_DIGEST_TIMEOUT_MS);
   return {
     models: {
@@ -26,9 +29,9 @@ export const digestConfigFromEnv = (
       large: env.CEREBRO_DIGEST_MODEL_LARGE || DEFAULT_DIGEST_MODELS.large,
       // A non-numeric override falls back rather than becoming NaN, which would
       // wedge every thread on the small model.
-      thresholdChars: Number.isFinite(parsedThreshold)
+      thresholdBytes: Number.isFinite(parsedThreshold)
         ? parsedThreshold
-        : DEFAULT_DIGEST_MODELS.thresholdChars,
+        : DEFAULT_DIGEST_MODELS.thresholdBytes,
     },
     timeoutMs:
       Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : DEFAULT_TIMEOUT_MS,

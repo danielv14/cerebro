@@ -373,6 +373,15 @@ touching callers.
   nothing in the pipeline reads `process.env`: the tiering, the timeout and the
   binary path are arguments, and a test supplies them directly instead of
   mutating the process's environment and restoring it.
+
+  Reading the environment *at* that edge is deliberate and is where it stops.
+  The config does not move onto the command context next to `now`, `cwd` and
+  `resolveGit`: those three are ambient to every command, while a digest config
+  would teach the shared context about one command group, and the next such
+  need would add another field. The cost is paid in `test/cli.test.ts`, where
+  the tests that assert the shipped tiering clear the overrides in a
+  `beforeEach` because they drive `runCli` and env is the contract they are
+  testing.
 - **`run.ts`** is the summarize pipeline (render, tier, call, guard, store) and
   the one place cerebro spawns a model, behind the `Summarizer` seam
   (`createClaudeSummarizer` builds one that spawns the CLI with the configured
