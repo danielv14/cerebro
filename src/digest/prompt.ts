@@ -40,7 +40,7 @@ const LARGE_MODEL_CONTEXT_TOKENS = 1_000_000;
 const transcriptByteBudget = (contextTokens: number): number =>
   Math.max(0, contextTokens - RESERVED_CONTEXT_TOKENS) * BYTES_PER_TOKEN;
 
-const DEFAULT_HAIKU_MAX_CHARS = transcriptByteBudget(SMALL_MODEL_CONTEXT_TOKENS);
+const DEFAULT_HAIKU_MAX_BYTES = transcriptByteBudget(SMALL_MODEL_CONTEXT_TOKENS);
 
 // Final backstop so even the 1M model never overflows; pickDigestModel is the
 // primary size control.
@@ -49,7 +49,7 @@ export const DIGEST_INPUT_MAX_CHARS = transcriptByteBudget(LARGE_MODEL_CONTEXT_T
 export interface DigestModelConfig {
   small: string;
   large: string;
-  thresholdChars: number;
+  thresholdBytes: number;
 }
 
 // The shipped tiering. config.ts layers the env overrides on top of it.
@@ -58,13 +58,13 @@ export const DEFAULT_DIGEST_MODELS: DigestModelConfig = {
   // The [1m] suffix is what actually buys the 1M window; without it the model
   // answers on 200k and a large thread overflows.
   large: "claude-sonnet-4-6[1m]",
-  thresholdChars: DEFAULT_HAIKU_MAX_CHARS,
+  thresholdBytes: DEFAULT_HAIKU_MAX_BYTES,
 };
 
 // Bytes, not characters, so multibyte threads tier correctly; `>` is strict so a
 // thread exactly at the threshold stays on the small model.
 export const pickDigestModel = (byteCount: number, models: DigestModelConfig): string =>
-  byteCount > models.thresholdChars ? models.large : models.small;
+  byteCount > models.thresholdBytes ? models.large : models.small;
 
 interface RenderableMessage {
   role: string;
