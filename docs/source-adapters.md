@@ -124,6 +124,15 @@ reconsider the adapter design first.
   (`docs/scheduling.md`) to index and summarize its sessions.
 - cerebro's own home stays `~/.claude/cerebro` (override with
   `CEREBRO_CLAUDE_DIR`/`CEREBRO_DB`) regardless of sources.
+- Three user- and agent-facing strings name Claude Code and keep doing so while
+  it is the only registered adapter: the digest prompt's opening sentence
+  (`src/digest-signature.ts`), the `recent` header and the `relevant` header
+  (`src/commands/recent.ts`, `src/commands/relevant.ts`). Neutralizing the
+  digest one is not free: that sentence is also the marker
+  `isDigestRunTranscript` matches on, so rewording it hides existing digest
+  transcripts from a `--full` re-read unless the check keeps recognizing the old
+  wording too. Adding a second adapter is what makes the wording wrong, so do it
+  then, as part of that adapter's work.
 
 ## Status
 
