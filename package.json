@@ -18,7 +18,7 @@
     "deploy": "bun run build && DEST=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro\" && mkdir -p \"$DEST\" && cp dist/cerebro \"$DEST/cerebro\" && cp hooks/summarize-on-clear.sh \"$DEST/summarize-on-clear.sh\" && cp hooks/digest-stale-batch.sh \"$DEST/digest-stale-batch.sh\" && chmod +x \"$DEST/summarize-on-clear.sh\" \"$DEST/digest-stale-batch.sh\""
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
+    "@biomejs/biome": "^2.5.12",
     "@types/bun": "latest",
     "@types/stopword": "^2.0.3",
     "typescript": "^5.6.0"
@@ -28,6 +28,6 @@
   },
   "dependencies": {
     "stopword": "^3.1.5",
-    "valibot": "^1.4.1"
+    "valibot": "^1.4.2"
   }
 }
