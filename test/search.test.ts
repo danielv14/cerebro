@@ -731,34 +731,6 @@ describe("query (populated archive)", () => {
     expect(resumeHit.ordinal).toBe(3);
   });
 
-  test("a search hit whose thread is absent from the rollup falls back to its own row (#120)", () => {
-    // The `threads` view drops a thread whose sessions sum to zero messages, so a row
-    // with a stale msg_count is one way the hydration comes back empty. Contrived, but
-    // it pins the fallback: the hit renders on its own session row instead of losing
-    // its title and project (or being dropped) because the rollup had nothing to say.
-    writeSession(env.projects, "-repo", "STALE", [
-      userMsg("STALE", "u1", "the limiter work", { timestamp: ts(0) }),
-      {
-        ...assistantMsg("STALE", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
-        message: { role: "assistant", content: "ok", model: "opus-test" },
-      },
-      { type: "custom-title", customTitle: "Rate limiting", sessionId: "STALE" },
-    ]);
-    runIndex(db, { adapters: env.adapters });
-    db.run("UPDATE sessions SET msg_count = 0 WHERE session_id = 'STALE'");
-    expect(listThreads(db).length).toBe(0);
-
-    const hits = search(db, "limiter", 20, { all: true });
-    expect(hits.length).toBe(1);
-    expect(hits[0]).toMatchObject({
-      session_id: "STALE",
-      title: "Rate limiting",
-      project_path: "/repo",
-      provider: "claude-code",
-      model: "opus-test",
-    });
-  });
-
   test("resolveSession handles exact id, unique prefix, miss, and ambiguity", () => {
     writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
     writeSession(env.projects, "-repo", "abc99999-bbbb", [userMsg("abc99999-bbbb", "u2", "b")]);

@@ -24,11 +24,8 @@ export interface RankedMessageHit {
   root: string;
   ts: string | null;
   role: string;
-  session_project_path: string | null;
+  // The message's own branch, which search shows instead of the thread's.
   session_git_branch: string | null;
-  session_title: string | null;
-  session_provider: string | null;
-  session_model: string | null;
   snippet: string;
   // bm25; lower = more relevant.
   score: number;
@@ -57,11 +54,7 @@ export const rankedMessageHits = (
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role,
            COALESCE(s.root_session_id, s.session_id) AS root,
-           s.project_path AS session_project_path,
-           s.git_branch   AS session_git_branch,
-           s.title        AS session_title,
-           s.provider     AS session_provider,
-           s.model        AS session_model,
+           s.git_branch AS session_git_branch,
            snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
            bm25(messages_fts) AS score,
            t.last_ts, t.git_root, t.project_path

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
 import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
-import { attachThreadDisplay, noThreadDisplay, threadOpeningPrompt } from "./thread.ts";
+import { attachThreadDisplay, threadOpeningPrompt } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Relevance").
 
@@ -116,7 +116,7 @@ export const relevantThreads = (
   }
 
   const hits = [...chosen.entries()].map(([root, info]) => ({ root, ...info }));
-  return attachThreadDisplay(db, hits, noThreadDisplay).map(({ hit, display }) => ({
+  return attachThreadDisplay(db, hits).map(({ hit, display }) => ({
     id: hit.root,
     ...display,
     snippet: hit.snippet,

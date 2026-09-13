@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { toMatchQuery } from "../fts.ts";
-import { attachThreadDisplay, noThreadDisplay, rootOf, threadLastTs } from "../thread.ts";
+import { attachThreadDisplay, rootOf, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Design notes: docs/architecture.md ("Digest").
@@ -124,7 +124,7 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
-  return attachThreadDisplay(db, rows, noThreadDisplay).map(({ hit, display }) => ({
+  return attachThreadDisplay(db, rows).map(({ hit, display }) => ({
     id: hit.root,
     ...display,
     snippet: hit.snippet,

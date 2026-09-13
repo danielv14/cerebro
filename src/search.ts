@@ -1,12 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { dedupedHitWindow, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import {
-  attachThreadDisplay,
-  messageOrdinal,
-  type ThreadDisplay,
-  threadDisplay,
-  threadOnBranch,
-} from "./thread.ts";
+import { attachThreadDisplay, messageOrdinal, threadOnBranch } from "./thread.ts";
 
 // Filter semantics and design notes: docs/architecture.md ("Search").
 
@@ -98,19 +92,9 @@ export const search = (
     kept = collect(sanitized);
   }
 
-  // No rollup row (sessions rows gone) falls back to what the matched session
-  // carries, rather than dropping the hit.
-  const fallback = (hit: RankedMessageHit): ThreadDisplay =>
-    threadDisplay({
-      project_path: hit.session_project_path,
-      provider: hit.session_provider,
-      model: hit.session_model,
-      title: hit.session_title,
-    });
-
   // A search hit is a message, so it shows the message's own ts and branch and
   // leaves the thread's last_ts out.
-  return attachThreadDisplay(db, kept, fallback).map(({ hit, display }) => ({
+  return attachThreadDisplay(db, kept).map(({ hit, display }) => ({
     id: hit.id,
     session_id: hit.session_id,
     ts: hit.ts,

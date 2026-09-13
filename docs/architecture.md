@@ -214,11 +214,9 @@ Key design points:
   rollup, not the root's own sessions row: for a thread with resumes the root's
   row carries the first session's `last_ts` and often no title, which made
   `relevant` and `digest search` disagree with `sessions` and `recent` on the
-  same thread. A root with no rollup row gets the caller's fallback rather than
-  being dropped (a summary must survive its sessions rows being deleted), and
-  the fallback is an argument because the two policies in use are both
-  deliberate and used to be invisible: `search` answers from the matched
-  session's own columns, `relevant` and `digest search` from nothing.
+  same thread. There is one policy: the rollup row, or an all-null display. A
+  root with no rollup row keeps its hit rather than being dropped, which is what
+  lets a summary survive its sessions rows being deleted.
   `threadDisplay` is the single construction site for the shape, which is what
   fixes the JSON key order of the two callers that spread it whole; a test pins
   that order for all three listings. Owning
@@ -246,7 +244,7 @@ paths repeatedly disagreed about the same thread. The join, the dedup and the
 window growth live here once, and the step after them (hydrating the thread
 rollup and attaching it to each hit) is `attachThreadDisplay` in the thread
 module, which owns that metadata. A caller keeps its ranking function, the size
-of its first fetch, its fallback policy and its own result shape.
+of its first fetch and its own result shape.
 
 - `escapeLike` escapes user-supplied LIKE fragments; every LIKE built from user
   input pairs it with an explicit `ESCAPE '\'`.
@@ -254,13 +252,12 @@ of its first fetch, its fallback policy and its own result shape.
   would require every word to co-occur and return nothing for a conversational
   prompt, and Swedish/English stopwords are dropped via the `stopword` package
   so filler words do not match unrelated threads.
-- `rankedMessageHits` attaches both the matched message's own session row
-  (display fallbacks for a thread whose rollup row is gone) and the thread
-  rollup via LEFT JOIN (root-preferring `last_ts`/repo, so a resume with a NULL
-  git_root still ranks with the thread's repo). The root is coalesced to the
-  session itself for not-yet-relinked sessions so a rootless hit is never
-  dropped. It throws on a malformed MATCH so each caller keeps its own
-  fallback.
+- `rankedMessageHits` attaches the thread rollup via LEFT JOIN (root-preferring
+  `last_ts`/repo, so a resume with a NULL git_root still ranks with the thread's
+  repo), plus the matched message's own git branch, which `search` shows instead
+  of the thread's. The root is coalesced to the session itself for
+  not-yet-relinked sessions so a rootless hit is never dropped. It throws on a
+  malformed MATCH so each caller keeps its own fallback.
 - `dedupedHitWindow` implements the shared window policy: fetch
   `max(minRows, targetRoots * rowsPerRoot)` top rows, keep the best hit per
   root, and grow the window geometrically (x4, up to 3 rounds) only when it was
@@ -298,9 +295,7 @@ Filter semantics worth knowing:
 Title, project, provider and model on a hit are the thread's, attached by
 `attachThreadDisplay` in one query over the kept hits; `ts` and `git_branch`
 stay the matched message's own, and a search hit carries no thread `last_ts` at
-all. `search` passes the session-row fallback policy, so a hit whose thread has
-no rollup renders on its own session row instead of losing its title and
-project. The ordinal is computed once per kept hit rather than in the hit
+all. The ordinal is computed once per kept hit rather than in the hit
 query, where it would run a thread-wide COUNT for every matched row the sorter
 sees.
 
@@ -328,9 +323,9 @@ on exact project_path (the same pairing `recent` scopes by). 1.5x is worth
 roughly two months of recency at the 90-day half-life. It is a boost, never a
 filter, so a much stronger cross-repo match stays reachable.
 
-Both tiers hand their chosen roots to `attachThreadDisplay` with the
-null-fallback policy, so the display identity is read once for the whole result
-and lives in the thread module rather than here.
+Both tiers hand their chosen roots to `attachThreadDisplay`, so the display
+identity is read once for the whole result and lives in the thread module rather
+than here.
 
 The raw tier's window is deduped on the tier's own decayed-and-boosted rank
 (not on bm25), so the hit kept per thread is the one it actually ranks on.
@@ -373,8 +368,8 @@ touching callers.
   that never saw them. `searchSummaryRoots` is the single owner of the
   summaries_fts query shape, shared by `relevant`'s summary tier and
   `digest search`; `searchSummaries` attaches display identity through
-  `attachThreadDisplay` on the null-fallback policy, which is what lets a
-  summary outlive its sessions rows.
+  `attachThreadDisplay`, which is what lets a summary outlive its
+  sessions rows.
 - **`config.ts`** resolves the digest environment (`CEREBRO_DIGEST_MODEL`,
   `CEREBRO_DIGEST_MODEL_LARGE`, `CEREBRO_DIGEST_HAIKU_MAX_CHARS`,
   `CEREBRO_DIGEST_TIMEOUT_MS`, `CEREBRO_CLAUDE_BIN`) into one `DigestConfig`.

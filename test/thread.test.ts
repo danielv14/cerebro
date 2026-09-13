@@ -9,9 +9,8 @@ import {
   attachThreadDisplay,
   countThreads,
   messageOrdinal,
-  noThreadDisplay,
   rootOf,
-  type ThreadDisplay,
+  threadDisplay,
   threadLastTs,
   threadMessages,
   threadOpeningPrompt,
@@ -241,9 +240,8 @@ describe("thread (identity + membership)", () => {
     });
   });
 
-  // The step every ranked-hit path runs after dedup. Its whole reason to exist is
-  // that the two fallback policies used to be three copies that could drift apart
-  // without anything noticing.
+  // The step every ranked-hit path runs after dedup, owned in one place so a new
+  // display column is not paid for by every listing that shows one.
   describe("attachThreadDisplay", () => {
     const seedTwo = (): void => {
       writeSession(env.projects, "-repo", "A", [
@@ -258,7 +256,7 @@ describe("thread (identity + membership)", () => {
 
     test("attaches the thread's rollup identity to each hit", () => {
       seedTwo();
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], noThreadDisplay).map(
+      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }]).map(
         ({ hit, display }) => ({ id: hit.root, ...display }),
       );
       expect(rows).toEqual([
@@ -286,33 +284,12 @@ describe("thread (identity + membership)", () => {
       // identity emptied rather than be dropped.
       seedTwo();
       db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const rows = attachThreadDisplay(db, [{ root: "B" }], noThreadDisplay).map(
-        ({ hit, display }) => ({ id: hit.root, ...display }),
-      );
+      const rows = attachThreadDisplay(db, [{ root: "B" }]).map(({ hit, display }) => ({
+        id: hit.root,
+        ...display,
+      }));
       expect(rows).toEqual([
         { id: "B", last_ts: null, project_path: null, provider: null, model: null, title: null },
-      ]);
-    });
-
-    test("the session-row policy answers from what the hit itself carries", () => {
-      // `search`'s policy: the matched message's own session row is a better answer
-      // than nothing when the rollup has nothing to say.
-      seedTwo();
-      db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const own: ThreadDisplay = {
-        last_ts: null,
-        project_path: "/from-the-session",
-        provider: "claude-code",
-        model: "opus-test",
-        title: "From the session row",
-      };
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], () => own).map(
-        ({ hit, display }) => ({ id: hit.root, title: display.title }),
-      );
-      // A alone has a rollup, so only B falls back.
-      expect(rows).toEqual([
-        { id: "A", title: "Alpha thread" },
-        { id: "B", title: "From the session row" },
       ]);
     });
 
@@ -322,11 +299,9 @@ describe("thread (identity + membership)", () => {
       seedTwo();
       let rows: { id: string; title: string | null }[] = [];
       const queries = countQueriesMatching(db, "FROM threads WHERE id IN", () => {
-        rows = attachThreadDisplay(
-          db,
-          [{ root: "A" }, { root: "B" }, { root: "A" }],
-          noThreadDisplay,
-        ).map(({ hit, display }) => ({ id: hit.root, title: display.title }));
+        rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }, { root: "A" }]).map(
+          ({ hit, display }) => ({ id: hit.root, title: display.title }),
+        );
       });
       expect(queries).toBe(1);
       expect(rows.map((row) => row.id)).toEqual(["A", "B", "A"]);
@@ -341,7 +316,7 @@ describe("thread (identity + membership)", () => {
       seedTwo();
       writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");
 
-      expect(Object.keys(noThreadDisplay())).toEqual([
+      expect(Object.keys(threadDisplay())).toEqual([
         "last_ts",
         "project_path",
         "provider",
@@ -386,7 +361,7 @@ describe("thread (identity + membership)", () => {
     });
 
     test("an empty hit list does no work", () => {
-      expect(attachThreadDisplay(db, [], noThreadDisplay)).toEqual([]);
+      expect(attachThreadDisplay(db, [])).toEqual([]);
     });
   });
 });
