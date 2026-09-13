@@ -130,7 +130,6 @@ export const recentThreads = (
     .all(...params) as ThreadRow[];
 };
 
-// What every listing shows about a thread besides its own extras.
 export interface ThreadIdentity {
   id: string;
   last_ts: string | null;
@@ -168,9 +167,8 @@ const hydrateThreadIdentity = (db: Database, ids: string[]): Map<string, ThreadI
   return new Map(rows.map((row) => [row.id, threadIdentity(row.id, row)]));
 };
 
-// One policy: the rollup row, or an identity that is nothing but the id. A thread
-// with no rollup keeps its hit rather than being dropped, which is what lets a
-// summary outlive the sessions rows it was written from.
+// A thread with no rollup row keeps its hit, with an identity that is nothing but
+// the id: a summary has to outlive the sessions rows it was written from.
 export const attachThreadIdentity = <H extends { id: string }>(
   db: Database,
   hits: H[],

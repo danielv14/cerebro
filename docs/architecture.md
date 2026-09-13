@@ -281,9 +281,10 @@ of its first fetch and its own result shape.
   not-yet-relinked sessions so a rootless hit is never dropped. It throws on a
   malformed MATCH so each caller keeps its own fallback.
 - `dedupedHitWindow` implements the shared window policy: fetch
-  `max(minRows, targetRoots * rowsPerRoot)` top rows, keep the best hit per
-  root, and grow the window geometrically (x4, up to 3 rounds) only when it was
-  genuinely exhausted: fewer distinct roots than asked for AND a full window
+  `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
+  thread, and grow the window geometrically (x4, up to 3 rounds) only when it
+  was genuinely exhausted: fewer distinct threads than asked for AND a full
+  window
   came back. A fixed window is not enough because one chatty thread can own
   every row in it and starve the threads ranked below. Growth re-fetches one
   deep window rather than paging with LIMIT/OFFSET: `ORDER BY bm25 LIMIT n`
@@ -364,9 +365,7 @@ coverage and gets the growth rounds.
 ## Digest (`src/digest/`)
 
 The curated-summary layer: one LLM-written summary per thread, stored in the
-same database. `index.ts` is the package's public surface; code outside
-`src/digest` imports from there, so the internal split can change without
-touching callers.
+same database.
 
 - **`prompt.ts`** owns the summarization contract: the prompt, its version
   (bump it to invalidate existing summaries; `staleThreads` then re-surfaces

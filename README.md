@@ -226,6 +226,12 @@ rather than everyday usage, so they live in `docs/`:
 - [docs/scheduling.md](docs/scheduling.md) covers `digest-stale-batch.sh`, the
   catch-up script that works through the summary backlog, with a launchd plist
   and the cron equivalent.
+
+`bun run deploy`, both hook scripts and `cerebro doctor` resolve the same
+`${CLAUDE_CONFIG_DIR:-~/.claude}/cerebro` directory, so setting
+`$CLAUDE_CONFIG_DIR` moves the binary, the hook scripts, the logs and the
+archive together. See [docs/operations.md](docs/operations.md) if you set it
+after already building an archive.
 - [docs/digest-model-tiering.md](docs/digest-model-tiering.md) covers how
   transcript size picks the summary model, the token budget behind the
   threshold, and the `CEREBRO_DIGEST_*` overrides.
@@ -252,7 +258,8 @@ bun run check:fix   # apply lint fixes + formatting
 ```
 
 The suite runs against an in-memory SQLite database plus temp fixture session
-files (`CEREBRO_CLAUDE_DIR`), never the real archive. CI runs `biome ci`,
+files, handed to the code as an adapter list rather than steered through the
+environment, never the real archive. CI runs `biome ci`,
 typecheck, tests and a compile build on every PR.
 
 `CLAUDE.md` has the working rules and the archive invariants,

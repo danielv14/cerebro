@@ -52,8 +52,9 @@ code.
   (the code uses `!` deliberately). The codebase carries no `biome-ignore` escapes;
   the JSONL parser is validated with Valibot rather than narrowing `any`. Keep it clean.
 - Tests: `bun test`. The suite under `test/` runs against an in-memory SQLite DB
-  (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
-  helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
+  (`:memory:`) plus temp fixture session files, discovered through the adapter
+  list `makeClaudeDir()` builds rather than an environment variable; helpers live
+  in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
   the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
   subagent walk, the pinned registered provider ids, and a fake second adapter

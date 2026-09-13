@@ -16,12 +16,10 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
-// Produced by two adapters: the message-hit query below and the summary-hit query
-// in src/digest/store.ts. Both must keep returning this exact shape.
+// Produced by two adapters (docs/architecture.md, "FTS layer"): the query below
+// and searchSummaryRoots in src/digest/store.ts.
 export interface RankedHit {
-  // The thread the hit belongs to. `id` means the thread on every hit and every
-  // listing row. Coalesced to the session itself when root_session_id is NULL,
-  // so a not-yet-relinked hit is never silently dropped.
+  // The thread, never the row the hit came from.
   id: string;
   snippet: string;
   // bm25; lower = more relevant.
@@ -92,7 +90,9 @@ export interface RankedHitWindow {
   filters?: HitFilters;
 }
 
-// Throws on a malformed MATCH so each caller keeps its own fallback.
+// The thread id is coalesced to the session itself when root_session_id is NULL,
+// so a not-yet-relinked hit is never silently dropped. Throws on a malformed
+// MATCH so each caller keeps its own fallback.
 export const rankedMessageHits = (
   db: Database,
   match: string,

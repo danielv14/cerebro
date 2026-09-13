@@ -291,8 +291,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
       const classify = adapterFor(file.provider, adapters).classifyLines;
       // A mid-write file is still saved (unlike the dry run's skip): recording
       // the new mtime lets a touched-but-unchanged file settle to "unchanged".
-      // The return value is whether the file contributed lines, which is what
-      // filesIndexed counts and the dry run's filesToRead has to match.
+      // The return value is whether the file contributed lines.
       const tx = db.transaction((): boolean => {
         if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
@@ -373,7 +372,7 @@ export const dryRunIndex = (
     full,
     ({ file, plan, lines, cursor }) => {
       if (cursor === plan.start) {
-        result.skippedFiles++; // mid-write, nothing indexable yet
+        result.skippedFiles++;
         return;
       }
       const classify = adapterFor(file.provider, adapters).classifyLines;

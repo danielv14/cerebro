@@ -119,9 +119,8 @@ describe("thread (identity + membership)", () => {
     });
 
     test("shows what the user typed when the session opens with a skill", () => {
-      // /herdr-second-opinion: Claude Code records the slash command as one user
-      // turn and injects the skill body as the next one. Neither is prose, so the
-      // old ordering fell through to the injected body.
+      // Claude Code records the slash command as one user turn and injects the
+      // skill body as the next one. Neither is prose.
       writeSession(env.projects, "-repo", "K", [
         userMsg(
           "K",
