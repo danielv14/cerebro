@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { classify, flattenContent } from "../src/jsonl.ts";
 import { parseLine } from "../src/sources/adapter.ts";
+import { classify, flattenContent } from "../src/sources/claude-code-jsonl.ts";
 
 describe("parseLine", () => {
   test("parses valid JSON object", () => {

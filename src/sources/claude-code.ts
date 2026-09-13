@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import { join } from "node:path";
-import { classifyLines } from "../jsonl.ts";
 import { claudeDir } from "../paths.ts";
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
+import { classifyLines } from "./claude-code-jsonl.ts";
 
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 

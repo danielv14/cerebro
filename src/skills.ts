@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { escapeLike } from "./fts.ts";
-import { toolUseTag } from "./jsonl.ts";
+import { toolUseTag } from "./sources/claude-code-jsonl.ts";
 import { archiveSpan } from "./stats.ts";
 
 // Design notes: docs/architecture.md ("Skills").
