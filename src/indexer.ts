@@ -394,8 +394,10 @@ export const dryRunIndex = (
       result.candidateMessages += countMessages(lines, classify);
     },
     {
-      onUnchanged: () => result.unchangedFiles++,
-      onSkipped: () => result.skippedFiles++,
+      onUnread: ({ status }) => {
+        if (status === "skipped") result.skippedFiles++;
+        else result.unchangedFiles++;
+      },
     },
   );
 

@@ -106,15 +106,16 @@ export interface ScannedFile {
 }
 
 // Without `onError` a per-file failure propagates, which is what the dry run
-// wants; runIndex passes one so a bad file cannot abort the whole run.
+// wants; runIndex passes one so a bad file cannot abort the whole run. `onUnread`
+// gets the plan rather than one callback per status, so this layer never learns a
+// caller's reporting categories.
 export const eachIndexableFile = (
   db: Database,
   files: SessionFile[],
   full: boolean,
   handle: (scanned: ScannedFile) => void,
   opts: {
-    onUnchanged?: () => void;
-    onSkipped?: () => void;
+    onUnread?: (plan: FileReadPlan) => void;
     onError?: (file: SessionFile, error: Error) => void;
   } = {},
 ): void => {
@@ -131,8 +132,7 @@ export const eachIndexableFile = (
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {
-      if (plan.status === "skipped") opts.onSkipped?.();
-      else opts.onUnchanged?.();
+      opts.onUnread?.(plan);
       continue;
     }
 

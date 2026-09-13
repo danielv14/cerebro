@@ -52,8 +52,8 @@ describe("planFileRead", () => {
   });
 
   test("a digest-flagged file is skipped, not merely unchanged", () => {
-    // The two both mean "do not read", but only one means "cerebro will never
-    // index this", and the dry-run report counts them apart.
+    // Without the flag this shape reads as "grown": bytes_indexed is short of the
+    // file size, so the digest flag is what overrides it.
     const grown = planFileRead(
       { bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 },
       file(100),
