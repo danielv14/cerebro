@@ -17,11 +17,13 @@ export const toMatchQuery = (text: string): string | null => {
 };
 
 export interface RankedMessageHit {
-  id: number;
-  session_id: string;
+  // The thread the hit belongs to. `id` means the thread on every hit and every
+  // listing row; the message's own rowid is `message_id`, which is what it is.
   // Coalesced to the session itself when root_session_id is NULL, so a
   // not-yet-relinked hit is never silently dropped.
-  root: string;
+  id: string;
+  message_id: number;
+  session_id: string;
   ts: string | null;
   role: string;
   // The message's own branch, which search shows instead of the thread's.
@@ -94,8 +96,8 @@ export const rankedMessageHits = (
 ): RankedMessageHit[] => {
   const filters = hitPredicates(window.filters ?? {});
   const sql = `
-    SELECT m.id, m.session_id, m.ts, m.role,
-           COALESCE(s.root_session_id, s.session_id) AS root,
+    SELECT m.id AS message_id, m.session_id, m.ts, m.role,
+           COALESCE(s.root_session_id, s.session_id) AS id,
            s.git_branch AS session_git_branch,
            snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
            bm25(messages_fts) AS score,
@@ -118,17 +120,17 @@ export const rankedMessageHits = (
     ) as RankedMessageHit[];
 };
 
-const bestHitPerRoot = <T extends { root: string }>(
+const bestHitPerThread = <T extends { id: string }>(
   hits: T[],
   rank: (hit: T, index: number) => number = (_, index) => index,
 ): T[] => {
-  const byRoot = new Map<string, { hit: T; rank: number }>();
+  const byThread = new Map<string, { hit: T; rank: number }>();
   hits.forEach((hit, index) => {
     const hitRank = rank(hit, index);
-    const existing = byRoot.get(hit.root);
-    if (!existing || hitRank < existing.rank) byRoot.set(hit.root, { hit, rank: hitRank });
+    const existing = byThread.get(hit.id);
+    if (!existing || hitRank < existing.rank) byThread.set(hit.id, { hit, rank: hitRank });
   });
-  return [...byRoot.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
+  return [...byThread.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
 };
 
 const WINDOW_GROWTH = 4;
@@ -136,33 +138,37 @@ const WINDOW_ROUNDS = 3;
 
 export interface DedupedWindow<T> {
   fetch: (size: number) => T[];
-  targetRoots: number;
+  targetThreads: number;
   minRows: number;
-  rowsPerRoot: number;
+  rowsPerThread: number;
   // A caller on a latency path passes false to answer out of its first fetch.
   grow?: boolean;
   // Defaults to the incoming (bm25) order; relevance passes its decayed rank.
   rank?: (hit: T, index: number) => number;
 }
 
-export const dedupedHitWindow = <T extends { root: string }>({
+export const dedupedHitWindow = <T extends { id: string }>({
   fetch,
-  targetRoots,
+  targetThreads,
   minRows,
-  rowsPerRoot,
+  rowsPerThread,
   grow = true,
   rank,
 }: DedupedWindow<T>): T[] => {
   const rounds = grow ? WINDOW_ROUNDS : 0;
-  let size = Math.max(minRows, targetRoots * rowsPerRoot);
+  let size = Math.max(minRows, targetThreads * rowsPerThread);
   let rows = fetch(size);
-  let kept = bestHitPerRoot(rows, rank);
-  // Grow only when genuinely exhausted: fewer roots than asked for AND a full
+  let kept = bestHitPerThread(rows, rank);
+  // Grow only when genuinely exhausted: fewer threads than asked for AND a full
   // window came back, so deeper rows can still exist.
-  for (let round = 0; round < rounds && kept.length < targetRoots && rows.length >= size; round++) {
+  for (
+    let round = 0;
+    round < rounds && kept.length < targetThreads && rows.length >= size;
+    round++
+  ) {
     size *= WINDOW_GROWTH;
     rows = fetch(size);
-    kept = bestHitPerRoot(rows, rank);
+    kept = bestHitPerThread(rows, rank);
   }
   return kept;
 };

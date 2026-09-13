@@ -33,7 +33,7 @@ src/
                 reconciliation)
   thread.ts     what a thread is, end to end: the threads view DDL + row shape,
                 rootOf(), threadMessages(), listThreads(), recentThreads(),
-                attachThreadDisplay(), relinkThreads()
+                threadIdentity() + attachThreadIdentity(), relinkThreads()
   fts.ts        the message-FTS layer: rankedMessageHits(), the HitFilters ->
                 SQL step, dedupedHitWindow() (fetch + dedup + growth),
                 escapeLike(), toMatchQuery(), threadOnBranch()

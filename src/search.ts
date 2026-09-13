@@ -5,12 +5,13 @@ import {
   type RankedMessageHit,
   rankedMessageHits,
 } from "./fts.ts";
-import { attachThreadDisplay, messageOrdinal } from "./thread.ts";
+import { attachThreadIdentity, messageOrdinal } from "./thread.ts";
 
 // Filter semantics and design notes: docs/architecture.md ("Search").
 
 export interface SearchHit {
-  id: number;
+  // The matched message's rowid, not a thread id; `show --range` uses `ordinal`.
+  message_id: number;
   session_id: string;
   ts: string | null;
   role: string;
@@ -51,9 +52,9 @@ export const search = (
       ? fetch(limit)
       : dedupedHitWindow({
           fetch,
-          targetRoots: limit,
+          targetThreads: limit,
           minRows: SEARCH_WINDOW_MIN_ROWS,
-          rowsPerRoot: SEARCH_WINDOW_ROWS_PER_ROOT,
+          rowsPerThread: SEARCH_WINDOW_ROWS_PER_ROOT,
         }).slice(0, limit);
   };
 
@@ -74,17 +75,17 @@ export const search = (
 
   // A search hit is a message, so it shows the message's own ts and branch and
   // leaves the thread's last_ts out.
-  return attachThreadDisplay(db, kept).map(({ hit, display }) => ({
-    id: hit.id,
+  return attachThreadIdentity(db, kept).map(({ hit, identity }) => ({
+    message_id: hit.message_id,
     session_id: hit.session_id,
     ts: hit.ts,
     role: hit.role,
-    project_path: display.project_path,
+    project_path: identity.project_path,
     git_branch: hit.session_git_branch,
-    provider: display.provider,
-    model: display.model,
-    title: display.title,
+    provider: identity.provider,
+    model: identity.model,
+    title: identity.title,
     snippet: hit.snippet,
-    ordinal: messageOrdinal(db, hit.root, hit.id),
+    ordinal: messageOrdinal(db, hit.id, hit.message_id),
   }));
 };

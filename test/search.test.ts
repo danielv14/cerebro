@@ -239,7 +239,7 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     const ids = (opts: Parameters<typeof search>[3]) =>
       search(db, "limiter", 10, { all: true, ...opts })
-        .map((h) => h.id)
+        .map((h) => h.message_id)
         .sort((a, b) => a - b);
     const [prose1, prose2, toolUse, toolResult] = ids({});
     expect([prose1, prose2, toolUse, toolResult]).toHaveLength(4);

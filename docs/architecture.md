@@ -207,9 +207,9 @@ Key design points:
   starts in a resume of a thread whose root sat on master, so a thread touches
   a branch when any of its sessions was recorded on it. `search --branch` and
   `sessions --branch` compose the same `threadOnBranch` fragment.
-- **`attachThreadDisplay`** is the step every ranked-hit path runs after dedup:
+- **`attachThreadIdentity`** is the step every ranked-hit path runs after dedup:
   hydrate the rollup once for the whole batch and pair each hit with its
-  thread's display identity, leaving the caller to map that into its own result
+  thread's identity row, leaving the caller to map that into its own result
   shape. It reads that identity from the
   rollup, not the root's own sessions row: for a thread with resumes the root's
   row carries the first session's `last_ts` and often no title, which made
@@ -217,9 +217,12 @@ Key design points:
   same thread. There is one policy: the rollup row, or an all-null display. A
   root with no rollup row keeps its hit rather than being dropped, which is what
   lets a summary survive its sessions rows being deleted.
-  `threadDisplay` is the single construction site for the shape, which is what
-  fixes the JSON key order of the two callers that spread it whole; a test pins
-  that order for all three listings. Owning
+  `threadIdentity` is the single construction site for the shape, id included,
+  which is what fixes the JSON key order of the two callers that spread it
+  whole; a test pins that order for all three listings. `id` means the thread on
+  every hit shape and every listing row, and the message's own rowid is
+  `message_id`: `search --json` used to call that one `id` while every other
+  listing meant the thread by it. Owning
   the step here is what keeps a new display column (`provider` and `model` cost
   five source files and five test files) from being paid for three times.
 - **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER
@@ -242,7 +245,7 @@ One owner of the ranked-hit query shape over `messages_fts`. `search` and
 rollup query and their own spelling of "best hit per thread root", and the two
 paths repeatedly disagreed about the same thread. The join, the dedup and the
 window growth live here once, and the step after them (hydrating the thread
-rollup and attaching it to each hit) is `attachThreadDisplay` in the thread
+rollup and attaching it to each hit) is `attachThreadIdentity` in the thread
 module, which owns that metadata. A caller keeps its ranking function, the size
 of its first fetch and its own result shape.
 
@@ -305,7 +308,7 @@ Filter semantics worth knowing:
   with prose and calls a tool further down is kept on purpose.
 
 Title, project, provider and model on a hit are the thread's, attached by
-`attachThreadDisplay` in one query over the kept hits; `ts` and `git_branch`
+`attachThreadIdentity` in one query over the kept hits; `ts` and `git_branch`
 stay the matched message's own, and a search hit carries no thread `last_ts` at
 all. The ordinal is computed once per kept hit rather than in the hit
 query, where it would run a thread-wide COUNT for every matched row the sorter
@@ -335,9 +338,9 @@ on exact project_path (the same pairing `recent` scopes by). 1.5x is worth
 roughly two months of recency at the 90-day half-life. It is a boost, never a
 filter, so a much stronger cross-repo match stays reachable.
 
-Both tiers hand their chosen roots to `attachThreadDisplay`, so the display
-identity is read once for the whole result and lives in the thread module rather
-than here.
+Both tiers hand their chosen threads to `attachThreadIdentity`, so the identity
+is read once for the whole result and lives in the thread module rather than
+here.
 
 The raw tier's window is deduped on the tier's own decayed-and-boosted rank
 (not on bm25), so the hit kept per thread is the one it actually ranks on.
@@ -380,7 +383,7 @@ touching callers.
   that never saw them. `searchSummaryRoots` is the single owner of the
   summaries_fts query shape, shared by `relevant`'s summary tier and
   `digest search`; `searchSummaries` attaches display identity through
-  `attachThreadDisplay`, which is what lets a summary outlive its
+  `attachThreadIdentity`, which is what lets a summary outlive its
   sessions rows.
 - **`config.ts`** resolves the digest environment (`CEREBRO_DIGEST_MODEL`,
   `CEREBRO_DIGEST_MODEL_LARGE`, `CEREBRO_DIGEST_HAIKU_MAX_CHARS`,

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
 import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
-import { attachThreadDisplay, threadOpeningPrompt } from "./thread.ts";
+import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Relevance").
 
@@ -45,13 +45,7 @@ export const DEFAULT_RELEVANT_LIMIT = 3;
 const RAW_WINDOW_MIN_ROWS = 80;
 const RAW_WINDOW_ROWS_PER_ROOT = 20;
 
-export interface RelevantThread {
-  id: string;
-  last_ts: string | null;
-  project_path: string | null;
-  provider: string | null;
-  model: string | null;
-  title: string | null;
+export interface RelevantThread extends ThreadIdentity {
   snippet: string;
   opening: string | null;
   fromSummary: boolean;
@@ -80,7 +74,7 @@ export const relevantThreads = (
       .sort((a, b) => a.rank - b.rank);
     for (const hit of summaryHits) {
       if (chosen.size >= limit) break;
-      if (!chosen.has(hit.root)) chosen.set(hit.root, { snippet: hit.snippet, fromSummary: true });
+      if (!chosen.has(hit.id)) chosen.set(hit.id, { snippet: hit.snippet, fromSummary: true });
     }
   } catch {
     // A malformed MATCH falls through to the raw tier.
@@ -101,26 +95,25 @@ export const relevantThreads = (
     // limit: this runs on a latency path.
     const kept = dedupedHitWindow({
       fetch: fetchWindow,
-      targetRoots: limit,
+      targetThreads: limit,
       minRows: RAW_WINDOW_MIN_ROWS,
-      rowsPerRoot: RAW_WINDOW_ROWS_PER_ROOT,
+      rowsPerThread: RAW_WINDOW_ROWS_PER_ROOT,
       grow: limit > DEFAULT_RELEVANT_LIMIT,
       rank: (hit) => decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
     });
     for (const hit of kept) {
       if (chosen.size >= limit) break;
-      if (!chosen.has(hit.root)) {
-        chosen.set(hit.root, { snippet: hit.snippet, fromSummary: false });
+      if (!chosen.has(hit.id)) {
+        chosen.set(hit.id, { snippet: hit.snippet, fromSummary: false });
       }
     }
   }
 
-  const hits = [...chosen.entries()].map(([root, info]) => ({ root, ...info }));
-  return attachThreadDisplay(db, hits).map(({ hit, display }) => ({
-    id: hit.root,
-    ...display,
+  const hits = [...chosen.entries()].map(([id, info]) => ({ id, ...info }));
+  return attachThreadIdentity(db, hits).map(({ hit, identity }) => ({
+    ...identity,
     snippet: hit.snippet,
-    opening: threadOpeningPrompt(db, hit.root),
+    opening: threadOpeningPrompt(db, hit.id),
     fromSummary: hit.fromSummary,
   }));
 };

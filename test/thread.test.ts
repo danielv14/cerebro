@@ -6,11 +6,11 @@ import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { search } from "../src/search.ts";
 import {
-  attachThreadDisplay,
+  attachThreadIdentity,
   countThreads,
   messageOrdinal,
   rootOf,
-  threadDisplay,
+  threadIdentity,
   threadLastTs,
   threadMessages,
   threadOpeningPrompt,
@@ -242,7 +242,7 @@ describe("thread (identity + membership)", () => {
 
   // The step every ranked-hit path runs after dedup, owned in one place so a new
   // display column is not paid for by every listing that shows one.
-  describe("attachThreadDisplay", () => {
+  describe("attachThreadIdentity", () => {
     const seedTwo = (): void => {
       writeSession(env.projects, "-repo", "A", [
         userMsg("A", "ua", "alpha", { timestamp: ts(0) }),
@@ -256,8 +256,8 @@ describe("thread (identity + membership)", () => {
 
     test("attaches the thread's rollup identity to each hit", () => {
       seedTwo();
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }]).map(
-        ({ hit, display }) => ({ id: hit.root, ...display }),
+      const rows = attachThreadIdentity(db, [{ id: "A" }, { id: "B" }]).map(
+        ({ identity }) => identity,
       );
       expect(rows).toEqual([
         {
@@ -284,23 +284,20 @@ describe("thread (identity + membership)", () => {
       // identity emptied rather than be dropped.
       seedTwo();
       db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const rows = attachThreadDisplay(db, [{ root: "B" }]).map(({ hit, display }) => ({
-        id: hit.root,
-        ...display,
-      }));
+      const rows = attachThreadIdentity(db, [{ id: "B" }]).map(({ identity }) => identity);
       expect(rows).toEqual([
         { id: "B", last_ts: null, project_path: null, provider: null, model: null, title: null },
       ]);
     });
 
-    test("hydrates once for the whole batch, deduplicating repeated roots", () => {
+    test("hydrates once for the whole batch, deduplicating repeated threads", () => {
       // Two hits in one thread must not mean two rollup queries; the ordering and
       // the per-hit result stay unchanged.
       seedTwo();
       let rows: { id: string; title: string | null }[] = [];
       const queries = countQueriesMatching(db, "FROM threads WHERE id IN", () => {
-        rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }, { root: "A" }]).map(
-          ({ hit, display }) => ({ id: hit.root, title: display.title }),
+        rows = attachThreadIdentity(db, [{ id: "A" }, { id: "B" }, { id: "A" }]).map(
+          ({ identity }) => ({ id: identity.id, title: identity.title }),
         );
       });
       expect(queries).toBe(1);
@@ -310,13 +307,14 @@ describe("thread (identity + membership)", () => {
 
     // The JSON these commands print is consumed by hooks and agents, so the key
     // order is part of the contract, not an accident of how the row is built.
-    // threadDisplay is the only thing that decides it for the two spreading
+    // threadIdentity is the only thing that decides it for the two spreading
     // callers, which is why the order is asserted rather than described.
     test("the display fields land in one order across every listing", () => {
       seedTwo();
       writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");
 
-      expect(Object.keys(threadDisplay())).toEqual([
+      expect(Object.keys(threadIdentity("A"))).toEqual([
+        "id",
         "last_ts",
         "project_path",
         "provider",
@@ -346,7 +344,7 @@ describe("thread (identity + membership)", () => {
       // search builds its row by hand and shows the message's own ts and branch,
       // so it carries no thread last_ts at all.
       expect(Object.keys(search(db, "alpha")[0]!)).toEqual([
-        "id",
+        "message_id",
         "session_id",
         "ts",
         "role",
@@ -361,7 +359,7 @@ describe("thread (identity + membership)", () => {
     });
 
     test("an empty hit list does no work", () => {
-      expect(attachThreadDisplay(db, [])).toEqual([]);
+      expect(attachThreadIdentity(db, [])).toEqual([]);
     });
   });
 });

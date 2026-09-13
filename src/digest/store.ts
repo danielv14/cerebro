@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { toMatchQuery } from "../fts.ts";
-import { attachThreadDisplay, rootOf, threadLastTs } from "../thread.ts";
+import { attachThreadIdentity, rootOf, type ThreadIdentity, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Design notes: docs/architecture.md ("Digest").
@@ -72,7 +72,8 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
 export interface SummaryRootHit {
-  root: string;
+  // The thread the summary belongs to, named as every other hit names it.
+  id: string;
   snippet: string;
   score: number;
   last_ts: string | null;
@@ -90,7 +91,7 @@ export const searchSummaryRoots = (
 ): SummaryRootHit[] =>
   db
     .query(
-      `SELECT s.root_session_id AS root,
+      `SELECT s.root_session_id AS id,
               snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
               bm25(summaries_fts) AS score,
               t.last_ts, t.git_root, t.project_path
@@ -103,13 +104,7 @@ export const searchSummaryRoots = (
     )
     .all(snippetTokens, match, limit) as SummaryRootHit[];
 
-export interface SummaryHit {
-  id: string;
-  last_ts: string | null;
-  project_path: string | null;
-  provider: string | null;
-  model: string | null;
-  title: string | null;
+export interface SummaryHit extends ThreadIdentity {
   snippet: string;
 }
 
@@ -124,9 +119,8 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
     return [];
   }
 
-  return attachThreadDisplay(db, rows).map(({ hit, display }) => ({
-    id: hit.root,
-    ...display,
+  return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
+    ...identity,
     snippet: hit.snippet,
   }));
 };

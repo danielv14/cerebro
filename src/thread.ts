@@ -130,7 +130,9 @@ export const recentThreads = (
     .all(...params) as ThreadRow[];
 };
 
-export interface ThreadDisplay {
+// What every listing shows about a thread besides its own extras.
+export interface ThreadIdentity {
+  id: string;
   last_ts: string | null;
   project_path: string | null;
   provider: string | null;
@@ -142,7 +144,11 @@ export interface ThreadDisplay {
 // `digest search` spread this shape straight into their result rows, which makes
 // the order below their JSON key order. A rest-spread of the SELECT would follow
 // the column order instead.
-export const threadDisplay = (row: Partial<ThreadDisplay> = {}): ThreadDisplay => ({
+export const threadIdentity = (
+  id: string,
+  row: Partial<Omit<ThreadIdentity, "id">> = {},
+): ThreadIdentity => ({
+  id,
   last_ts: row.last_ts ?? null,
   project_path: row.project_path ?? null,
   provider: row.provider ?? null,
@@ -150,27 +156,27 @@ export const threadDisplay = (row: Partial<ThreadDisplay> = {}): ThreadDisplay =
   title: row.title ?? null,
 });
 
-const hydrateThreadDisplay = (db: Database, roots: string[]): Map<string, ThreadDisplay> => {
-  if (roots.length === 0) return new Map();
-  const placeholders = roots.map(() => "?").join(", ");
+const hydrateThreadIdentity = (db: Database, ids: string[]): Map<string, ThreadIdentity> => {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(", ");
   const rows = db
     .query(
       `SELECT id, title, last_ts, project_path, provider, model
        FROM threads WHERE id IN (${placeholders})`,
     )
-    .all(...roots) as (ThreadDisplay & { id: string })[];
-  return new Map(rows.map((row) => [row.id, threadDisplay(row)]));
+    .all(...ids) as ThreadIdentity[];
+  return new Map(rows.map((row) => [row.id, threadIdentity(row.id, row)]));
 };
 
-// One policy: the rollup row, or an empty display. A root with no rollup keeps
-// its hit rather than being dropped, which is what lets a summary outlive the
-// sessions rows it was written from.
-export const attachThreadDisplay = <H extends { root: string }>(
+// One policy: the rollup row, or an identity that is nothing but the id. A thread
+// with no rollup keeps its hit rather than being dropped, which is what lets a
+// summary outlive the sessions rows it was written from.
+export const attachThreadIdentity = <H extends { id: string }>(
   db: Database,
   hits: H[],
-): { hit: H; display: ThreadDisplay }[] => {
-  const byRoot = hydrateThreadDisplay(db, [...new Set(hits.map((hit) => hit.root))]);
-  return hits.map((hit) => ({ hit, display: byRoot.get(hit.root) ?? threadDisplay() }));
+): { hit: H; identity: ThreadIdentity }[] => {
+  const byId = hydrateThreadIdentity(db, [...new Set(hits.map((hit) => hit.id))]);
+  return hits.map((hit) => ({ hit, identity: byId.get(hit.id) ?? threadIdentity(hit.id) }));
 };
 
 export const rootOf = (db: Database, sessionId: string): string => {

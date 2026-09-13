@@ -443,7 +443,7 @@ describe("digest (summaries layer)", () => {
 
     // The seam returns the matching root with a bracketed snippet at the requested width.
     const roots = searchSummaryRoots(db, '"limiter"', 5, 12);
-    expect(roots.map((r) => r.root)).toEqual(["S"]);
+    expect(roots.map((r) => r.id)).toEqual(["S"]);
     expect(roots[0]!.snippet).toContain("[limiter]");
 
     // Both callers route through it: the summary surfaces in `relevant` (summary tier)
