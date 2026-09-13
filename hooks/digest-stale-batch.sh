@@ -17,7 +17,7 @@ set -uo pipefail
 # still pin a sane PATH so both resolve: cerebro spawns claude by name.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-CEREBRO="${CEREBRO_BIN:-$HOME/.claude/cerebro/cerebro}"
+CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"
 LOG="$LOG_DIR/digest.log"
 CAP="${CEREBRO_DIGEST_BATCH_CAP:-8}"

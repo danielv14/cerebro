@@ -19,7 +19,7 @@
 #   (which are never /cleared) never trigger summaries of themselves.
 set -uo pipefail
 
-CEREBRO="${CEREBRO_BIN:-$HOME/.claude/cerebro/cerebro}"
+CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"
 
 # SessionEnd delivers a JSON payload on stdin; capture it before anything reads it.

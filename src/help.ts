@@ -95,7 +95,9 @@ Options:
 
 Env:
   CEREBRO_DB           Override the database path
-  CEREBRO_CLAUDE_DIR   Override the ~/.claude directory
+  CEREBRO_CLAUDE_DIR   Override the directory session transcripts are read from
+  CLAUDE_CONFIG_DIR    Claude Code's own config dir; where deploy installs the
+                       binary and where doctor looks for it and settings.json
   CEREBRO_TZ           IANA zone for displayed timestamps (default Europe/Stockholm;
                        stored timestamps are always verbatim UTC)
   CEREBRO_CLAUDE_BIN   The binary digest run/drain spawn (default: claude on PATH)`;

@@ -62,7 +62,9 @@ the human listing. That is the stable format for scripts and agents.
 
 Default `~/.claude/cerebro/archive.sqlite`. Override with `--db <path>` or
 `$CEREBRO_DB`. The scanned Claude directory (`~/.claude`) can be overridden with
-`$CEREBRO_CLAUDE_DIR`.
+`$CEREBRO_CLAUDE_DIR`. If you run Claude Code with `$CLAUDE_CONFIG_DIR` set,
+everything follows it: the transcripts cerebro reads, the archive, the binary
+`bun run deploy` installs, and the paths the hooks and `doctor` look at.
 
 Timestamps are stored in UTC and shown in local time, `Europe/Stockholm` by
 default. Set `$CEREBRO_TZ` to any IANA zone name to change that
