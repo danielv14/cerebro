@@ -16,18 +16,16 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
-export interface RankedMessageHit {
+// What every ranked hit carries, whichever FTS table produced it. Both tiers of
+// `relevant` rank against this one shape: the message-hit query below and the
+// summary-hit query in src/digest/store.ts are two adapters at the same seam. It
+// stays one type so adding a ranking input (a branch boost, say) is one field and
+// two queries rather than two hit types and an untyped consumer.
+export interface RankedHit {
   // The thread the hit belongs to. `id` means the thread on every hit and every
-  // listing row; the message's own rowid is `message_id`, which is what it is.
-  // Coalesced to the session itself when root_session_id is NULL, so a
-  // not-yet-relinked hit is never silently dropped.
+  // listing row. Coalesced to the session itself when root_session_id is NULL,
+  // so a not-yet-relinked hit is never silently dropped.
   id: string;
-  message_id: number;
-  session_id: string;
-  ts: string | null;
-  role: string;
-  // The message's own branch, which search shows instead of the thread's.
-  session_git_branch: string | null;
   snippet: string;
   // bm25; lower = more relevant.
   score: number;
@@ -36,6 +34,16 @@ export interface RankedMessageHit {
   last_ts: string | null;
   git_root: string | null;
   project_path: string | null;
+}
+
+export interface RankedMessageHit extends RankedHit {
+  // The matched message's own rowid, which is what it is; the thread is `id`.
+  message_id: number;
+  session_id: string;
+  ts: string | null;
+  role: string;
+  // The message's own branch, which search shows instead of the thread's.
+  session_git_branch: string | null;
 }
 
 // `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,

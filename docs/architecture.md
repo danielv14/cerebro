@@ -240,10 +240,21 @@ Key design points:
 
 ## FTS layer (`src/fts.ts`)
 
-One owner of the ranked-hit query shape over `messages_fts`. `search` and
-`relevantThreads` used to carry their own copy of the FTS-join-sessions-join-
-rollup query and their own spelling of "best hit per thread root", and the two
-paths repeatedly disagreed about the same thread. The join, the dedup and the
+`RankedHit` is the one declared shape both relevance tiers rank against: thread
+id, snippet, bm25 score, and the three rollup columns the ranking reads
+(`last_ts`, `git_root`, `project_path`). Two adapters produce it.
+`rankedMessageHits` here is the message-FTS one; `searchSummaryRoots` in
+`src/digest/store.ts` is the summary-FTS one. They stay two queries rather than
+one branch because the two FTS tables and their snippets differ, and the summary
+one lives under `digest/` because the summaries table and its index are that
+layer's to own. Before the shape had a name, the relevance module consumed both
+through an anonymous structural type and its repo-boost helper typed its
+argument inline, so adding a rollup column to the ranking meant two query edits,
+two hit interfaces and an untyped consumer.
+
+`search` and `relevantThreads` used to carry their own copy of the
+FTS-join-sessions-join-rollup query and their own spelling of "best hit per
+thread", and the two paths repeatedly disagreed about the same thread. The join, the dedup and the
 window growth live here once, and the step after them (hydrating the thread
 rollup and attaching it to each hit) is `attachThreadIdentity` in the thread
 module, which owns that metadata. A caller keeps its ranking function, the size

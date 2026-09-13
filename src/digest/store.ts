@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { toMatchQuery } from "../fts.ts";
+import { type RankedHit, toMatchQuery } from "../fts.ts";
 import { attachThreadIdentity, rootOf, type ThreadIdentity, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
@@ -71,16 +71,11 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-export interface SummaryRootHit {
-  // The thread the summary belongs to, named as every other hit names it.
-  id: string;
-  snippet: string;
-  score: number;
-  last_ts: string | null;
-  git_root: string | null;
-  project_path: string | null;
-}
-
+// The summary tier's adapter to the shared ranked-hit seam. It stays a second
+// query rather than a branch of the message one: the two FTS tables and their
+// snippets differ, and it lives here because the summaries table and its FTS
+// index are the digest layer's to own.
+//
 // LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
 // throws on a malformed MATCH so each caller keeps its own fallback.
 export const searchSummaryRoots = (
@@ -88,7 +83,7 @@ export const searchSummaryRoots = (
   match: string,
   limit: number,
   snippetTokens: number,
-): SummaryRootHit[] =>
+): RankedHit[] =>
   db
     .query(
       `SELECT s.root_session_id AS id,
@@ -102,7 +97,7 @@ export const searchSummaryRoots = (
        ORDER BY bm25(summaries_fts)
        LIMIT ?`,
     )
-    .all(snippetTokens, match, limit) as SummaryRootHit[];
+    .all(snippetTokens, match, limit) as RankedHit[];
 
 export interface SummaryHit extends ThreadIdentity {
   snippet: string;
@@ -112,7 +107,7 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
   const match = toMatchQuery(query);
   if (!match) return [];
 
-  let rows: SummaryRootHit[];
+  let rows: RankedHit[];
   try {
     rows = searchSummaryRoots(db, match, limit, 12);
   } catch {

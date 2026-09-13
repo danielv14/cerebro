@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
-import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
+import {
+  dedupedHitWindow,
+  type RankedHit,
+  type RankedMessageHit,
+  rankedMessageHits,
+  toMatchQuery,
+} from "./fts.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Relevance").
@@ -29,10 +35,7 @@ export interface RepoScope {
 
 // A boost, never a filter: a much stronger cross-repo match stays reachable.
 const SAME_REPO_BOOST = 1.5;
-const repoBoost = (
-  hit: { git_root: string | null; project_path: string | null },
-  scope: RepoScope,
-): number => {
+const repoBoost = (hit: RankedHit, scope: RepoScope): number => {
   if (scope.repoRoot) return hit.git_root === scope.repoRoot ? SAME_REPO_BOOST : 1;
   if (scope.cwd) return hit.project_path === scope.cwd ? SAME_REPO_BOOST : 1;
   return 1;
