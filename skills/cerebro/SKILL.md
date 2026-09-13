@@ -63,7 +63,7 @@ $ cerebro index --dry-run
 Dry run. Would index:
   New messages:  128
   New bytes:     412 KB
-  Files:         1 new, 2 grown, 0 truncated, 207 unchanged (skipped)
+  Files:         1 new, 2 grown, 0 truncated, 207 unchanged, 0 not indexable
 
 Nothing written. Run `cerebro index` to apply.
 ```

@@ -338,7 +338,8 @@ export interface DryRunResult {
   truncatedFiles: number;
   unchangedFiles: number;
   // Read but not indexable: a digest transcript, or a mid-write file with no
-  // complete line yet. Counted so the categories add up to filesScanned.
+  // complete line yet. Counted on every run, not only the one that first detects
+  // a digest transcript, so the categories add up to filesScanned either way.
   skippedFiles: number;
   newBytes: number;
   candidateMessages: number;
@@ -392,7 +393,12 @@ export const dryRunIndex = (
       result.newBytes += cursor - plan.start;
       result.candidateMessages += countMessages(lines, classify);
     },
-    { onUnchanged: () => result.unchangedFiles++ },
+    {
+      onUnread: ({ status }) => {
+        if (status === "skipped") result.skippedFiles++;
+        else result.unchangedFiles++;
+      },
+    },
   );
 
   return result;

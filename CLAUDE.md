@@ -59,6 +59,8 @@ code.
   the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
   subagent walk, the pinned registered provider ids, and a fake second adapter
   indexed end to end plus dry-run parity through it),
+  the Claude-directory resolution (`test/paths.test.ts`: the config-dir split, and
+  the three bash copies in `deploy` and the hooks run and compared to it),
   git resolution (`test/git.test.ts`: root + remote, missing-dir tolerance, the
   per-instance cache) and its injection through `runIndex` and `runCli`,
   dry-run parity, CLI dispatch (`test/cli.test.ts`: the pinned per-command option

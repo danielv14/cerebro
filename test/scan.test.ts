@@ -51,6 +51,22 @@ describe("planFileRead", () => {
     mtimeMs,
   });
 
+  test("a digest-flagged file is skipped, not merely unchanged", () => {
+    // Without the flag this shape reads as "grown": bytes_indexed is short of the
+    // file size, so the digest flag is what overrides it.
+    const grown = planFileRead(
+      { bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 },
+      file(100),
+      false,
+    );
+    expect(grown).toEqual({ start: 40, status: "skipped", shouldRead: false });
+    // Still skipped under --full, so a --full dry run matches the real run, which
+    // has cleared its cursors and re-detects the transcript from byte 0.
+    expect(
+      planFileRead({ bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 }, file(100), true),
+    ).toEqual({ start: 40, status: "skipped", shouldRead: false });
+  });
+
   test("new file (no state) reads from 0", () => {
     expect(planFileRead(null, file(100), false)).toEqual({
       start: 0,

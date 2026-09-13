@@ -467,11 +467,12 @@ at a fixture instead of steering `CLAUDE_CONFIG_DIR` and restoring it.
 
 Both build on `claudeConfigDir()` in `src/paths.ts`, the one expression for
 "where Claude Code keeps its config". `bun run deploy` and the two hook scripts
-build the same `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` path in bash, so all four
-have to change together; with `CLAUDE_CONFIG_DIR` set they used to disagree, and
-deploy installed the binary where the hooks and doctor did not look.
-`CEREBRO_CLAUDE_DIR` answers the different question of where transcripts are
-read from, and only that.
+build the same `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` path in bash, and the
+failure when one drifts is silent: deploy installs the binary where the hooks and
+doctor do not look. `test/paths.test.ts` runs all three bash copies under `bash
+-c` and compares them to this one, so drift is a red test rather than a
+convention nobody can check. `CEREBRO_CLAUDE_DIR` answers the different question
+of where transcripts are read from, and only that.
 
 ## CLI (`src/cli.ts`, `src/commands/`)
 

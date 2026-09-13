@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// package.json's `deploy` script and both hook scripts build this same path from
-// their own bash literals, so all four change together or deploy installs where
-// the hooks and doctor do not look.
+// Three bash copies of this path exist: the `deploy` script and both hook scripts.
+// test/paths.test.ts runs each of them and fails when one drifts from this one,
+// because the drift is otherwise silent (deploy installs where nothing looks).
 export const claudeConfigDir = (): string =>
   process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
 
