@@ -212,17 +212,37 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
     .all(root) as ThreadMessage[];
 };
 
+// A slash-command turn wraps what the user typed in tags, so the tags are peeled
+// off rather than shown. The command name is the fallback: `/retro` with no
+// arguments still tells the reader what the session opened with.
+const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
+
+const typedWords = (text: string): string => {
+  if (!text.startsWith("<command-")) return text;
+  const args = COMMAND_ARGS.exec(text)?.[1]?.trim();
+  if (args) return args;
+  return COMMAND_NAME.exec(text)?.[1]?.trim() || text;
+};
+
+// Three tiers, worst last: a skill body and flattened tool output are injected and
+// can never be the user's words, while a slash-command turn still carries them in
+// its arguments.
 export const threadOpeningPrompt = (db: Database, root: string): string | null => {
   const row = db
     .query(
       `SELECT text FROM messages
        WHERE ${THREAD_MEMBERSHIP}
          AND role = 'user' AND is_sidechain = 0
-       ORDER BY (CASE WHEN text LIKE '[%' OR text LIKE '<command-%' THEN 1 ELSE 0 END), ts, id
+       ORDER BY (CASE
+                   WHEN text LIKE '[%'
+                     OR text LIKE 'Base directory for this skill:%' THEN 2
+                   WHEN text LIKE '<command-%' THEN 1
+                   ELSE 0 END), ts, id
        LIMIT 1`,
     )
     .get(root) as { text: string | null } | null;
-  return row?.text ?? null;
+  return row?.text == null ? null : typedWords(row.text);
 };
 
 // Same ORDER BY as threadMessages, so search's #N and show's numbering agree.

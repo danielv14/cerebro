@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { searchSummaries, writeSummary } from "../src/digest/index.ts";
+import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { search } from "../src/search.ts";
@@ -118,6 +118,54 @@ describe("thread (identity + membership)", () => {
       runIndex(db);
       // Prose wins over the earlier `<command-` echo despite its later timestamp.
       expect(threadOpeningPrompt(db, "S")).toBe("the real opening question");
+    });
+
+    test("shows what the user typed when the session opens with a skill", () => {
+      // /herdr-second-opinion: Claude Code records the slash command as one user
+      // turn and injects the skill body as the next one. Neither is prose, so the
+      // old ordering fell through to the injected body.
+      writeSession(env.projects, "-repo", "K", [
+        userMsg(
+          "K",
+          "u1",
+          "<command-message>retro</command-message>\n" +
+            "<command-name>/retro</command-name>\n" +
+            "<command-args>senaste tva veckorna</command-args>",
+          { timestamp: ts(0) },
+        ),
+        userMsg(
+          "K",
+          "u2",
+          "Base directory for this skill: /Users/x/.claude/skills/retro\n\n# Retro\n\nGenerera en retro.",
+          { timestamp: ts(1) },
+        ),
+        assistantMsg("K", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
+      ]);
+      runIndex(db);
+      expect(threadOpeningPrompt(db, "K")).toBe("senaste tva veckorna");
+    });
+
+    test("falls back to the command name when the slash command carried no arguments", () => {
+      writeSession(env.projects, "-repo", "N", [
+        userMsg(
+          "N",
+          "u1",
+          "<command-message>standup</command-message>\n<command-name>/standup</command-name>",
+          {
+            timestamp: ts(0),
+          },
+        ),
+        userMsg(
+          "N",
+          "u2",
+          "Base directory for this skill: /Users/x/.claude/skills/standup\n\n# Standup",
+          {
+            timestamp: ts(1),
+          },
+        ),
+      ]);
+      runIndex(db);
+      expect(threadOpeningPrompt(db, "N")).toBe("/standup");
     });
 
     test("returns null for a thread with no user turn", () => {
