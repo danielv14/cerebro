@@ -48,12 +48,14 @@ export const splitBuffer = (buf: Buffer, start: number): { lines: string[]; curs
   return { lines, cursor };
 };
 
-export type FileStatus = "new" | "grown" | "truncated" | "unchanged";
+// "skipped" is a file cerebro will never index, as against "unchanged", which is
+// one it has nothing new to read from yet.
+export type FileStatus = "new" | "grown" | "truncated" | "unchanged" | "skipped";
 
 export interface FileReadPlan {
   start: number;
   status: FileStatus;
-  shouldRead: boolean; // false only when unchanged (and not full)
+  shouldRead: boolean; // false only when unchanged or skipped
 }
 
 export const planFileRead = (
@@ -66,7 +68,7 @@ export const planFileRead = (
   // purpose: a real --full run has cleared index_state, so this branch only
   // affects a --full DRY run, which must report the file as skipped to match.
   if (state?.is_digest) {
-    return { start: state.bytes_indexed, status: "unchanged", shouldRead: false };
+    return { start: state.bytes_indexed, status: "skipped", shouldRead: false };
   }
 
   if (full) {
@@ -110,7 +112,11 @@ export const eachIndexableFile = (
   files: SessionFile[],
   full: boolean,
   handle: (scanned: ScannedFile) => void,
-  opts: { onUnchanged?: () => void; onError?: (file: SessionFile, error: Error) => void } = {},
+  opts: {
+    onUnchanged?: () => void;
+    onSkipped?: () => void;
+    onError?: (file: SessionFile, error: Error) => void;
+  } = {},
 ): void => {
   const getState = db.query(
     "SELECT bytes_indexed, mtime_ms, is_digest FROM index_state WHERE source_file = ?",
@@ -125,7 +131,8 @@ export const eachIndexableFile = (
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {
-      opts.onUnchanged?.();
+      if (plan.status === "skipped") opts.onSkipped?.();
+      else opts.onUnchanged?.();
       continue;
     }
 

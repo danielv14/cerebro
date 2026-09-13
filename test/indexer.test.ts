@@ -705,6 +705,28 @@ describe("dryRunIndex", () => {
     expect(plan.skippedFiles).toBe(1);
   });
 
+  test("a digest transcript stays counted as not indexable on every later run", () => {
+    writeSession(env.projects, "-repo", "DIG", [
+      userMsg("DIG", "d1", DIGEST_PROMPT),
+      assistantMsg("DIG", "d2", "summary", { parentUuid: "d1" }),
+    ]);
+    writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
+
+    // First dry run: the transcript has no cursor yet, so it is detected by content.
+    const first = dryRunIndex(db, env.adapters);
+    expect(first.skippedFiles).toBe(1);
+
+    runIndex(db, { adapters: env.adapters });
+
+    // Second: the cursor now carries the digest flag, so detection never re-runs.
+    // It must still be reported as not indexable rather than folded into unchanged.
+    const second = dryRunIndex(db, env.adapters);
+    expect(second.skippedFiles).toBe(1);
+    expect(second.unchangedFiles).toBe(1);
+    expect(second.filesToRead).toBe(0);
+    expect(second.skippedFiles + second.unchangedFiles).toBe(second.filesScanned);
+  });
+
   test("a tree with a skipped file reports the same file total as the real run", () => {
     writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
