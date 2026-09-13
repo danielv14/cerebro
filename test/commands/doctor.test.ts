@@ -185,9 +185,8 @@ describe("runDoctor", () => {
   test("stats and doctor agree once a relink moves a summarized root (#121)", () => {
     // RESUME is indexed and summarized while it is its own thread root, then the
     // original transcript arrives and relinkThreads reroots it under ORIG. The
-    // summary is left keyed on an id no thread is rooted at, which is where the two
-    // commands used to disagree: stats counted every `summaries` row, doctor counted
-    // only the ones joining the threads view.
+    // summary is left keyed on an id no thread is rooted at. Both commands must count
+    // it the same way: only summaries that join the threads view are coverage.
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
     ]);

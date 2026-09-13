@@ -65,7 +65,7 @@ export const relevantCommand = defineCommand({
   run: ({ db, args, rest, now, resolveGit }) => {
     let prompt = rest.join(" ");
     // Deliberately NOT defaulted to the input's cwd: a manual `relevant "..."`
-    // must rank globally, exactly as before.
+    // must rank globally.
     let cwd = args.cwd || null;
     if (args.stdin) {
       const payload = parseHookPayload(readStdin());

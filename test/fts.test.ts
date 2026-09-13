@@ -187,9 +187,8 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
   });
 
   test("relevant fills its limit when chatty threads dominate the raw tier (#141)", () => {
-    // 20 threads with 10 equally matching turns each. The raw tier used to ask for a
-    // flat 80 rows, so eight chatty threads owned the whole window and --limit 20
-    // answered with 8. The window now grows off the caller's limit.
+    // 20 threads with 10 equally matching turns each. With a flat window a handful of
+    // chatty threads own all of it, so the window has to grow off the caller's limit.
     for (let thread = 0; thread < 20; thread++) {
       const id = `T${thread}`;
       writeSession(

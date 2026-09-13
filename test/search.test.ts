@@ -425,8 +425,7 @@ describe("query (populated archive)", () => {
   });
 
   test("search --branch and sessions --branch agree on which threads touch a branch (#123)", () => {
-    // Both readers compose threadOnBranch now; before, the same any-session rule was
-    // spelled as two different subqueries and only a comment said they matched.
+    // Both readers compose threadOnBranch, so the any-session rule has one spelling.
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "the limiter work", { timestamp: ts(0) }),
     ]);
@@ -551,7 +550,6 @@ describe("query (populated archive)", () => {
     expect(thread.sessions_in_thread).toBe(2);
     // MIN: RESUME's body is unavailable (file deleted), so the thread is too.
     expect(thread.body_available).toBe(0);
-    // Span covers the whole thread.
     expect(thread.first_ts).toBe(ts(0));
     expect(thread.last_ts).toBe(ts(4));
   });
@@ -615,9 +613,8 @@ describe("query (populated archive)", () => {
 
   test("every surface shows the same title, last activity and project for a resumed thread (#118)", () => {
     // The root ran once and never carried a title event; the resume carried the title
-    // and ran a month later. Reading the root's own sessions row (as relevant and
-    // digest search used to) showed the root's date and "(untitled)"; all four
-    // surfaces must show the thread's rollup instead.
+    // and ran a month later. Read the root's own sessions row and you get the root's
+    // date and "(untitled)", so all four surfaces must read the thread's rollup.
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),

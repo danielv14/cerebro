@@ -13,13 +13,10 @@ export interface StaleThread {
   summarized_at: string | null;
 }
 
-// t.msgs > 0 is redundant since the view took over excluding empty threads (#83);
-// kept as a local statement of intent, harmless either way.
 const STALE_FROM_WHERE = `
   FROM threads t
   LEFT JOIN summaries su ON su.root_session_id = t.id
-  WHERE t.msgs > 0
-    AND (su.root_session_id IS NULL
+  WHERE (su.root_session_id IS NULL
       OR su.source_last_ts IS NULL
       OR su.source_last_ts < t.last_ts
       OR su.prompt_version < ?)`;

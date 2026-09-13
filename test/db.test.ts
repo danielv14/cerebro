@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { openDb, SCHEMA_VERSION } from "../src/db.ts";
 import { threadsViewIsCurrent } from "../src/thread.ts";
 
-// The version-gated schema (#46): the DDL runs once per SCHEMA_VERSION and the
-// stamp lets every later open (the per-prompt hook hot path) skip it entirely.
+// The DDL runs once per SCHEMA_VERSION; the stamp is what lets every later open
+// (the per-prompt hook hot path) skip it entirely.
 describe("openDb schema versioning", () => {
   let dir: string;
   let path: string;
@@ -23,7 +23,6 @@ describe("openDb schema versioning", () => {
     const db = openDb(path);
     const version = db.query("PRAGMA user_version").get() as { user_version: number };
     expect(version.user_version).toBe(SCHEMA_VERSION);
-    // The schema is in place: core tables answer queries.
     expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 0 });
     expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 0 });
     db.close();

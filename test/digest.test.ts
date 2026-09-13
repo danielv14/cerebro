@@ -293,8 +293,8 @@ describe("digest (summaries layer)", () => {
 
     // A session that indexed into a sessions row but contributed no messages
     // (e.g. a /clear-only or resume-marker session): rolls up to msgs = 0 in the
-    // threads view, so there is nothing to summarize. Feeding its empty transcript
-    // to the model used to produce a "please paste the transcript" non-summary.
+    // threads view, so there is nothing to summarize. Fed an empty transcript the
+    // model answers "please paste the transcript", which must never be stored.
     db.run(
       `INSERT INTO sessions (session_id, root_session_id, project_path, msg_count, first_ts, last_ts)
        VALUES ('EMPTY', 'EMPTY', '-repo', 0, ?, ?)`,

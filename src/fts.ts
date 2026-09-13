@@ -16,11 +16,8 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
-// What every ranked hit carries, whichever FTS table produced it. Both tiers of
-// `relevant` rank against this one shape: the message-hit query below and the
-// summary-hit query in src/digest/store.ts are two adapters at the same seam. It
-// stays one type so adding a ranking input (a branch boost, say) is one field and
-// two queries rather than two hit types and an untyped consumer.
+// Produced by two adapters: the message-hit query below and the summary-hit query
+// in src/digest/store.ts. Both must keep returning this exact shape.
 export interface RankedHit {
   // The thread the hit belongs to. `id` means the thread on every hit and every
   // listing row. Coalesced to the session itself when root_session_id is NULL,
@@ -52,10 +49,9 @@ export const threadOnBranch = (rootExpr: string): string =>
   `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
   `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
 
-// What a caller can narrow a ranked hit by. Named filters rather than SQL, so the
-// aliases the predicates are written against (m = message, s = session,
-// t = rollup) stay private to this module and renaming one cannot break a caller
-// at runtime only.
+// Named filters rather than SQL fragments, so the aliases the predicates below are
+// written against (m = message, s = session, t = rollup) stay private to this
+// module: a caller writing them would break at runtime only when one is renamed.
 export interface HitFilters {
   // Substring of the thread's project path.
   project?: string;

@@ -53,7 +53,6 @@ export const discoverSessionFiles = (root: string): SessionFile[] => {
     }
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        // Top-level session file: filename (sans .jsonl) is the session UUID.
         const sessionId = entry.name.slice(0, -".jsonl".length);
         pushFile(join(dir, entry.name), "session", sessionId, projectDir);
       } else if (entry.isDirectory()) {

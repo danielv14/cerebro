@@ -75,7 +75,6 @@ export const planFileRead = (
 
   const start = state ? state.bytes_indexed : 0;
   if (start > file.size) {
-    // truncated / rotated -> re-read from the start
     return { start: 0, status: "truncated", shouldRead: true };
   }
 

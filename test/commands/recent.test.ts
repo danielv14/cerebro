@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { recentBlock, recentContextFooter, recentContextIntro } from "../../src/commands/recent.ts";
 
-// ── Agent-facing context block ────────────────────────────────────────────────
 // The bytes --context puts in the model's context, so the exact string (and
 // especially the load-bearing guardrail + recall clauses) is pinned. recentBlock
 // composes these; they are also pinned directly here as the external contract.

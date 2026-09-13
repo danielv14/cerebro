@@ -5,7 +5,6 @@ import {
   relevantFooter,
 } from "../../src/commands/relevant.ts";
 
-// ── Agent-facing context block ────────────────────────────────────────────────
 // The bytes --context puts in the model's context, so the exact string (and
 // especially the load-bearing guardrail + recall clauses) is pinned.
 // relevantBlock composes these; they are also pinned directly here as the external

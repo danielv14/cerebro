@@ -67,7 +67,7 @@ describe("parseHookPayload (relevant --stdin)", () => {
   });
 
   test("degrades to no cwd when it is missing, empty, or not a string (#88)", () => {
-    // No cwd means `relevant` ranks globally, exactly as it did before the boost.
+    // No cwd means `relevant` ranks globally rather than boosting a repo.
     expect(parseHookPayload('{"prompt":"p"}')).toEqual({ prompt: "p", cwd: null });
     expect(parseHookPayload('{"prompt":"p","cwd":""}')).toEqual({ prompt: "p", cwd: null });
     // A non-string cwd fails the whole schema, so the prompt degrades too.
@@ -454,8 +454,8 @@ describe("runCli", () => {
   });
 
   test("--json emits an empty array rather than the empty-state prose, for every reader", () => {
-    // This is the contract the deleted `present` helper used to pin: in JSON mode a
-    // reader emits [] and never its human empty state. It lives in runCli's emit now.
+    // In JSON mode a reader emits [] and never its human empty state. The rule lives
+    // in runCli's emit, so every reader gets it without opting in.
     for (const args of [
       ["sessions", "--json"],
       ["search", "zzyzx", "--json"],

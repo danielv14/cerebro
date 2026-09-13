@@ -7,7 +7,7 @@ import { resolveOrThrow } from "./helpers.ts";
 const threadHeader = (sessionId: string, count: number): string =>
   `Thread ${shortId(sessionId)}  ${count} message(s)\n`;
 
-// The outline is capped at head + tail (#147). The tail keeps its true ordinals so
+// The outline is capped at head + tail. The tail keeps its true ordinals so
 // the numbering stays identical to --range and search's #N.
 const OUTLINE_HEAD = 50;
 const OUTLINE_TAIL = 50;

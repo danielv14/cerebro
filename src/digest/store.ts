@@ -71,11 +71,7 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-// The summary tier's adapter to the shared ranked-hit seam. It stays a second
-// query rather than a branch of the message one: the two FTS tables and their
-// snippets differ, and it lives here because the summaries table and its FTS
-// index are the digest layer's to own.
-//
+// The summary side of the RankedHit seam (docs/architecture.md, "FTS layer").
 // LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
 // throws on a malformed MATCH so each caller keeps its own fallback.
 export const searchSummaryRoots = (

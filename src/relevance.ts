@@ -43,8 +43,7 @@ const repoBoost = (hit: RankedHit, scope: RepoScope): number => {
 
 export const DEFAULT_RELEVANT_LIMIT = 3;
 
-// The 80-row floor is the flat window the tier used to pin; per-root sizing is
-// the fix for #141 (chatty threads owning the whole window).
+// Sized per thread, not flat: one chatty thread otherwise owns the whole window.
 const RAW_WINDOW_MIN_ROWS = 80;
 const RAW_WINDOW_ROWS_PER_ROOT = 20;
 

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { humanBytes, oneLine, projectName, shortDate, shortId, shortTime } from "../src/render.ts";
 
-// ── Primitives ────────────────────────────────────────────────────────────────
 // The shared formatting vocabulary; the per-command listing builders (and their
 // pinned-output tests) live with their commands under test/commands/.
 

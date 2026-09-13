@@ -14,9 +14,6 @@ import {
   writeSession,
 } from "./fixtures.ts";
 
-// The ranking module's own tests: the two FTS tiers, the recency decay and the
-// same-repo boost. They live next to the module rather than among the data-access
-// tests they used to share a file with.
 describe("relevance ranking", () => {
   let env: TempClaude;
   let db: Database;
@@ -149,7 +146,7 @@ describe("relevance ranking", () => {
     runIndex(db, { adapters: env.adapters });
     const now = Date.parse(ts(month));
 
-    // No scope: unchanged global behavior, recency decides.
+    // No scope: recency alone decides.
     expect(relevantThreads(db, "limiter", 2, now).map((h) => h.id)).toEqual(["OTHER", "MINE"]);
     // Scoped by the cwd's exact project path (no git root, as in these fixtures).
     expect(relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" }).map((h) => h.id)).toEqual([

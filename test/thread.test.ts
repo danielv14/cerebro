@@ -72,7 +72,7 @@ describe("thread (identity + membership)", () => {
 
     test("falls back to the given id for an unknown or not-yet-relinked session", () => {
       seedThread();
-      // No session row at all: preserve the historical `?? sessionId` fallback.
+      // No session row at all: the id is its own root rather than an error.
       expect(rootOf(db, "does-not-exist")).toBe("does-not-exist");
       // A row that exists but has not been relinked (NULL root) falls back to itself.
       db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
@@ -232,7 +232,7 @@ describe("thread (identity + membership)", () => {
       expect(countThreads(db)).toBe(0);
       // Distinct message UUIDs: dedup is keyed on the UUID alone (invariant #4), so
       // reusing one across the two files would drop B's only message and leave it a
-      // zero-message session, which the threads view no longer counts (#83).
+      // zero-message session, which the threads view excludes.
       writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
       writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "b", { timestamp: ts(1) })]);
       runIndex(db, { adapters: env.adapters });

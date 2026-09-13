@@ -1,22 +1,7 @@
 #!/usr/bin/env bash
-# cerebro: index on /clear, then summarize the just-cleared session in the
-# background. Wired as a Claude Code SessionEnd hook with matcher "clear".
-#
-# Design:
-# - The index runs synchronously (incremental, fast) so /clear captures the
-#   session into the archive immediately.
-# - The summary runs detached, so /clear is never blocked by the model call.
-# - `cerebro digest run` owns the whole summarize sequence: render the
-#   size-bounded transcript, tier the model on its size, call the model, refuse
-#   output that cannot be a summary, store it. This script decides only *when*
-#   that happens and *where* its output is logged. Those rules used to live here
-#   and in digest-stale-batch.sh as two copies of the same bash; they are one
-#   tested code path now.
-# - It is best-effort. If the detached job dies (no auth, rate limit, killed on
-#   session teardown), nothing is lost: `cerebro digest drain` is the reconciler
-#   and re-surfaces the thread on its next run.
-# - It targets only the cleared session id, so headless `claude -p` sessions
-#   (which are never /cleared) never trigger summaries of themselves.
+# cerebro's Claude Code SessionEnd hook (matcher "clear"). Indexes synchronously,
+# then hands the payload to `cerebro digest run --stdin` detached. Wiring and
+# rationale: docs/hooks.md.
 set -uo pipefail
 
 CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
@@ -29,11 +14,9 @@ payload="$(cat)"
 sleep 0.5
 { date "+[clear-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# Detached summary: nohup so it outlives the /clear teardown. The payload travels as
-# an argument and is piped to `digest run --stdin` *inside* the detached child, so no
-# foreground process has to survive teardown for the id to arrive. cerebro pulls the
-# session id out of that JSON at a validated boundary; this script no longer
-# sed-scrapes it, and no longer renders, measures, tiers, or guards anything.
+# nohup so the summary outlives the /clear teardown. The payload travels as an
+# argument and is piped in *inside* the detached child, so no foreground process
+# has to survive teardown for the session id to arrive.
 nohup bash -c '
   cerebro_bin="$1"; log="$2"; payload="$3"
   {

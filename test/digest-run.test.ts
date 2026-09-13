@@ -27,8 +27,8 @@ import {
   writeSession,
 } from "./fixtures.ts";
 
-// The tiering is a required argument now; these tests assert on the pipeline, not
-// on which model it picked, so they all pass the shipped one.
+// These assert on the pipeline, not on which model it picked, so they all pass the
+// shipped tiering.
 const models = DEFAULT_DIGEST_MODELS;
 
 // A valid summary has to clear SUMMARY_MIN_CHARS and must not look like an error.
@@ -73,7 +73,6 @@ describe("runDigest", () => {
     expect(outcome.chars).toBe(GOOD_SUMMARY.length);
     expect(outcome.bytes).toBeGreaterThan(0);
     expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
-    // The model that was picked is the model recorded with the summary.
     expect(getSummary(db, "SESS")?.model).toBe(outcome.model!);
 
     // The seam carries the rendered transcript and the prompt, so the adapter
