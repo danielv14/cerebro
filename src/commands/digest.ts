@@ -1,25 +1,27 @@
 import * as v from "valibot";
-import type { DigestConfig } from "../digest/config.ts";
+import { type DigestConfig, digestConfigFromEnv } from "../digest/config.ts";
 import {
   buildDigestInput,
-  createClaudeSummarizer,
   DIGEST_PROMPT,
   DIGEST_PROMPT_VERSION,
+  pickDigestModel,
+} from "../digest/prompt.ts";
+import {
+  createClaudeSummarizer,
   type DigestOutcome,
   type DrainResult,
-  digestConfigFromEnv,
-  getSummary,
-  pickDigestModel,
-  rejectSummaryReason,
   runDigest,
   runDrain,
-  type StaleThread,
+} from "../digest/run.ts";
+import { type StaleThread, staleThreads } from "../digest/stale.ts";
+import {
+  getSummary,
+  rejectSummaryReason,
   type StoredSummary,
   type SummaryHit,
   searchSummaries,
-  staleThreads,
   writeSummary,
-} from "../digest/index.ts";
+} from "../digest/store.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { threadMessages } from "../thread.ts";
 import { CliError, flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";

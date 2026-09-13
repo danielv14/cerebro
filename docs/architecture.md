@@ -20,7 +20,7 @@ source adapters (discovery + normalization)
   -> CLI (commands as data, one dispatcher that parses, validates and renders)
 ```
 
-## Sources (`src/sources/`, `src/jsonl.ts`)
+## Sources (`src/sources/`)
 
 The source-adapter seam decouples the archive from any one AI tool. Each
 adapter owns two things: discovering its session files on disk and normalizing
@@ -41,7 +41,8 @@ The full adapter contract and its guarantees are in
   any resume that branches from it). `adapterFor` throws on an unknown
   provider: files only enter the pipeline through an adapter's own discover, so
   an unknown provider is a programming error, not something to guess around.
-- `jsonl.ts` is the normalization half of the Claude Code adapter and one of
+- `claude-code-jsonl.ts` is the normalization half of the Claude Code adapter
+  and one of
   cerebro's untrusted I/O boundaries. The accepted shapes are Valibot schemas
   validated with `safeParse`, deliberately tolerant of an evolving log: an
   unknown event type classifies to `skip`, a missing or wrongly-typed optional
@@ -486,7 +487,7 @@ single file. Pruning (`--keep`) only ever touches the default directory and the
 default name pattern, so a custom `--to` target or any other file living there
 is never deleted.
 
-## Build stamp (`src/build-stamp.ts`, `src/digest-signature.ts`)
+## Build stamp (`src/build-stamp.ts`)
 
 The automated paths run a compiled binary, not the source, so a code change
 does not reach them until `bun run deploy`; without a stamp that drift is
@@ -495,7 +496,12 @@ deliberately do not exist in a source run (`typeof` on an undeclared identifier
 is legal), so `bun run src/cli.ts` reports itself as unbuilt rather than
 claiming a commit it does not have.
 
-`digest-signature.ts` holds the digest prompt's opening sentence in a leaf
+`digest/signature.ts` holds the digest prompt's opening sentence in a leaf
 module (no imports) so the indexer can recognize cerebro's own summarization
 transcripts without pulling in the digest layer. Rewording that opening stops
 digest transcripts already on disk from being detected on a `--full` re-read.
+
+The digest directory has no barrel: every consumer imports the digest module it
+actually uses. One re-export file kept claiming the internals were private while
+the digest command imported `config.ts` straight through it, and it was the only
+reason the signature had to sit outside the directory it belongs to.

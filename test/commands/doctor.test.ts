@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { doctorReport } from "../../src/commands/doctor.ts";
 import { statsCommand } from "../../src/commands/stats.ts";
 import { openDb, SCHEMA_VERSION } from "../../src/db.ts";
-import { writeSummary } from "../../src/digest/index.ts";
+import { writeSummary } from "../../src/digest/store.ts";
 import { type Check, type DoctorReport, runDoctor } from "../../src/doctor.ts";
 import { runIndex } from "../../src/indexer.ts";
 import { rootOf } from "../../src/thread.ts";

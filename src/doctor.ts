@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
-import { summaryCoverage } from "./digest/index.ts";
+import { summaryCoverage } from "./digest/stale.ts";
 import { orphanedCursorPaths } from "./scan.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 

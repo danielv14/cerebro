@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSessionEndPayload } from "../src/commands/digest.ts";
 import { openDb } from "../src/db.ts";
+import type { DigestConfig } from "../src/digest/config.ts";
+import { DEFAULT_DIGEST_MODELS } from "../src/digest/prompt.ts";
 import {
   createClaudeSummarizer,
-  DEFAULT_DIGEST_MODELS,
-  type DigestConfig,
-  getSummary,
   runDigest,
   runDrain,
   type SummarizeRequest,
   type Summarizer,
-  staleThreads,
-} from "../src/digest/index.ts";
+} from "../src/digest/run.ts";
+import { staleThreads } from "../src/digest/stale.ts";
+import { getSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {

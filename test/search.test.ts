@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { resolveSession } from "../src/commands/helpers.ts";
 import { openDb } from "../src/db.ts";
-import { searchSummaries, writeSummary } from "../src/digest/index.ts";
+import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { toMatchQuery } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";

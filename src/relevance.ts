@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { searchSummaryRoots } from "./digest/index.ts";
+import { searchSummaryRoots } from "./digest/store.ts";
 import { dedupedHitWindow, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
 import { attachThreadDisplay, noThreadDisplay, threadOpeningPrompt } from "./thread.ts";
 

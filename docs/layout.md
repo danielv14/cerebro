@@ -22,8 +22,9 @@ src/
   sources/      the source-adapter seam (see source-adapters.md):
     adapter.ts    SessionFile + Classified + the SourceAdapter contract
     claude-code.ts  the Claude Code source: projects-dir discovery
+    claude-code-jsonl.ts  classify() + flattenContent(): the Claude Code JSONL
+                  grammar (the adapter's normalization half)
     registry.ts   the adapter list + the global oldest-first file merge
-  jsonl.ts      classify() + flattenContent(): the Claude Code JSONL grammar
   git.ts        createGitResolver(): the GitResolver seam, spawning git behind a
                 per-instance cwd cache
   scan.ts       the source-file scan layer: splitBuffer(), planFileRead(),
@@ -46,9 +47,13 @@ src/
   digest/       DIGEST_PROMPT + model tiering (prompt.ts), the env-resolved
                 DigestConfig (config.ts), staleThreads() + summaryCoverage()
                 (stale.ts), writeSummary() + the summary full-text search
-                (store.ts), the summarize pipeline + the Summarizer seam (run.ts)
-  digest-signature.ts  the prompt's opening sentence (leaf; the indexer keys
-                digest-transcript skipping on it)
+                (store.ts), the summarize pipeline + the Summarizer seam (run.ts),
+                the prompt's opening sentence (signature.ts: a leaf the indexer
+                keys digest-transcript skipping on). No barrel: consumers import
+                the file they use.
+  doctor.ts     runDoctor(): the read-only health checks and their remedies
+  build-stamp.ts  buildStamp(): the version/commit/built-at identifiers
+                bun build --define substitutes
   backup.ts     runBackup() (VACUUM INTO snapshots + pruning)
 test/
   *.test.ts     bun test suite + fixtures.ts (temp claude dir + sessions);

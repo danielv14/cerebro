@@ -14,7 +14,8 @@ code.
   below). Dev deps are types only plus Biome (lint + format). Do not add native or
   network runtime deps.
 - **Valibot validates the untrusted I/O boundaries only**: the session JSONL events
-  and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the two hook
+  and content blocks in `sources/claude-code-jsonl.ts` (`classify`,
+  `flattenContent`) and the two hook
   stdin payloads (`parseHookPayload` in `src/commands/relevant.ts`,
   `parseSessionEndPayload` in `src/commands/digest.ts`). Anything that comes out
   of SQLite or is

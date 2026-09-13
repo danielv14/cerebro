@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest/index.ts";
+import { writeSummary } from "../src/digest/store.ts";
 import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import { decayedRank, relevantThreads } from "../src/relevance.ts";

@@ -1,21 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
+import { digestConfigFromEnv } from "../src/digest/config.ts";
 import {
   buildDigestInput,
-  countStaleThreads,
   DIGEST_PROMPT,
-  DIGEST_PROMPT_SIGNATURE,
   DIGEST_PROMPT_VERSION,
-  digestConfigFromEnv,
-  getSummary,
   pickDigestModel,
+} from "../src/digest/prompt.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "../src/digest/signature.ts";
+import { countStaleThreads, staleThreads } from "../src/digest/stale.ts";
+import {
+  getSummary,
   rejectSummaryReason,
   searchSummaries,
   searchSummaryRoots,
-  staleThreads,
   writeSummary,
-} from "../src/digest/index.ts";
+} from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import {

@@ -7,7 +7,7 @@ import { flag, positiveInt, text } from "../src/commands/args.ts";
 import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
 import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest/index.ts";
+import { writeSummary } from "../src/digest/store.ts";
 import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import {

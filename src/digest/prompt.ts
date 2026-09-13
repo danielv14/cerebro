@@ -1,4 +1,4 @@
-import { DIGEST_PROMPT_SIGNATURE } from "../digest-signature.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "./signature.ts";
 
 // Design notes: docs/architecture.md ("Digest"); tiering numbers and overrides:
 // docs/digest-model-tiering.md.
