@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { dedupedHitWindow, escapeLike, type RankedMessageHit, rankedMessageHits } from "./fts.ts";
-import { attachThreadDisplay, messageOrdinal, threadOnBranch } from "./thread.ts";
+import {
+  dedupedHitWindow,
+  type HitFilters,
+  type RankedMessageHit,
+  rankedMessageHits,
+} from "./fts.ts";
+import { attachThreadDisplay, messageOrdinal } from "./thread.ts";
 
 // Filter semantics and design notes: docs/architecture.md ("Search").
 
@@ -19,12 +24,8 @@ export interface SearchHit {
   ordinal: number;
 }
 
-export interface SearchOpts {
-  project?: string;
-  branch?: string;
-  since?: string;
-  role?: string;
-  prose?: boolean;
+export interface SearchOpts extends HitFilters {
+  // Every matching message instead of the best hit per thread.
   all?: boolean;
 }
 
@@ -39,35 +40,14 @@ export const search = (
   limit = 20,
   opts: SearchOpts = {},
 ): SearchHit[] => {
-  const filters: { sql: string; params: string[] }[] = [];
-  if (opts.project) {
-    filters.push({
-      sql: "t.project_path LIKE '%' || ? || '%' ESCAPE '\\'",
-      params: [escapeLike(opts.project)],
-    });
-  }
-  if (opts.branch) {
-    filters.push({ sql: threadOnBranch("s.root_session_id"), params: [escapeLike(opts.branch)] });
-  }
-  if (opts.since) {
-    filters.push({ sql: "m.ts >= ?", params: [opts.since] });
-  }
-  if (opts.role) {
-    filters.push({ sql: "m.role = ?", params: [opts.role] });
-  }
-  if (opts.prose) {
-    // Prefix heuristic: a tool-only message always opens with "[tool_" as
-    // flattenContent renders it. A message that opens with prose and calls a
-    // tool further down is kept on purpose.
-    filters.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
-  }
+  const { all, ...filters } = opts;
 
   // The ordinal is deliberately not computed in the hit query (a thread-wide
   // COUNT per matched row); messageOrdinal runs once per KEPT hit below.
   const collect = (match: string): RankedMessageHit[] => {
     const fetch = (windowSize: number): RankedMessageHit[] =>
       rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 12, filters });
-    return opts.all
+    return all
       ? fetch(limit)
       : dedupedHitWindow({
           fetch,

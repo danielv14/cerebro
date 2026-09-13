@@ -36,12 +36,54 @@ export interface RankedMessageHit {
   project_path: string | null;
 }
 
+// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
+// LIKE-escaped by the caller.
+export const threadOnBranch = (rootExpr: string): string =>
+  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
+  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
+
+// What a caller can narrow a ranked hit by. Named filters rather than SQL, so the
+// aliases the predicates are written against (m = message, s = session,
+// t = rollup) stay private to this module and renaming one cannot break a caller
+// at runtime only.
+export interface HitFilters {
+  // Substring of the thread's project path.
+  project?: string;
+  // Substring of a branch any of the thread's sessions was recorded on.
+  branch?: string;
+  // ISO date; only messages at or after it.
+  since?: string;
+  role?: string;
+  // Drop messages that are nothing but flattened tool plumbing.
+  prose?: boolean;
+}
+
+const hitPredicates = (filters: HitFilters): { sql: string; params: (string | number)[] }[] => {
+  const out: { sql: string; params: (string | number)[] }[] = [];
+  if (filters.project) {
+    out.push({
+      sql: "t.project_path LIKE '%' || ? || '%' ESCAPE '\\'",
+      params: [escapeLike(filters.project)],
+    });
+  }
+  if (filters.branch) {
+    out.push({ sql: threadOnBranch("s.root_session_id"), params: [escapeLike(filters.branch)] });
+  }
+  if (filters.since) out.push({ sql: "m.ts >= ?", params: [filters.since] });
+  if (filters.role) out.push({ sql: "m.role = ?", params: [filters.role] });
+  if (filters.prose) {
+    // Prefix heuristic: a tool-only message always opens with "[tool_" as
+    // flattenContent renders it. A message that opens with prose and then calls a
+    // tool further down is kept on purpose.
+    out.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
+  }
+  return out;
+};
+
 export interface RankedHitWindow {
   limit: number;
   snippetTokens: number;
-  // Predicates against the fixed aliases (m = message, s = session, t = rollup).
-  // The sql fragments are codebase literals; user input stays in params.
-  filters?: { sql: string; params: (string | number)[] }[];
+  filters?: HitFilters;
 }
 
 // Throws on a malformed MATCH so each caller keeps its own fallback.
@@ -50,7 +92,7 @@ export const rankedMessageHits = (
   match: string,
   window: RankedHitWindow,
 ): RankedMessageHit[] => {
-  const filters = window.filters ?? [];
+  const filters = hitPredicates(window.filters ?? {});
   const sql = `
     SELECT m.id, m.session_id, m.ts, m.role,
            COALESCE(s.root_session_id, s.session_id) AS root,

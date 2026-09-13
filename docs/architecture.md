@@ -247,7 +247,15 @@ module, which owns that metadata. A caller keeps its ranking function, the size
 of its first fetch and its own result shape.
 
 - `escapeLike` escapes user-supplied LIKE fragments; every LIKE built from user
-  input pairs it with an explicit `ESCAPE '\'`.
+  input pairs it with an explicit `ESCAPE '\'`. `threadOnBranch` is the shared
+  any-session branch predicate, used by the hit filters here and by
+  `listThreads`.
+- `HitFilters` is what a caller narrows a hit by: named filters (`project`,
+  `branch`, `since`, `role`, `prose`), turned into SQL here. `search` used to
+  hand in raw predicate strings, which made the table aliases (`m` = message,
+  `s` = session, `t` = rollup) part of the query's interface without being
+  declared anywhere, so renaming one broke search at runtime only. The aliases
+  are private to this module now.
 - `toMatchQuery` turns prose into an OR-of-tokens FTS5 query: implicit AND
   would require every word to co-occur and return nothing for a conversational
   prompt, and Swedish/English stopwords are dropped via the `stopword` package
@@ -270,6 +278,10 @@ of its first fetch and its own result shape.
   growth and answer out of the first fetch.
 
 ## Search (`src/search.ts`)
+
+`search` owns the command's policy (window sizing, the sanitized retry, the
+result shape) and no SQL at all: it names `HitFilters` and the FTS module builds
+the query. `SearchOpts` is those filters plus `--all`.
 
 The `search` command's semantics: user queries pass to MATCH verbatim so power
 users can use FTS5 operators; on a syntax error the query is retried once as a

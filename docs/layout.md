@@ -34,10 +34,11 @@ src/
   thread.ts     what a thread is, end to end: the threads view DDL + row shape,
                 rootOf(), threadMessages(), listThreads(), recentThreads(),
                 attachThreadDisplay(), relinkThreads()
-  fts.ts        the message-FTS layer: rankedMessageHits(), dedupedHitWindow()
-                (fetch + dedup + growth), escapeLike(), toMatchQuery()
-  search.ts     search(): the search command's filters, first-window sizing and
-                fallback policy
+  fts.ts        the message-FTS layer: rankedMessageHits(), the HitFilters ->
+                SQL step, dedupedHitWindow() (fetch + dedup + growth),
+                escapeLike(), toMatchQuery(), threadOnBranch()
+  search.ts     search(): the search command's window sizing, sanitized retry
+                and result shape (it names filters, it writes no SQL)
   stats.ts      stats() + archiveSpan()
   relevance.ts  relevantThreads() + the ranking weights (recency decay, same-repo
                 boost)

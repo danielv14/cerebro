@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { escapeLike } from "./fts.ts";
+import { escapeLike, threadOnBranch } from "./fts.ts";
 
 // Design notes: docs/architecture.md ("Threads").
 
@@ -69,12 +69,6 @@ export interface ThreadRow {
   title: string | null;
   body_available: number;
 }
-
-// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
-// LIKE-escaped by the caller.
-export const threadOnBranch = (rootExpr: string): string =>
-  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
-  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
 
 export const listThreads = (
   db: Database,
