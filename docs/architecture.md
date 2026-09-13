@@ -284,8 +284,7 @@ of its first fetch and its own result shape.
   `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
   thread, and grow the window geometrically (x4, up to 3 rounds) only when it
   was genuinely exhausted: fewer distinct threads than asked for AND a full
-  window
-  came back. A fixed window is not enough because one chatty thread can own
+  window came back. A fixed window is not enough because one chatty thread can own
   every row in it and starve the threads ranked below. Growth re-fetches one
   deep window rather than paging with LIMIT/OFFSET: `ORDER BY bm25 LIMIT n`
   uses a bounded top-N sorter, so a deeper n is nearly free while every extra
