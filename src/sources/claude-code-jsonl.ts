@@ -2,7 +2,7 @@
 // schemas. Design notes: docs/architecture.md ("Sources").
 
 import * as v from "valibot";
-import { type Classified, parseLine } from "./sources/adapter.ts";
+import { type Classified, parseLine } from "./adapter.ts";
 
 // Only `type`, `uuid` and `message` are load-bearing. The optional scalars stay
 // `unknown` (coerced below) so a changed field type in an evolving log defaults

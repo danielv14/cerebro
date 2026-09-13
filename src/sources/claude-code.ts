@@ -1,16 +1,12 @@
 import fs from "node:fs";
 import { join } from "node:path";
-import { classifyLines } from "../jsonl.ts";
-import { claudeDir } from "../paths.ts";
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
+import { classifyLines } from "./claude-code-jsonl.ts";
 
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
-export const projectsDir = (): string => join(claudeDir(), "projects");
-
 // Unsorted: the registry orders the merged set.
-export const discoverSessionFiles = (): SessionFile[] => {
-  const root = projectsDir();
+export const discoverSessionFiles = (root: string): SessionFile[] => {
   let projectDirs: string[];
   try {
     projectDirs = fs
@@ -57,7 +53,6 @@ export const discoverSessionFiles = (): SessionFile[] => {
     }
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        // Top-level session file: filename (sans .jsonl) is the session UUID.
         const sessionId = entry.name.slice(0, -".jsonl".length);
         pushFile(join(dir, entry.name), "session", sessionId, projectDir);
       } else if (entry.isDirectory()) {
@@ -81,8 +76,10 @@ export const discoverSessionFiles = (): SessionFile[] => {
   return out;
 };
 
-export const claudeCodeAdapter: SourceAdapter = {
+// The projects root is handed in, never read from the environment here: the CLI
+// edge resolves it once and tests build the adapter from their fixture tree.
+export const createClaudeCodeAdapter = (projectsRoot: string): SourceAdapter => ({
   id: CLAUDE_CODE_PROVIDER,
-  discover: discoverSessionFiles,
+  discover: () => discoverSessionFiles(projectsRoot),
   classifyLines,
-};
+});

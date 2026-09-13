@@ -1,17 +1,16 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { searchSummaries, writeSummary } from "../src/digest/index.ts";
+import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { search } from "../src/search.ts";
 import {
-  attachThreadDisplay,
+  attachThreadIdentity,
   countThreads,
   messageOrdinal,
-  noThreadDisplay,
   rootOf,
-  type ThreadDisplay,
+  threadIdentity,
   threadLastTs,
   threadMessages,
   threadOpeningPrompt,
@@ -33,7 +32,6 @@ describe("thread (identity + membership)", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -60,7 +58,7 @@ describe("thread (identity + membership)", () => {
         timestamp: ts(4),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   };
 
   describe("rootOf", () => {
@@ -74,7 +72,7 @@ describe("thread (identity + membership)", () => {
 
     test("falls back to the given id for an unknown or not-yet-relinked session", () => {
       seedThread();
-      // No session row at all: preserve the historical `?? sessionId` fallback.
+      // No session row at all: the id is its own root rather than an error.
       expect(rootOf(db, "does-not-exist")).toBe("does-not-exist");
       // A row that exists but has not been relinked (NULL root) falls back to itself.
       db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
@@ -115,9 +113,56 @@ describe("thread (identity + membership)", () => {
         userMsg("S", "u2", "the real opening question", { timestamp: ts(1) }),
         assistantMsg("S", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       // Prose wins over the earlier `<command-` echo despite its later timestamp.
       expect(threadOpeningPrompt(db, "S")).toBe("the real opening question");
+    });
+
+    test("shows what the user typed when the session opens with a skill", () => {
+      // Claude Code records the slash command as one user turn and injects the
+      // skill body as the next one. Neither is prose.
+      writeSession(env.projects, "-repo", "K", [
+        userMsg(
+          "K",
+          "u1",
+          "<command-message>retro</command-message>\n" +
+            "<command-name>/retro</command-name>\n" +
+            "<command-args>senaste tva veckorna</command-args>",
+          { timestamp: ts(0) },
+        ),
+        userMsg(
+          "K",
+          "u2",
+          "Base directory for this skill: /Users/x/.claude/skills/retro\n\n# Retro\n\nGenerera en retro.",
+          { timestamp: ts(1) },
+        ),
+        assistantMsg("K", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(threadOpeningPrompt(db, "K")).toBe("senaste tva veckorna");
+    });
+
+    test("falls back to the command name when the slash command carried no arguments", () => {
+      writeSession(env.projects, "-repo", "N", [
+        userMsg(
+          "N",
+          "u1",
+          "<command-message>standup</command-message>\n<command-name>/standup</command-name>",
+          {
+            timestamp: ts(0),
+          },
+        ),
+        userMsg(
+          "N",
+          "u2",
+          "Base directory for this skill: /Users/x/.claude/skills/standup\n\n# Standup",
+          {
+            timestamp: ts(1),
+          },
+        ),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(threadOpeningPrompt(db, "N")).toBe("/standup");
     });
 
     test("returns null for a thread with no user turn", () => {
@@ -161,7 +206,7 @@ describe("thread (identity + membership)", () => {
         userMsg("S", "u2", "no timestamp", { timestamp: null }),
         assistantMsg("S", "a1", "answer", { parentUuid: "u1", timestamp: ts(1) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       const idOf = (text: string): number =>
         (db.query("SELECT id FROM messages WHERE text = ?").get(text) as { id: number }).id;
       expect(messageOrdinal(db, "S", idOf("no timestamp"))).toBe(1);
@@ -186,18 +231,17 @@ describe("thread (identity + membership)", () => {
       expect(countThreads(db)).toBe(0);
       // Distinct message UUIDs: dedup is keyed on the UUID alone (invariant #4), so
       // reusing one across the two files would drop B's only message and leave it a
-      // zero-message session, which the threads view no longer counts (#83).
+      // zero-message session, which the threads view excludes.
       writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
       writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "b", { timestamp: ts(1) })]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       expect(countThreads(db)).toBe(2);
     });
   });
 
-  // The step every ranked-hit path runs after dedup. Its whole reason to exist is
-  // that the two fallback policies used to be three copies that could drift apart
-  // without anything noticing.
-  describe("attachThreadDisplay", () => {
+  // The step every ranked-hit path runs after dedup, owned in one place so a new
+  // display column is not paid for by every listing that shows one.
+  describe("attachThreadIdentity", () => {
     const seedTwo = (): void => {
       writeSession(env.projects, "-repo", "A", [
         userMsg("A", "ua", "alpha", { timestamp: ts(0) }),
@@ -206,13 +250,13 @@ describe("thread (identity + membership)", () => {
       writeSession(env.projects, "-other", "B", [
         userMsg("B", "ub", "beta", { cwd: "/other", timestamp: ts(1) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
     };
 
     test("attaches the thread's rollup identity to each hit", () => {
       seedTwo();
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], noThreadDisplay).map(
-        ({ hit, display }) => ({ id: hit.root, ...display }),
+      const rows = attachThreadIdentity(db, [{ id: "A" }, { id: "B" }]).map(
+        ({ identity }) => identity,
       );
       expect(rows).toEqual([
         {
@@ -239,47 +283,21 @@ describe("thread (identity + membership)", () => {
       // identity emptied rather than be dropped.
       seedTwo();
       db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const rows = attachThreadDisplay(db, [{ root: "B" }], noThreadDisplay).map(
-        ({ hit, display }) => ({ id: hit.root, ...display }),
-      );
+      const rows = attachThreadIdentity(db, [{ id: "B" }]).map(({ identity }) => identity);
       expect(rows).toEqual([
         { id: "B", last_ts: null, project_path: null, provider: null, model: null, title: null },
       ]);
     });
 
-    test("the session-row policy answers from what the hit itself carries", () => {
-      // `search`'s policy: the matched message's own session row is a better answer
-      // than nothing when the rollup has nothing to say.
-      seedTwo();
-      db.run("DELETE FROM sessions WHERE session_id = 'B'");
-      const own: ThreadDisplay = {
-        last_ts: null,
-        project_path: "/from-the-session",
-        provider: "claude-code",
-        model: "opus-test",
-        title: "From the session row",
-      };
-      const rows = attachThreadDisplay(db, [{ root: "A" }, { root: "B" }], () => own).map(
-        ({ hit, display }) => ({ id: hit.root, title: display.title }),
-      );
-      // A alone has a rollup, so only B falls back.
-      expect(rows).toEqual([
-        { id: "A", title: "Alpha thread" },
-        { id: "B", title: "From the session row" },
-      ]);
-    });
-
-    test("hydrates once for the whole batch, deduplicating repeated roots", () => {
+    test("hydrates once for the whole batch, deduplicating repeated threads", () => {
       // Two hits in one thread must not mean two rollup queries; the ordering and
       // the per-hit result stay unchanged.
       seedTwo();
       let rows: { id: string; title: string | null }[] = [];
       const queries = countQueriesMatching(db, "FROM threads WHERE id IN", () => {
-        rows = attachThreadDisplay(
-          db,
-          [{ root: "A" }, { root: "B" }, { root: "A" }],
-          noThreadDisplay,
-        ).map(({ hit, display }) => ({ id: hit.root, title: display.title }));
+        rows = attachThreadIdentity(db, [{ id: "A" }, { id: "B" }, { id: "A" }]).map(
+          ({ identity }) => ({ id: identity.id, title: identity.title }),
+        );
       });
       expect(queries).toBe(1);
       expect(rows.map((row) => row.id)).toEqual(["A", "B", "A"]);
@@ -288,13 +306,14 @@ describe("thread (identity + membership)", () => {
 
     // The JSON these commands print is consumed by hooks and agents, so the key
     // order is part of the contract, not an accident of how the row is built.
-    // threadDisplay is the only thing that decides it for the two spreading
+    // threadIdentity is the only thing that decides it for the two spreading
     // callers, which is why the order is asserted rather than described.
     test("the display fields land in one order across every listing", () => {
       seedTwo();
       writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");
 
-      expect(Object.keys(noThreadDisplay())).toEqual([
+      expect(Object.keys(threadIdentity("A"))).toEqual([
+        "id",
         "last_ts",
         "project_path",
         "provider",
@@ -324,7 +343,7 @@ describe("thread (identity + membership)", () => {
       // search builds its row by hand and shows the message's own ts and branch,
       // so it carries no thread last_ts at all.
       expect(Object.keys(search(db, "alpha")[0]!)).toEqual([
-        "id",
+        "message_id",
         "session_id",
         "ts",
         "role",
@@ -339,7 +358,7 @@ describe("thread (identity + membership)", () => {
     });
 
     test("an empty hit list does no work", () => {
-      expect(attachThreadDisplay(db, [], noThreadDisplay)).toEqual([]);
+      expect(attachThreadIdentity(db, [])).toEqual([]);
     });
   });
 });

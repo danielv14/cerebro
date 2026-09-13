@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { DIGEST_PROMPT } from "../src/digest/index.ts";
+import { DIGEST_PROMPT } from "../src/digest/prompt.ts";
 import type { GitResolver } from "../src/git.ts";
 import { dryRunIndex, runIndex } from "../src/indexer.ts";
 import {
@@ -27,7 +27,6 @@ describe("runIndex", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -50,7 +49,7 @@ describe("runIndex", () => {
     writeSession(env.projects, "-elsewhere", "NOREPO", [
       userMsg("NOREPO", "u2", "work", { cwd: "/somewhere/else" }),
     ]);
-    runIndex(db, { resolveGit });
+    runIndex(db, { adapters: env.adapters, resolveGit });
 
     const rows = db
       .query("SELECT session_id, git_root, git_remote FROM sessions ORDER BY session_id")
@@ -65,7 +64,7 @@ describe("runIndex", () => {
     // The moved/deleted-directory case: resolution degrades to nulls and the row
     // is still written.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { cwd: "/gone" })]);
-    runIndex(db, { resolveGit: () => ({ root: null, remote: null }) });
+    runIndex(db, { adapters: env.adapters, resolveGit: () => ({ root: null, remote: null }) });
 
     const row = db.query("SELECT git_root, git_remote, cwd FROM sessions").get() as {
       git_root: string | null;
@@ -82,7 +81,7 @@ describe("runIndex", () => {
       assistantMsg("S", "a1", "reply", { parentUuid: "u1" }),
       { type: "system", uuid: "sys1", content: "noise" },
     ]);
-    const result = runIndex(db);
+    const result = runIndex(db, { adapters: env.adapters });
     expect(result.newMessages).toBe(2);
     expect(countMessages(db)).toBe(2);
   });
@@ -92,16 +91,16 @@ describe("runIndex", () => {
       userMsg("S", "u1", "hi"),
       assistantMsg("S", "a1", "yo", { parentUuid: "u1" }),
     ]);
-    expect(runIndex(db).newMessages).toBe(2);
-    expect(runIndex(db).newMessages).toBe(0);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(2);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(0);
     expect(countMessages(db)).toBe(2);
   });
 
   test("incremental index reads only appended bytes", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "one")]);
-    expect(runIndex(db).newMessages).toBe(1);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(1);
     appendRaw(path, `${JSON.stringify(assistantMsg("S", "a1", "two", { parentUuid: "u1" }))}\n`);
-    expect(runIndex(db).newMessages).toBe(1);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(1);
     expect(countMessages(db)).toBe(2);
   });
 
@@ -111,7 +110,7 @@ describe("runIndex", () => {
       userMsg("S", "u1", "hi"),
       { type: "custom-title", customTitle: "Custom title", sessionId: "S" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db.query("SELECT title FROM sessions WHERE session_id = 'S'").get() as {
       title: string;
     };
@@ -123,10 +122,10 @@ describe("runIndex", () => {
       userMsg("S", "u1", "hi"),
       { type: "custom-title", customTitle: "Custom title", sessionId: "S" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Claude Code appends a summary event later; the incremental run only sees it.
     appendRaw(path, `${JSON.stringify({ type: "summary", summary: "auto", sessionId: "S" })}\n`);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db
       .query("SELECT title, title_priority FROM sessions WHERE session_id='S'")
       .get() as {
@@ -142,9 +141,9 @@ describe("runIndex", () => {
       userMsg("S", "u1", "hi"),
       { type: "ai-title", aiTitle: "AI v1", sessionId: "S" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     appendRaw(path, `${JSON.stringify({ type: "ai-title", aiTitle: "AI v2", sessionId: "S" })}\n`);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     let row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
       title: string;
     };
@@ -153,14 +152,14 @@ describe("runIndex", () => {
       path,
       `${JSON.stringify({ type: "custom-title", customTitle: "Mine", sessionId: "S" })}\n`,
     );
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as { title: string };
     expect(row.title).toBe("Mine"); // higher priority wins
   });
 
   test("a standalone session is its own root", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db
       .query("SELECT root_session_id, parent_session_id FROM sessions WHERE session_id='S'")
       .get() as { root_session_id: string; parent_session_id: string | null };
@@ -177,7 +176,7 @@ describe("runIndex", () => {
       // first message of the resume continues from the original's last message
       userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const resume = db
       .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
       .get() as { parent_session_id: string; root_session_id: string };
@@ -193,9 +192,9 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    expect(runIndex(db).relinked).toBe(true);
+    expect(runIndex(db, { adapters: env.adapters }).relinked).toBe(true);
 
-    const second = runIndex(db); // nothing changed on disk
+    const second = runIndex(db, { adapters: env.adapters }); // nothing changed on disk
     expect(second.filesIndexed).toBe(0);
     expect(second.relinked).toBe(false);
     const resume = db
@@ -210,11 +209,11 @@ describe("runIndex", () => {
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
       assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    const second = runIndex(db);
+    const second = runIndex(db, { adapters: env.adapters });
     expect(second.filesIndexed).toBe(1);
     expect(second.relinked).toBe(true);
     const resume = db
@@ -241,7 +240,7 @@ describe("runIndex", () => {
     writeSubagent(env.projects, "-repo", "RESUME", "agent-x", [
       userMsg("RESUME", "sa1", "sub", { isSidechain: true, timestamp: ts(1), parentUuid: null }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const resume = db
       .query("SELECT parent_session_id, root_session_id FROM sessions WHERE session_id='RESUME'")
       .get() as { parent_session_id: string | null; root_session_id: string };
@@ -255,7 +254,7 @@ describe("runIndex", () => {
       userMsg("PARENT", "sa1", "subagent prompt", { isSidechain: true }),
       assistantMsg("PARENT", "sa2", "subagent reply", { isSidechain: true, parentUuid: "sa1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // All three messages belong to PARENT; the two sidechain turns are flagged.
     const total = (
       db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='PARENT'").get() as {
@@ -276,7 +275,7 @@ describe("runIndex", () => {
       userMsg("PARENT", "u1", "do a task"),
       { type: "custom-title", customTitle: "Parent title", sessionId: "PARENT" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // The subagent transcript shows up later, carrying a different cwd and branch.
     // The parent's top-level file is unchanged, so this run only touches the parent
     // row via touchParentSession: it must refresh the aggregate and nothing else.
@@ -287,7 +286,7 @@ describe("runIndex", () => {
         gitBranch: "other-branch",
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db
       .query(
         `SELECT project_path, cwd, git_branch, source_file, title, title_priority, msg_count
@@ -319,7 +318,7 @@ describe("runIndex", () => {
         message: { role: "assistant", content: "yo", model: "claude-sonnet-4-6" },
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db.query("SELECT provider, model FROM sessions WHERE session_id='S'").get() as {
       provider: string;
       model: string;
@@ -333,7 +332,7 @@ describe("runIndex", () => {
         message: { role: "assistant", content: "parent turn", model: "claude-sonnet-4-6" },
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // A subagent transcript on a cheaper model arrives later; the parent's
     // top-level file is unchanged, so only touchParentSession runs.
     writeSubagent(env.projects, "-repo", "PARENT", "agent-1", [
@@ -342,7 +341,7 @@ describe("runIndex", () => {
         message: { role: "assistant", content: "subagent turn", model: "claude-haiku-4-5" },
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db
       .query("SELECT provider, model FROM sessions WHERE session_id='PARENT'")
       .get() as { provider: string; model: string };
@@ -355,7 +354,7 @@ describe("runIndex", () => {
         message: { role: "assistant", content: "first", model: "claude-sonnet-4-6" },
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const model = () =>
       (db.query("SELECT model FROM sessions WHERE session_id='S'").get() as { model: string })
         .model;
@@ -369,10 +368,10 @@ describe("runIndex", () => {
         }),
       )}\n`,
     );
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(model()).toBe("claude-opus-4-6");
     // ...and a full re-read from byte 0 agrees, so --full/--rebuild never rewrite it.
-    runIndex(db, { full: true });
+    runIndex(db, { adapters: env.adapters, full: true });
     expect(model()).toBe("claude-opus-4-6");
   });
 
@@ -387,7 +386,7 @@ describe("runIndex", () => {
         message: { role: "assistant", content: "interrupted", model: "<synthetic>" },
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const row = db.query("SELECT model FROM sessions WHERE session_id='S'").get() as {
       model: string;
     };
@@ -399,11 +398,11 @@ describe("runIndex", () => {
       userMsg("S", "u1", "one"),
       assistantMsg("S", "a1", "two", { parentUuid: "u1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Rewrite shorter with a different message; cursor (> new size) must reset.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u3", "fresh")]);
     // shrink check relies on the new file being smaller than indexed bytes
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hasU3 = db.query("SELECT 1 FROM messages WHERE uuid='u3'").get();
     expect(hasU3).not.toBeNull();
   });
@@ -413,20 +412,20 @@ describe("runIndex", () => {
       userMsg("S", "u1", "hi"),
       assistantMsg("S", "a1", "yo", { parentUuid: "u1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const before = countMessages(db);
-    const result = runIndex(db, { full: true });
+    const result = runIndex(db, { adapters: env.adapters, full: true });
     expect(result.newMessages).toBe(0);
     expect(countMessages(db)).toBe(before);
   });
 
   test("--rebuild re-flattens stored text of on-disk messages and syncs FTS (#43)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "the real searchable text")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Simulate an old flattening generation: stored text differs from a fresh parse.
     db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
     db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
-    runIndex(db, { rebuild: true });
+    runIndex(db, { adapters: env.adapters, rebuild: true });
     const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
     expect(row.text).toBe("the real searchable text");
     // The update trigger kept the FTS index in sync with the refreshed text.
@@ -439,9 +438,9 @@ describe("runIndex", () => {
   test("--rebuild keeps messages whose source file is deleted (#43)", () => {
     const path = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "ug", "precious")]);
     writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "uk", "still here")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
-    const result = runIndex(db, { rebuild: true });
+    const result = runIndex(db, { adapters: env.adapters, rebuild: true });
     expect(result.newMessages).toBe(0);
     // The deleted session's only copy survives the rebuild.
     const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
@@ -461,8 +460,8 @@ describe("runIndex", () => {
       userMsg("RESUME", "u1", "start", { timestamp: ts(0) }),
       userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
-    runIndex(db, { rebuild: true });
+    runIndex(db, { adapters: env.adapters });
+    runIndex(db, { adapters: env.adapters, rebuild: true });
     const row = db.query("SELECT session_id FROM messages WHERE uuid='u1'").get() as {
       session_id: string;
     };
@@ -473,19 +472,19 @@ describe("runIndex", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "complete")]);
     const a1 = JSON.stringify(assistantMsg("S", "a1", "later", { parentUuid: "u1" }));
     appendRaw(path, a1.slice(0, 25)); // partial JSON, no newline
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countMessages(db)).toBe(1); // only u1
     appendRaw(path, `${a1.slice(25)}\n`); // complete it
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countMessages(db)).toBe(2);
   });
 
   test("a deleted source file flips body_available, others stay available", () => {
     const pathA = writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a")]);
     writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(pathA);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const rows = db
       .query("SELECT session_id, body_available FROM sessions ORDER BY session_id")
       .all() as { session_id: string; body_available: number }[];
@@ -503,7 +502,7 @@ describe("runIndex", () => {
     ]);
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
 
-    const result = runIndex(db);
+    const result = runIndex(db, { adapters: env.adapters });
     expect(result.newMessages).toBe(1); // only REAL's message
     expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
       c: 0,
@@ -512,20 +511,20 @@ describe("runIndex", () => {
       c: 0,
     });
     // Cursor was recorded, so a second run does not re-scan and re-skip it.
-    expect(runIndex(db).filesIndexed).toBe(0);
+    expect(runIndex(db, { adapters: env.adapters }).filesIndexed).toBe(0);
   });
 
   test("a digest transcript that grows after detection stays excluded (#42)", () => {
     // The digest run is still writing while the first index detects it. The later
     // lines must not leak into the archive on the next incremental run.
     const path = writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     appendRaw(
       path,
       `${JSON.stringify(assistantMsg("DIG", "d2", "the summary", { parentUuid: "d1" }))}\n`,
     );
     // Real run: nothing indexed, no session row appears.
-    expect(runIndex(db).newMessages).toBe(0);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(0);
     expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
       c: 0,
     });
@@ -534,7 +533,7 @@ describe("runIndex", () => {
     });
     // Dry run agrees: the grown digest file is not a candidate.
     appendRaw(path, `${JSON.stringify(assistantMsg("DIG", "d3", "more", { parentUuid: "d2" }))}\n`);
-    const plan = dryRunIndex(db);
+    const plan = dryRunIndex(db, env.adapters);
     expect(plan.candidateMessages).toBe(0);
     expect(plan.filesToRead).toBe(0);
   });
@@ -546,7 +545,7 @@ describe("runIndex", () => {
       userMsg("S", "u1", "let us discuss the cerebro digest prompt"),
       userMsg("S", "u2", DIGEST_PROMPT, { parentUuid: "u1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countMessages(db)).toBe(2);
     expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='S'").get()).toEqual({
       c: 1,
@@ -555,10 +554,10 @@ describe("runIndex", () => {
 
   test("an empty scan does not wipe body_available (transient-failure guard)", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
     require("node:fs").rmSync(require("node:path").dirname(path), { recursive: true, force: true });
-    runIndex(db); // now zero files discovered
+    runIndex(db, { adapters: env.adapters }); // now zero files discovered
     const row = db.query("SELECT body_available FROM sessions WHERE session_id='S'").get() as {
       body_available: number;
     };
@@ -568,11 +567,11 @@ describe("runIndex", () => {
   test("a deleted source file's index_state cursor is pruned, its messages are not", () => {
     const pathA = writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a")]);
     writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countIndexState(db)).toBe(2);
 
     require("node:fs").rmSync(pathA);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     // The cursor is gone, but the archive is not: for a session whose source is
     // deleted the rows here are the only copy (invariant #4).
@@ -590,10 +589,10 @@ describe("runIndex", () => {
 
   test("an empty scan does not wipe index_state (transient-failure guard)", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
     require("node:fs").rmSync(require("node:path").dirname(path), { recursive: true, force: true });
-    runIndex(db); // zero files discovered
+    runIndex(db, { adapters: env.adapters }); // zero files discovered
     expect(countIndexState(db)).toBe(1);
   });
 
@@ -603,14 +602,14 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo-keep", "K", [userMsg("K", "uk", "keep")]);
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     const raw = require("node:fs").readFileSync(path);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countIndexState(db)).toBe(1); // only the keeper
 
     // Re-read from byte 0; UUID dedup makes that a no-op (invariant #4).
     require("node:fs").writeFileSync(path, raw);
-    expect(runIndex(db).newMessages).toBe(0);
+    expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(0);
     expect(countMessages(db)).toBe(2);
     expect(countIndexState(db)).toBe(2);
   });
@@ -618,13 +617,13 @@ describe("runIndex", () => {
   test("an is_digest flag survives a prune when its file still exists", () => {
     writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
     const pathGone = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(db.query("SELECT COUNT(*) AS c FROM index_state WHERE is_digest=1").get()).toEqual({
       c: 1,
     });
 
     require("node:fs").rmSync(pathGone);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const rows = db.query("SELECT source_file, is_digest FROM index_state").all() as {
       source_file: string;
@@ -640,7 +639,7 @@ describe("runIndex", () => {
     require("node:fs").chmodSync(badPath, 0o000);
 
     const skips: string[] = [];
-    const result = runIndex(db, { onSkip: (line) => skips.push(line) });
+    const result = runIndex(db, { adapters: env.adapters, onSkip: (line) => skips.push(line) });
 
     // The good file made it in; the bad one was skipped, not fatal.
     expect(countMessages(db)).toBe(1);
@@ -661,7 +660,6 @@ describe("dryRunIndex", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -674,7 +672,7 @@ describe("dryRunIndex", () => {
       userMsg("S", "u1", "hi"),
       assistantMsg("S", "a1", "yo", { parentUuid: "u1" }),
     ]);
-    const plan = dryRunIndex(db);
+    const plan = dryRunIndex(db, env.adapters);
     expect(plan.candidateMessages).toBe(2);
     expect(plan.newFiles).toBe(1);
     expect(countMessages(db)).toBe(0); // nothing written
@@ -682,16 +680,16 @@ describe("dryRunIndex", () => {
 
   test("after a real index, a dry run sees nothing to do", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
-    const plan = dryRunIndex(db);
+    runIndex(db, { adapters: env.adapters });
+    const plan = dryRunIndex(db, env.adapters);
     expect(plan.filesToRead).toBe(0);
     expect(plan.unchangedFiles).toBe(1);
   });
 
   test("--full dry run counts the whole archive as candidates", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
-    runIndex(db);
-    const plan = dryRunIndex(db, true);
+    runIndex(db, { adapters: env.adapters });
+    const plan = dryRunIndex(db, env.adapters, true);
     expect(plan.full).toBe(true);
     expect(plan.candidateMessages).toBe(1);
   });
@@ -701,8 +699,34 @@ describe("dryRunIndex", () => {
       userMsg("DIG", "d1", DIGEST_PROMPT),
       assistantMsg("DIG", "d2", "summary", { parentUuid: "d1" }),
     ]);
-    const plan = dryRunIndex(db);
+    const plan = dryRunIndex(db, env.adapters);
     expect(plan.candidateMessages).toBe(0);
     expect(plan.filesToRead).toBe(0);
+    expect(plan.skippedFiles).toBe(1);
+  });
+
+  test("a tree with a skipped file reports the same file total as the real run", () => {
+    writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
+    writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
+    // A mid-write file: one complete line, then a half-written one.
+    const partial = writeSession(env.projects, "-repo", "MID", [userMsg("MID", "m1", "first")]);
+    runIndex(db, { adapters: env.adapters });
+    appendRaw(partial, '{"type":"user","uuid":"m2",');
+
+    const plan = dryRunIndex(db, env.adapters);
+    const real = runIndex(db, { adapters: env.adapters });
+
+    expect(plan.filesToRead).toBe(real.filesIndexed);
+    expect(plan.filesScanned).toBe(real.filesScanned);
+    // Neither the digest transcript nor the mid-write tail counts as work done.
+    expect(real.filesIndexed).toBe(0);
+    expect(real.relinked).toBe(false);
+    expect(
+      plan.newFiles +
+        plan.grownFiles +
+        plan.truncatedFiles +
+        plan.unchangedFiles +
+        plan.skippedFiles,
+    ).toBe(plan.filesScanned);
   });
 });

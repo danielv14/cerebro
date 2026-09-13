@@ -16,9 +16,12 @@ Three files under `src/sources/`:
   event shape, and the `SourceAdapter` interface. Read its doc comments first;
   they state the guarantees below next to the types that carry them.
 - `claude-code.ts` is the reference implementation's discovery half (the
-  `~/.claude/projects` walk). Its normalization half is `src/jsonl.ts`.
-- `registry.ts` holds the list of active adapters, the provider -> adapter
-  lookup, and the global oldest-first merge of every source's files.
+  projects-directory walk). `createClaudeCodeAdapter(projectsRoot)` takes the
+  root it walks; it reads no environment. Its normalization half is
+  `src/sources/claude-code-jsonl.ts`.
+- `registry.ts` builds the registered adapters from the roots the CLI edge
+  resolved (`sourceAdapters(claudeCodeProjects)`), and holds the provider ->
+  adapter lookup and the global oldest-first merge of every source's files.
 
 An adapter is two functions and an id:
 
@@ -93,7 +96,7 @@ Optional but wired through when present:
    title events? Write the answers into the adapter's header comment.
 2. Implement `src/sources/<tool>.ts` exporting a `SourceAdapter`. Discovery
    must tolerate a missing root directory (return `[]`). Validate the untrusted
-   log shape with Valibot, the same way `src/jsonl.ts` does; that is the
+   log shape with Valibot, the same way `src/sources/claude-code-jsonl.ts` does; that is the
    project's I/O-boundary rule.
 3. Register it in `src/sources/registry.ts`.
 4. Test it. `test/sources.test.ts` already contains a complete fake adapter
@@ -102,8 +105,8 @@ Optional but wired through when present:
    files copied from real logs: normalization, dedup idempotency (index twice,
    zero new), incremental append, provider + model on the session row, and FTS
    hits on the source's text. Add the id to the pinned provider list in the same
-   file. `runIndex(db, { adapters })` and `dryRunIndex(db, full, adapters)` both
-   take an injected adapter list, so tests never touch the registry or a real
+   file. `runIndex(db, { adapters })` and `dryRunIndex(db, adapters, full)` both
+   require an adapter list, so tests never touch the registry or a real
    archive; index the same fixtures through both and assert the counts agree, so
    dry-run parity (invariant #2) holds for your source too.
 5. Run `bun run typecheck`, `bun test`, `bun run check`, and update
@@ -126,7 +129,7 @@ reconsider the adapter design first.
   `CEREBRO_CLAUDE_DIR`/`CEREBRO_DB`) regardless of sources.
 - Three user- and agent-facing strings name Claude Code and keep doing so while
   it is the only registered adapter: the digest prompt's opening sentence
-  (`src/digest-signature.ts`), the `recent` header and the `relevant` header
+  (`src/digest/signature.ts`), the `recent` header and the `relevant` header
   (`src/commands/recent.ts`, `src/commands/relevant.ts`). Neutralizing the
   digest one is not free: that sentence is also the marker
   `isDigestRunTranscript` matches on, so rewording it hides existing digest

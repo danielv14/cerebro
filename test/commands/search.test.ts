@@ -5,7 +5,7 @@ describe("searchListing", () => {
   test("renders a header + snippet line per hit, then the count footer", () => {
     const lines = searchListing([
       {
-        id: 1,
+        message_id: 1,
         session_id: "0123456789abcdef",
         ts: "2026-07-15T08:00:00Z",
         role: "user",
@@ -30,7 +30,7 @@ describe("searchListing", () => {
     const lines = searchListing(
       [
         {
-          id: 1,
+          message_id: 1,
           session_id: "0123456789abcdef",
           ts: "2026-07-15T08:00:00Z",
           role: "user",
@@ -54,7 +54,7 @@ describe("searchListing", () => {
   test("truncates the snippet at 160 columns", () => {
     const lines = searchListing([
       {
-        id: 1,
+        message_id: 1,
         session_id: "0123456789abcdef",
         ts: "2026-07-15T08:00:00Z",
         role: "user",
@@ -73,7 +73,7 @@ describe("searchListing", () => {
   test("appends the thread title to the header line when present, truncated at 60", () => {
     const lines = searchListing([
       {
-        id: 1,
+        message_id: 1,
         session_id: "0123456789abcdef",
         ts: "2026-07-15T08:00:00Z",
         role: "assistant",
@@ -89,7 +89,7 @@ describe("searchListing", () => {
     expect(lines[0]).toBe("01234567  2026-07-15 10:00  assistant  cerebro  Fix flaky auth test");
     const long = searchListing([
       {
-        id: 1,
+        message_id: 1,
         session_id: "0123456789abcdef",
         ts: "2026-07-15T08:00:00Z",
         role: "user",

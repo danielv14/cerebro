@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSessionEndPayload } from "../src/commands/digest.ts";
 import { openDb } from "../src/db.ts";
+import type { DigestConfig } from "../src/digest/config.ts";
+import { DEFAULT_DIGEST_MODELS } from "../src/digest/prompt.ts";
 import {
   createClaudeSummarizer,
-  DEFAULT_DIGEST_MODELS,
-  type DigestConfig,
-  getSummary,
   runDigest,
   runDrain,
   type SummarizeRequest,
   type Summarizer,
-  staleThreads,
-} from "../src/digest/index.ts";
+} from "../src/digest/run.ts";
+import { staleThreads } from "../src/digest/stale.ts";
+import { getSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
@@ -27,8 +27,8 @@ import {
   writeSession,
 } from "./fixtures.ts";
 
-// The tiering is a required argument now; these tests assert on the pipeline, not
-// on which model it picked, so they all pass the shipped one.
+// These assert on the pipeline, not on which model it picked, so they all pass the
+// shipped tiering.
 const models = DEFAULT_DIGEST_MODELS;
 
 // A valid summary has to clear SUMMARY_MIN_CHARS and must not look like an error.
@@ -52,13 +52,12 @@ describe("runDigest", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "how do I tune the limiter", { timestamp: ts(0) }),
       assistantMsg("SESS", "a1", "raise the window", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
     db = openDb(":memory:");
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   });
   afterEach(() => {
     db.close();
@@ -74,7 +73,6 @@ describe("runDigest", () => {
     expect(outcome.chars).toBe(GOOD_SUMMARY.length);
     expect(outcome.bytes).toBeGreaterThan(0);
     expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
-    // The model that was picked is the model recorded with the summary.
     expect(getSummary(db, "SESS")?.model).toBe(outcome.model!);
 
     // The seam carries the rendered transcript and the prompt, so the adapter
@@ -273,14 +271,13 @@ describe("runDrain", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     for (const id of ["ONE", "TWO", "THREE"]) {
       writeSession(env.projects, "-repo", id, [
         userMsg(id, `${id}-u1`, `work on ${id}`, { timestamp: ts(0) }),
       ]);
     }
     db = openDb(":memory:");
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   });
   afterEach(() => {
     db.close();

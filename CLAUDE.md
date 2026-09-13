@@ -14,7 +14,8 @@ code.
   below). Dev deps are types only plus Biome (lint + format). Do not add native or
   network runtime deps.
 - **Valibot validates the untrusted I/O boundaries only**: the session JSONL events
-  and content blocks in `jsonl.ts` (`classify`, `flattenContent`) and the two hook
+  and content blocks in `sources/claude-code-jsonl.ts` (`classify`,
+  `flattenContent`) and the two hook
   stdin payloads (`parseHookPayload` in `src/commands/relevant.ts`,
   `parseSessionEndPayload` in `src/commands/digest.ts`). Anything that comes out
   of SQLite or is
@@ -51,8 +52,9 @@ code.
   (the code uses `!` deliberately). The codebase carries no `biome-ignore` escapes;
   the JSONL parser is validated with Valibot rather than narrowing `any`. Keep it clean.
 - Tests: `bun test`. The suite under `test/` runs against an in-memory SQLite DB
-  (`:memory:`) plus temp fixture session files pointed at by `CEREBRO_CLAUDE_DIR`;
-  helpers live in `test/fixtures.ts`. It covers the critical paths: byte/cursor
+  (`:memory:`) plus temp fixture session files, discovered through the adapter
+  list `makeClaudeDir()` builds rather than an environment variable; helpers live
+  in `test/fixtures.ts`. It covers the critical paths: byte/cursor
   splitting, dedup + incremental indexing, subagent folding, thread relinking,
   the source-adapter seam (`test/sources.test.ts`: discovery ordering, tiebreak,
   subagent walk, the pinned registered provider ids, and a fake second adapter

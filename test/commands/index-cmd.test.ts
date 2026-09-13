@@ -20,6 +20,7 @@ describe("dryRunReport", () => {
         grownFiles: 1,
         truncatedFiles: 0,
         unchangedFiles: 3,
+        skippedFiles: 0,
         newBytes: 2048,
         candidateMessages: 12,
       }),
@@ -27,7 +28,7 @@ describe("dryRunReport", () => {
       "Dry run. Would index:",
       "  New messages:  12",
       "  New bytes:     2.0 KB",
-      "  Files:         1 new, 1 grown, 0 truncated, 3 unchanged (skipped)",
+      "  Files:         1 new, 1 grown, 0 truncated, 3 unchanged, 0 not indexable",
       "\nNothing written. Run `cerebro index` to apply.",
     ]);
   });
@@ -42,6 +43,7 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 5,
+        skippedFiles: 0,
         newBytes: 0,
         candidateMessages: 0,
       }),
@@ -61,6 +63,7 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 0,
+        skippedFiles: 0,
         newBytes: 1024 * 1024,
         candidateMessages: 100,
       }),
@@ -69,6 +72,26 @@ describe("dryRunReport", () => {
       "  Candidate messages: 100 (before UUID dedup)",
       "  Bytes to read:      1.0 MB",
       "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
+      "\nNothing written. Run `cerebro index` to apply.",
+    ]);
+  });
+
+  test("names the files that were read but had nothing to index", () => {
+    expect(
+      dryRunReport({
+        full: false,
+        filesScanned: 4,
+        filesToRead: 0,
+        newFiles: 0,
+        grownFiles: 0,
+        truncatedFiles: 0,
+        unchangedFiles: 2,
+        skippedFiles: 2,
+        newBytes: 0,
+        candidateMessages: 0,
+      }),
+    ).toEqual([
+      "Dry run: nothing to index. 2/4 files unchanged, 2 not indexable.",
       "\nNothing written. Run `cerebro index` to apply.",
     ]);
   });

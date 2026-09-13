@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
-# cerebro: drain the digest backlog. Indexes, then hands up to CAP stale threads
-# to `cerebro digest drain`, which summarizes each one and writes it back.
-#
-# This is the reconciler that summarize-on-clear.sh assumes exists. The clear hook
-# only summarizes the one just-cleared session, so every session that ends without
-# /clear (headless, abandoned, still-open) accrues as backlog. This agent drains
-# that backlog gradually. Wired as a launchd agent that runs every 6 hours.
-#
-# Token safety: CAP bounds how many threads one run summarizes, so a large backlog
-# drains over several runs instead of one burst. A lock prevents overlapping runs.
-# Newest-first ordering means recent sessions (most likely to be recalled) are
-# summarized first; the older tail drains over subsequent runs.
+# cerebro's digest reconciler, run by launchd every 6 hours. Indexes, then hands up
+# to CAP stale threads to `cerebro digest drain`. This script owns only what belongs
+# to the shell: scheduling, the single-flight lock, PATH and the log. Cadence, env
+# vars and the launchd plist: docs/scheduling.md.
 set -uo pipefail
 
 # launchd gives a bare environment. claude and cerebro are native binaries, but we
 # still pin a sane PATH so both resolve: cerebro spawns claude by name.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-CEREBRO="${CEREBRO_BIN:-$HOME/.claude/cerebro/cerebro}"
+CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"
 LOG="$LOG_DIR/digest.log"
 CAP="${CEREBRO_DIGEST_BATCH_CAP:-8}"
@@ -56,12 +48,6 @@ trap 'exit' INT TERM
 # written sessions become eligible for summarizing on this same run.
 { date "+[stale-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# Drain the backlog. `cerebro digest drain` owns the per-thread sequence (render,
-# tier the model, call it, guard the output, store it), the newest-first ordering,
-# and "one failed thread must not abort the run". This script owns only the things
-# that belong to the shell: scheduling, the single-flight lock, PATH, and the log.
-# The loop, the temp files and the `claude` invocation that used to live here are
-# gone, along with the second copy of them in summarize-on-clear.sh.
 # Each line is stamped as it arrives, not just the first: drain streams a line per
 # thread as it completes, and a timestamp on every one is what makes a wedged
 # overnight run readable. `read` is line-buffered, so this keeps the streaming.

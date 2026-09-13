@@ -17,54 +17,54 @@ import {
 describe("dedupedHitWindow", () => {
   // A fetch that serves the top `size` rows of a fixed ranked list and records the
   // window sizes it was asked for, so a test can pin the number of rounds.
-  const fetcher = (rows: { root: string }[], asked: number[]) => (size: number) => {
+  const fetcher = (rows: { id: string }[], asked: number[]) => (size: number) => {
     asked.push(size);
     return rows.slice(0, size);
   };
 
   // `roots` threads with `perRoot` matching rows each, worst hit last, which is the
   // shape a chatty thread makes in a ranked window.
-  const chatty = (roots: number, perRoot: number): { root: string }[] =>
+  const chatty = (roots: number, perRoot: number): { id: string }[] =>
     Array.from({ length: roots }, (_, root) =>
-      Array.from({ length: perRoot }, () => ({ root: `R${root}` })),
+      Array.from({ length: perRoot }, () => ({ id: `R${root}` })),
     ).flat();
 
   test("sizes the first fetch off the target root count, floored at minRows", () => {
     const asked: number[] = [];
-    const spec = { fetch: fetcher(chatty(40, 1), asked), minRows: 80, rowsPerRoot: 20 };
-    dedupedHitWindow({ ...spec, targetRoots: 3 });
-    dedupedHitWindow({ ...spec, targetRoots: 20 });
+    const spec = { fetch: fetcher(chatty(40, 1), asked), minRows: 80, rowsPerThread: 20 };
+    dedupedHitWindow({ ...spec, targetThreads: 3 });
+    dedupedHitWindow({ ...spec, targetThreads: 20 });
     // 3 * 20 is under the floor, 20 * 20 is over it.
     expect(asked).toEqual([80, 400]);
   });
 
   test("keeps the first hit per root in the incoming order by default", () => {
     const rows = [
-      { root: "A", tag: "a1" },
-      { root: "B", tag: "b1" },
-      { root: "A", tag: "a2" },
-      { root: "C", tag: "c1" },
+      { id: "A", tag: "a1" },
+      { id: "B", tag: "b1" },
+      { id: "A", tag: "a2" },
+      { id: "C", tag: "c1" },
     ];
     const kept = dedupedHitWindow({
       fetch: () => rows,
-      targetRoots: 3,
+      targetThreads: 3,
       minRows: 10,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
     });
     expect(kept.map((hit) => hit.tag)).toEqual(["a1", "b1", "c1"]);
   });
 
   test("keeps the lowest-ranked hit per root and returns them best-first", () => {
     const rows = [
-      { root: "A", tag: "a-worse", rank: 5 },
-      { root: "B", tag: "b", rank: 3 },
-      { root: "A", tag: "a-best", rank: 1 },
+      { id: "A", tag: "a-worse", rank: 5 },
+      { id: "B", tag: "b", rank: 3 },
+      { id: "A", tag: "a-best", rank: 1 },
     ];
     const kept = dedupedHitWindow({
       fetch: () => rows,
-      targetRoots: 2,
+      targetThreads: 2,
       minRows: 10,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
       rank: (hit) => hit.rank,
     });
     expect(kept.map((hit) => hit.tag)).toEqual(["a-best", "b"]);
@@ -74,9 +74,9 @@ describe("dedupedHitWindow", () => {
     const asked: number[] = [];
     const kept = dedupedHitWindow({
       fetch: fetcher(chatty(8, 10), asked),
-      targetRoots: 3,
+      targetThreads: 3,
       minRows: 80,
-      rowsPerRoot: 20,
+      rowsPerThread: 20,
     });
     expect(asked).toEqual([80]);
     expect(kept).toHaveLength(8);
@@ -86,9 +86,9 @@ describe("dedupedHitWindow", () => {
     const asked: number[] = [];
     const kept = dedupedHitWindow({
       fetch: fetcher(chatty(20, 10), asked),
-      targetRoots: 10,
+      targetThreads: 10,
       minRows: 10,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
     });
     // Ten rows per root, so 10 rows hold 1 root, 40 hold 4, and 160 hold 16, past the
     // 10 asked for. Without the growth the answer would have been that single root.
@@ -101,9 +101,9 @@ describe("dedupedHitWindow", () => {
     // One root owns every row, so the target is never reachable.
     dedupedHitWindow({
       fetch: fetcher(chatty(1, 100_000), asked),
-      targetRoots: 5,
+      targetThreads: 5,
       minRows: 10,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
     });
     expect(asked).toEqual([10, 40, 160, 640]);
   });
@@ -112,9 +112,9 @@ describe("dedupedHitWindow", () => {
     const asked: number[] = [];
     dedupedHitWindow({
       fetch: fetcher(chatty(2, 10), asked),
-      targetRoots: 5,
+      targetThreads: 5,
       minRows: 80,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
     });
     expect(asked).toEqual([80]);
   });
@@ -126,9 +126,9 @@ describe("dedupedHitWindow", () => {
     // takes the two it found instead.
     const kept = dedupedHitWindow({
       fetch: fetcher(chatty(2, 40), asked),
-      targetRoots: 5,
+      targetThreads: 5,
       minRows: 80,
-      rowsPerRoot: 1,
+      rowsPerThread: 1,
       grow: false,
     });
     expect(asked).toEqual([80]);
@@ -142,7 +142,6 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -171,7 +170,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const searchHits = search(db, "capacitor", 10);
     expect(searchHits).toHaveLength(1);
@@ -188,9 +187,8 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
   });
 
   test("relevant fills its limit when chatty threads dominate the raw tier (#141)", () => {
-    // 20 threads with 10 equally matching turns each. The raw tier used to ask for a
-    // flat 80 rows, so eight chatty threads owned the whole window and --limit 20
-    // answered with 8. The window now grows off the caller's limit.
+    // 20 threads with 10 equally matching turns each. With a flat window a handful of
+    // chatty threads own all of it, so the window has to grow off the caller's limit.
     for (let thread = 0; thread < 20; thread++) {
       const id = `T${thread}`;
       writeSession(
@@ -205,7 +203,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
         ),
       );
     }
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     expect(relevantThreads(db, "limiter", 20)).toHaveLength(20);
   });
@@ -230,7 +228,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
     writeSession(env.projects, "-repo", "BURIED", [
       userMsg("BURIED", "b1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     let threads: string[] = [];
     const queries = countQueriesMatching(db, "messages_fts MATCH", () => {

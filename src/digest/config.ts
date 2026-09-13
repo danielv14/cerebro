@@ -12,8 +12,8 @@ export interface DigestConfig {
   claudeBin: string;
 }
 
-// The one place cerebro reads the digest environment. The CLI edge calls it and
-// passes the result down, so nothing in the pipeline reaches for process.env.
+// The one place cerebro reads the digest environment; the CLI edge calls it and
+// passes the result down.
 export const digestConfigFromEnv = (
   env: Record<string, string | undefined> = process.env,
 ): DigestConfig => {

@@ -18,6 +18,11 @@ even where `bun` is not on `PATH`:
 bun run deploy   # builds dist/cerebro, copies it + the hook scripts (summarize-on-clear.sh, digest-stale-batch.sh) into $CLAUDE_CONFIG_DIR/cerebro (default ~/.claude/cerebro)
 ```
 
+`$CLAUDE_CONFIG_DIR` (default `~/.claude`) is the one thing that decides where
+this lands. The hook scripts and `doctor` resolve the binary the same way, so
+setting it moves all three together; `src/paths.ts` holds the TypeScript side of
+that expression.
+
 The binary is a frozen snapshot of the source. The PATH symlink (`~/.local/bin/cerebro`)
 tracks the repo live, but the hook runs this compiled copy, so a code
 change (or a digest-prompt change) does not reach the automated path until you re-run

@@ -5,6 +5,25 @@ report. See [hooks.md](hooks.md) and [scheduling.md](scheduling.md) for the
 automation that keeps the archive current, and
 [architecture.md](architecture.md) for why `doctor` reports rather than repairs.
 
+## Where the archive lives
+
+`~/.claude/cerebro/archive.sqlite` by default, or
+`$CLAUDE_CONFIG_DIR/cerebro/archive.sqlite` when that variable is set: the
+archive follows the same directory as the deployed binary, the hook scripts and
+their logs, so the whole installation moves as one. `$CEREBRO_DB` overrides the
+file outright and wins over both.
+
+Setting `$CLAUDE_CONFIG_DIR` after you already have an archive therefore points
+cerebro at a new empty database rather than migrating the old one, and no
+warning is printed. For sessions whose source files Claude Code has deleted the
+old file is the only copy, so move it yourself:
+
+```sh
+mkdir -p "$CLAUDE_CONFIG_DIR/cerebro"
+mv ~/.claude/cerebro/archive.sqlite "$CLAUDE_CONFIG_DIR/cerebro/archive.sqlite"
+cerebro doctor
+```
+
 ## Backups
 
 For sessions whose source files Claude Code has already deleted, the archive is

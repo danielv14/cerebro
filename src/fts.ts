@@ -16,19 +16,11 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
 };
 
-export interface RankedMessageHit {
-  id: number;
-  session_id: string;
-  // Coalesced to the session itself when root_session_id is NULL, so a
-  // not-yet-relinked hit is never silently dropped.
-  root: string;
-  ts: string | null;
-  role: string;
-  session_project_path: string | null;
-  session_git_branch: string | null;
-  session_title: string | null;
-  session_provider: string | null;
-  session_model: string | null;
+// Produced by two adapters (docs/architecture.md, "FTS layer"): the query below
+// and searchSummaryRoots in src/digest/store.ts.
+export interface RankedHit {
+  // The thread, never the row the hit came from.
+  id: string;
   snippet: string;
   // bm25; lower = more relevant.
   score: number;
@@ -39,29 +31,78 @@ export interface RankedMessageHit {
   project_path: string | null;
 }
 
+export interface RankedMessageHit extends RankedHit {
+  // The matched message's own rowid, which is what it is; the thread is `id`.
+  message_id: number;
+  session_id: string;
+  ts: string | null;
+  role: string;
+  // The message's own branch, which search shows instead of the thread's.
+  session_git_branch: string | null;
+}
+
+// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
+// LIKE-escaped by the caller.
+export const threadOnBranch = (rootExpr: string): string =>
+  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
+  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
+
+// Named filters rather than SQL fragments, so the aliases the predicates below are
+// written against (m = message, s = session, t = rollup) stay private to this
+// module: a caller writing them would break at runtime only when one is renamed.
+export interface HitFilters {
+  // Substring of the thread's project path.
+  project?: string;
+  // Substring of a branch any of the thread's sessions was recorded on.
+  branch?: string;
+  // ISO date; only messages at or after it.
+  since?: string;
+  role?: string;
+  // Drop messages that are nothing but flattened tool plumbing.
+  prose?: boolean;
+}
+
+const hitPredicates = (filters: HitFilters): { sql: string; params: (string | number)[] }[] => {
+  const out: { sql: string; params: (string | number)[] }[] = [];
+  if (filters.project) {
+    out.push({
+      sql: "t.project_path LIKE '%' || ? || '%' ESCAPE '\\'",
+      params: [escapeLike(filters.project)],
+    });
+  }
+  if (filters.branch) {
+    out.push({ sql: threadOnBranch("s.root_session_id"), params: [escapeLike(filters.branch)] });
+  }
+  if (filters.since) out.push({ sql: "m.ts >= ?", params: [filters.since] });
+  if (filters.role) out.push({ sql: "m.role = ?", params: [filters.role] });
+  if (filters.prose) {
+    // Prefix heuristic: a tool-only message always opens with "[tool_" as
+    // flattenContent renders it. A message that opens with prose and then calls a
+    // tool further down is kept on purpose.
+    out.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
+  }
+  return out;
+};
+
 export interface RankedHitWindow {
   limit: number;
   snippetTokens: number;
-  // Predicates against the fixed aliases (m = message, s = session, t = rollup).
-  // The sql fragments are codebase literals; user input stays in params.
-  filters?: { sql: string; params: (string | number)[] }[];
+  filters?: HitFilters;
 }
 
-// Throws on a malformed MATCH so each caller keeps its own fallback.
+// The thread id is coalesced to the session itself when root_session_id is NULL,
+// so a not-yet-relinked hit is never silently dropped. Throws on a malformed
+// MATCH so each caller keeps its own fallback.
 export const rankedMessageHits = (
   db: Database,
   match: string,
   window: RankedHitWindow,
 ): RankedMessageHit[] => {
-  const filters = window.filters ?? [];
+  const filters = hitPredicates(window.filters ?? {});
   const sql = `
-    SELECT m.id, m.session_id, m.ts, m.role,
-           COALESCE(s.root_session_id, s.session_id) AS root,
-           s.project_path AS session_project_path,
-           s.git_branch   AS session_git_branch,
-           s.title        AS session_title,
-           s.provider     AS session_provider,
-           s.model        AS session_model,
+    SELECT m.id AS message_id, m.session_id, m.ts, m.role,
+           COALESCE(s.root_session_id, s.session_id) AS id,
+           s.git_branch AS session_git_branch,
            snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
            bm25(messages_fts) AS score,
            t.last_ts, t.git_root, t.project_path
@@ -83,17 +124,17 @@ export const rankedMessageHits = (
     ) as RankedMessageHit[];
 };
 
-const bestHitPerRoot = <T extends { root: string }>(
+const bestHitPerThread = <T extends { id: string }>(
   hits: T[],
   rank: (hit: T, index: number) => number = (_, index) => index,
 ): T[] => {
-  const byRoot = new Map<string, { hit: T; rank: number }>();
+  const byThread = new Map<string, { hit: T; rank: number }>();
   hits.forEach((hit, index) => {
     const hitRank = rank(hit, index);
-    const existing = byRoot.get(hit.root);
-    if (!existing || hitRank < existing.rank) byRoot.set(hit.root, { hit, rank: hitRank });
+    const existing = byThread.get(hit.id);
+    if (!existing || hitRank < existing.rank) byThread.set(hit.id, { hit, rank: hitRank });
   });
-  return [...byRoot.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
+  return [...byThread.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
 };
 
 const WINDOW_GROWTH = 4;
@@ -101,33 +142,37 @@ const WINDOW_ROUNDS = 3;
 
 export interface DedupedWindow<T> {
   fetch: (size: number) => T[];
-  targetRoots: number;
+  targetThreads: number;
   minRows: number;
-  rowsPerRoot: number;
+  rowsPerThread: number;
   // A caller on a latency path passes false to answer out of its first fetch.
   grow?: boolean;
   // Defaults to the incoming (bm25) order; relevance passes its decayed rank.
   rank?: (hit: T, index: number) => number;
 }
 
-export const dedupedHitWindow = <T extends { root: string }>({
+export const dedupedHitWindow = <T extends { id: string }>({
   fetch,
-  targetRoots,
+  targetThreads,
   minRows,
-  rowsPerRoot,
+  rowsPerThread,
   grow = true,
   rank,
 }: DedupedWindow<T>): T[] => {
   const rounds = grow ? WINDOW_ROUNDS : 0;
-  let size = Math.max(minRows, targetRoots * rowsPerRoot);
+  let size = Math.max(minRows, targetThreads * rowsPerThread);
   let rows = fetch(size);
-  let kept = bestHitPerRoot(rows, rank);
-  // Grow only when genuinely exhausted: fewer roots than asked for AND a full
+  let kept = bestHitPerThread(rows, rank);
+  // Grow only when genuinely exhausted: fewer threads than asked for AND a full
   // window came back, so deeper rows can still exist.
-  for (let round = 0; round < rounds && kept.length < targetRoots && rows.length >= size; round++) {
+  for (
+    let round = 0;
+    round < rounds && kept.length < targetThreads && rows.length >= size;
+    round++
+  ) {
     size *= WINDOW_GROWTH;
     rows = fetch(size);
-    kept = bestHitPerRoot(rows, rank);
+    kept = bestHitPerThread(rows, rank);
   }
   return kept;
 };

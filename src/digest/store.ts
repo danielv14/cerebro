@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { toMatchQuery } from "../fts.ts";
-import { attachThreadDisplay, noThreadDisplay, rootOf, threadLastTs } from "../thread.ts";
+import { type RankedHit, toMatchQuery } from "../fts.ts";
+import { attachThreadIdentity, rootOf, type ThreadIdentity, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Design notes: docs/architecture.md ("Digest").
@@ -71,15 +71,7 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-export interface SummaryRootHit {
-  root: string;
-  snippet: string;
-  score: number;
-  last_ts: string | null;
-  git_root: string | null;
-  project_path: string | null;
-}
-
+// The summary side of the RankedHit seam (docs/architecture.md, "FTS layer").
 // LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
 // throws on a malformed MATCH so each caller keeps its own fallback.
 export const searchSummaryRoots = (
@@ -87,10 +79,10 @@ export const searchSummaryRoots = (
   match: string,
   limit: number,
   snippetTokens: number,
-): SummaryRootHit[] =>
+): RankedHit[] =>
   db
     .query(
-      `SELECT s.root_session_id AS root,
+      `SELECT s.root_session_id AS id,
               snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
               bm25(summaries_fts) AS score,
               t.last_ts, t.git_root, t.project_path
@@ -101,15 +93,9 @@ export const searchSummaryRoots = (
        ORDER BY bm25(summaries_fts)
        LIMIT ?`,
     )
-    .all(snippetTokens, match, limit) as SummaryRootHit[];
+    .all(snippetTokens, match, limit) as RankedHit[];
 
-export interface SummaryHit {
-  id: string;
-  last_ts: string | null;
-  project_path: string | null;
-  provider: string | null;
-  model: string | null;
-  title: string | null;
+export interface SummaryHit extends ThreadIdentity {
   snippet: string;
 }
 
@@ -117,16 +103,15 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
   const match = toMatchQuery(query);
   if (!match) return [];
 
-  let rows: SummaryRootHit[];
+  let rows: RankedHit[];
   try {
     rows = searchSummaryRoots(db, match, limit, 12);
   } catch {
     return [];
   }
 
-  return attachThreadDisplay(db, rows, noThreadDisplay).map(({ hit, display }) => ({
-    id: hit.root,
-    ...display,
+  return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
+    ...identity,
     snippet: hit.snippet,
   }));
 };

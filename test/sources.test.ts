@@ -98,13 +98,12 @@ describe("claude-code discoverSessionFiles", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
   });
   afterEach(() => env.cleanup());
 
   test("stamps every file with the claude-code provider", () => {
     writeSession(env.projects, "-repo", "S", oneMsg("S"));
-    const files = discoverSessionFiles();
+    const files = discoverSessionFiles(env.projects);
     expect(files).toHaveLength(1);
     expect(files[0]!.provider).toBe(CLAUDE_CODE_PROVIDER);
   });
@@ -115,7 +114,7 @@ describe("claude-code discoverSessionFiles", () => {
       userMsg("PARENT", "s1", "sidechain turn", { isSidechain: true }),
     ]);
 
-    const files = discoverSessionFiles();
+    const files = discoverSessionFiles(env.projects);
     const top = files.find((f) => f.kind === "session");
     const sub = files.find((f) => f.kind === "subagent");
 
@@ -134,14 +133,14 @@ describe("claude-code discoverSessionFiles", () => {
     fs.writeFileSync(join(env.projects, "-repo", "notes.txt"), "ignore me");
     fs.mkdirSync(join(env.projects, "-empty"), { recursive: true });
 
-    const files = discoverSessionFiles();
+    const files = discoverSessionFiles(env.projects);
     expect(files.map((f) => f.sessionId)).toEqual(["REAL"]);
     expect(files.every((f) => f.path.endsWith(".jsonl"))).toBe(true);
   });
 
   test("returns an empty list when there are no projects", () => {
     // makeClaudeDir creates an empty projects/ dir; nothing to discover.
-    expect(discoverSessionFiles()).toEqual([]);
+    expect(discoverSessionFiles(env.projects)).toEqual([]);
   });
 });
 
@@ -151,7 +150,6 @@ describe("registry", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     fakeRoot = join(env.claudeRoot, "fake-sessions");
   });
   afterEach(() => env.cleanup());
@@ -162,12 +160,12 @@ describe("registry", () => {
   // importing the constant) is what turns a rename into a red test. A new adapter
   // adds its id to this list.
   test("pins the registered provider ids", () => {
-    expect(sourceAdapters().map((adapter) => adapter.id)).toEqual(["claude-code"]);
+    expect(sourceAdapters(env.projects).map((adapter) => adapter.id)).toEqual(["claude-code"]);
   });
 
   test("adapterFor resolves a registered provider and throws on an unknown one", () => {
-    expect(adapterFor(CLAUDE_CODE_PROVIDER).id).toBe(CLAUDE_CODE_PROVIDER);
-    expect(() => adapterFor("no-such-tool")).toThrow("no source adapter registered");
+    expect(adapterFor(CLAUDE_CODE_PROVIDER, env.adapters).id).toBe(CLAUDE_CODE_PROVIDER);
+    expect(() => adapterFor("no-such-tool", env.adapters)).toThrow("no source adapter registered");
   });
 
   test("discoverAllSessionFiles returns files oldest-first by mtime (invariant #3)", () => {
@@ -179,7 +177,7 @@ describe("registry", () => {
     setMtime(b, 1_700_000_100);
     setMtime(c, 1_700_000_200);
 
-    const files = discoverAllSessionFiles();
+    const files = discoverAllSessionFiles(env.adapters);
     expect(files.map((f) => f.sessionId)).toEqual(["BBB", "CCC", "AAA"]);
   });
 
@@ -193,7 +191,7 @@ describe("registry", () => {
     setMtime(a, same);
     setMtime(m, same);
 
-    const files = discoverAllSessionFiles();
+    const files = discoverAllSessionFiles(env.adapters);
     expect(files.map((f) => f.sessionId)).toEqual(["aaa", "mmm", "zzz"]);
   });
 
@@ -205,7 +203,7 @@ describe("registry", () => {
     setMtime(fakeFile, 1_700_000_100); // fake session is older
     setMtime(claudeFile, 1_700_000_200);
 
-    const adapters = [adapterFor(CLAUDE_CODE_PROVIDER), makeFakeAdapter(fakeRoot)];
+    const adapters = [...env.adapters, makeFakeAdapter(fakeRoot)];
     const files = discoverAllSessionFiles(adapters);
     expect(files.map((f) => `${f.provider}:${f.sessionId}`)).toEqual([
       "fake-agent:FAKE-S",
@@ -222,10 +220,9 @@ describe("indexing through a second source adapter", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     fakeRoot = join(env.claudeRoot, "fake-sessions");
     db = openDb(":memory:");
-    adapters = [adapterFor(CLAUDE_CODE_PROVIDER), makeFakeAdapter(fakeRoot)];
+    adapters = [...env.adapters, makeFakeAdapter(fakeRoot)];
   });
   afterEach(() => {
     db.close();
@@ -280,7 +277,7 @@ describe("indexing through a second source adapter", () => {
 
     // Parity is the point: the dry run classifies through each file's own adapter, so
     // its counts must match what the real run then indexes, foreign format included.
-    const plan = dryRunIndex(db, false, adapters);
+    const plan = dryRunIndex(db, adapters);
     expect(plan.filesScanned).toBe(2);
     expect(plan.newFiles).toBe(2);
     expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 0 });
@@ -290,7 +287,7 @@ describe("indexing through a second source adapter", () => {
     expect(real.filesIndexed).toBe(plan.filesToRead);
 
     // And with the archive current, the dry run sees no work left in either source.
-    const after = dryRunIndex(db, false, adapters);
+    const after = dryRunIndex(db, adapters);
     expect(after.filesToRead).toBe(0);
     expect(after.unchangedFiles).toBe(2);
   });

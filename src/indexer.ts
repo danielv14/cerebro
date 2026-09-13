@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { DIGEST_PROMPT_SIGNATURE } from "./digest-signature.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
-import { adapterFor, discoverAllSessionFiles, sourceAdapters } from "./sources/registry.ts";
+import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Indexer").
@@ -255,21 +255,21 @@ const isDigestRunTranscript = (
 };
 
 export interface IndexOptions {
+  adapters: SourceAdapter[];
   full?: boolean;
   // Implies full.
   rebuild?: boolean;
-  adapters?: SourceAdapter[];
   resolveGit?: GitResolver;
   onSkip?: (line: string) => void;
 }
 
-export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => {
+export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   const rebuild = opts.rebuild ?? false;
   const readAll = (opts.full ?? false) || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
-  const adapters = opts.adapters ?? sourceAdapters();
+  const adapters = opts.adapters;
   const resolveGit = opts.resolveGit ?? createGitResolver();
   const files = discoverAllSessionFiles(adapters);
   const saveState = db.query(
@@ -291,18 +291,19 @@ export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => 
       const classify = adapterFor(file.provider, adapters).classifyLines;
       // A mid-write file is still saved (unlike the dry run's skip): recording
       // the new mtime lets a touched-but-unchanged file settle to "unchanged".
-      const tx = db.transaction(() => {
+      // The return value is whether the file contributed lines.
+      const tx = db.transaction((): boolean => {
         if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
-          return;
+          return false;
         }
         const meta = ingestLines(db, file, lines, classify, rebuild);
         saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta, resolveGit);
+        return cursor > plan.start;
       });
-      tx();
-      filesIndexed++;
+      if (tx()) filesIndexed++;
     },
     {
       onError: (file, error) => opts.onSkip?.(`cerebro: skipped ${file.path}: ${error.message}`),
@@ -336,6 +337,9 @@ export interface DryRunResult {
   grownFiles: number;
   truncatedFiles: number;
   unchangedFiles: number;
+  // Read but not indexable: a digest transcript, or a mid-write file with no
+  // complete line yet. Counted so the categories add up to filesScanned.
+  skippedFiles: number;
   newBytes: number;
   candidateMessages: number;
 }
@@ -344,8 +348,8 @@ export interface DryRunResult {
 // new so it equals net-new, but a --full dry run reports the whole archive.
 export const dryRunIndex = (
   db: Database,
+  adapters: SourceAdapter[],
   full = false,
-  adapters: SourceAdapter[] = sourceAdapters(),
 ): DryRunResult => {
   const files = discoverAllSessionFiles(adapters);
 
@@ -357,6 +361,7 @@ export const dryRunIndex = (
     grownFiles: 0,
     truncatedFiles: 0,
     unchangedFiles: 0,
+    skippedFiles: 0,
     newBytes: 0,
     candidateMessages: 0,
   };
@@ -366,11 +371,16 @@ export const dryRunIndex = (
     files,
     full,
     ({ file, plan, lines, cursor }) => {
-      if (cursor === plan.start) return; // mid-write, nothing indexable yet
+      if (cursor === plan.start) {
+        result.skippedFiles++;
+        return;
+      }
       const classify = adapterFor(file.provider, adapters).classifyLines;
 
-      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify))
+      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
+        result.skippedFiles++;
         return;
+      }
 
       // Full mode re-reads everything from 0 and does not categorize files.
       if (!full) {

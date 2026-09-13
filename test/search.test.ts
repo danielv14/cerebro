@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { resolveSession } from "../src/commands/helpers.ts";
 import { openDb } from "../src/db.ts";
-import { searchSummaries, writeSummary } from "../src/digest/index.ts";
+import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { toMatchQuery } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
@@ -48,7 +48,6 @@ describe("query (populated archive)", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -61,7 +60,7 @@ describe("query (populated archive)", () => {
       userMsg("S", "u1", "add a token bucket rate limiter to the middleware"),
       assistantMsg("S", "a1", "unrelated text about colors", { parentUuid: "u1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 10);
     expect(hits.length).toBe(1);
     expect(hits[0]!.session_id).toBe("S");
@@ -79,7 +78,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "BURIED", [
       userMsg("BURIED", "u2", `limiter ${"filler ".repeat(200)}`, { timestamp: ts(10) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 10);
     expect(hits.map((h) => h.session_id)).toEqual(["DENSE", "BURIED"]);
   });
@@ -94,7 +93,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "LOW", [
       userMsg("LOW", "u3", `limiter ${"filler ".repeat(400)}`, { timestamp: ts(20) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 2);
     // Three documents match, but limit=2 truncates to the two best by bm25.
     expect(hits.map((h) => h.session_id)).toEqual(["TOP", "MID"]);
@@ -109,7 +108,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "u3", `limiter ${"filler ".repeat(50)}`, { timestamp: ts(10) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Default: one (best) hit per thread, so OTHER is not buried by CHATTY.
     const deduped = search(db, "limiter", 10);
     expect(deduped.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
@@ -125,7 +124,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo-b", "B", [
       userMsg("B", "u2", "limiter in beta", { cwd: "/home/user/beta", timestamp: ts(100) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(search(db, "limiter", 10, { project: "alpha" }).map((h) => h.session_id)).toEqual(["A"]);
     expect(search(db, "limiter", 10, { since: ts(50) }).map((h) => h.session_id)).toEqual(["B"]);
     expect(search(db, "limiter", 10).length).toBe(2);
@@ -145,7 +144,7 @@ describe("query (populated archive)", () => {
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(
       search(db, "zebra", 10, { all: true })
         .map((h) => h.session_id)
@@ -169,7 +168,7 @@ describe("query (populated archive)", () => {
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // The thread's representative project_path is the root's, so both hits match.
     expect(
       search(db, "zebra", 10, { all: true, project: "user/alpha" })
@@ -189,7 +188,7 @@ describe("query (populated archive)", () => {
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(search(db, "limiter", 10, { branch: "feat/limiter" }).map((h) => h.session_id)).toEqual([
       "FEAT",
     ]);
@@ -212,7 +211,7 @@ describe("query (populated archive)", () => {
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Any-session semantics: the root's hit (recorded on main) matches too, because
     // the thread touched the branch in its resume.
     expect(
@@ -237,10 +236,10 @@ describe("query (populated archive)", () => {
         timestamp: ts(3),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const ids = (opts: Parameters<typeof search>[3]) =>
       search(db, "limiter", 10, { all: true, ...opts })
-        .map((h) => h.id)
+        .map((h) => h.message_id)
         .sort((a, b) => a - b);
     const [prose1, prose2, toolUse, toolResult] = ids({});
     expect([prose1, prose2, toolUse, toolResult]).toHaveLength(4);
@@ -264,7 +263,7 @@ describe("query (populated archive)", () => {
         { timestamp: ts(0) },
       ),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(search(db, "limiter", 10, { all: true, prose: true })).toHaveLength(1);
   });
 
@@ -282,7 +281,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 5);
     expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
   });
@@ -300,7 +299,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 2);
     expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
   });
@@ -311,7 +310,7 @@ describe("query (populated archive)", () => {
       assistantMsg("S", "a1", "the limiter answer", { parentUuid: "u1", timestamp: ts(1) }),
       userMsg("S", "u2", "closing note", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 10);
     expect(hits.length).toBe(1);
     expect(hits[0]!.ordinal).toBe(2); // second message in the thread's chronology
@@ -324,7 +323,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "alpha beta gamma", { timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = search(db, 'alpha"', 10);
     expect(hits.map((h) => h.session_id)).toEqual(["S"]);
   });
@@ -344,7 +343,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     let hits: string[] = [];
     const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
@@ -360,7 +359,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "alpha beta", { timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(search(db, '"""', 10)).toEqual([]);
   });
 
@@ -371,7 +370,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo-b", "B", [
       userMsg("B", "ub", "beta", { cwd: "/repo-b", timestamp: ts(10) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const all = listThreads(db, {});
     expect(all.length).toBe(2);
     expect(all[0]!.id).toBe("B"); // newest first
@@ -391,7 +390,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "NEW", [
       userMsg("NEW", "u3", "new", { timestamp: "2026-03-05T12:00:00.000Z" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(listThreads(db, { since: "2026-02-01" }).map((t) => t.id)).toEqual(["NEW", "CUTOFF"]);
     expect(listThreads(db, { since: "2026-04-01" })).toEqual([]);
     // Combines with --project rather than replacing it.
@@ -413,7 +412,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "u3", "elsewhere", { timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = listThreads(db, { branch: "feat/x" });
     expect(hits.map((t) => t.id)).toEqual(["ROOT"]);
     // Display is root-preferring even though the match came from the resume.
@@ -426,8 +425,7 @@ describe("query (populated archive)", () => {
   });
 
   test("search --branch and sessions --branch agree on which threads touch a branch (#123)", () => {
-    // Both readers compose threadOnBranch now; before, the same any-session rule was
-    // spelled as two different subqueries and only a comment said they matched.
+    // Both readers compose threadOnBranch, so the any-session rule has one spelling.
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "the limiter work", { timestamp: ts(0) }),
     ]);
@@ -441,7 +439,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "u3", "limiter elsewhere", { timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const searched = (branch: string): string[] =>
       [
@@ -472,7 +470,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "more", { cwd: "/repo", parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const threads = listThreads(db, { project: "repo" });
     expect(threads.length).toBe(1);
     expect(threads[0]!.id).toBe("ORIG");
@@ -518,10 +516,10 @@ describe("query (populated archive)", () => {
         timestamp: ts(4),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Drop the resume's source file so a re-index marks its body unavailable.
     fs.rmSync(resumePath);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const thread = db
       .query(
@@ -552,7 +550,6 @@ describe("query (populated archive)", () => {
     expect(thread.sessions_in_thread).toBe(2);
     // MIN: RESUME's body is unavailable (file deleted), so the thread is too.
     expect(thread.body_available).toBe(0);
-    // Span covers the whole thread.
     expect(thread.first_ts).toBe(ts(0));
     expect(thread.last_ts).toBe(ts(4));
   });
@@ -565,7 +562,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "EMPTY", [
       { type: "summary", summary: "Title only, no turns", sessionId: "EMPTY" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     // The sidecar row stays (it outlives Claude Code's own cleanup, so it is the only
     // record the session ever existed), with msg_count 0.
@@ -583,7 +580,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo-x", "REAL", [
       userMsg("REAL", "u1", "real work", { cwd: "/repo-x", timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // A zero-message session that does carry a project_path (a title-only file has no
     // cwd to harvest one from, so it is written directly) would otherwise inflate both
     // the recent listing and the per-project thread counts.
@@ -602,7 +599,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo-x", "X", [
       userMsg("X", "ux", "work in x", { cwd: "/repo-x", timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const hit = recentThreads(db, { cwd: "/repo-x", since: ts(-100000), limit: 5 });
     expect(hit.map((t) => t.id)).toEqual(["X"]);
@@ -616,9 +613,8 @@ describe("query (populated archive)", () => {
 
   test("every surface shows the same title, last activity and project for a resumed thread (#118)", () => {
     // The root ran once and never carried a title event; the resume carried the title
-    // and ran a month later. Reading the root's own sessions row (as relevant and
-    // digest search used to) showed the root's date and "(untitled)"; all four
-    // surfaces must show the thread's rollup instead.
+    // and ran a month later. Read the root's own sessions row and you get the root's
+    // date and "(untitled)", so all four surfaces must read the thread's rollup.
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
@@ -631,7 +627,7 @@ describe("query (populated archive)", () => {
       }),
       { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "ROOT", "Worked on the limiter. Keywords: limiter");
     const now = Date.parse(ts(month));
 
@@ -687,7 +683,7 @@ describe("query (populated archive)", () => {
       }),
       { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // The premise: the resume's own row really is missing the project.
     expect(
       (
@@ -732,38 +728,10 @@ describe("query (populated archive)", () => {
     expect(resumeHit.ordinal).toBe(3);
   });
 
-  test("a search hit whose thread is absent from the rollup falls back to its own row (#120)", () => {
-    // The `threads` view drops a thread whose sessions sum to zero messages, so a row
-    // with a stale msg_count is one way the hydration comes back empty. Contrived, but
-    // it pins the fallback: the hit renders on its own session row instead of losing
-    // its title and project (or being dropped) because the rollup had nothing to say.
-    writeSession(env.projects, "-repo", "STALE", [
-      userMsg("STALE", "u1", "the limiter work", { timestamp: ts(0) }),
-      {
-        ...assistantMsg("STALE", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
-        message: { role: "assistant", content: "ok", model: "opus-test" },
-      },
-      { type: "custom-title", customTitle: "Rate limiting", sessionId: "STALE" },
-    ]);
-    runIndex(db);
-    db.run("UPDATE sessions SET msg_count = 0 WHERE session_id = 'STALE'");
-    expect(listThreads(db).length).toBe(0);
-
-    const hits = search(db, "limiter", 20, { all: true });
-    expect(hits.length).toBe(1);
-    expect(hits[0]).toMatchObject({
-      session_id: "STALE",
-      title: "Rate limiting",
-      project_path: "/repo",
-      provider: "claude-code",
-      model: "opus-test",
-    });
-  });
-
   test("resolveSession handles exact id, unique prefix, miss, and ambiguity", () => {
     writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
     writeSession(env.projects, "-repo", "abc99999-bbbb", [userMsg("abc99999-bbbb", "u2", "b")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     expect(resolveSession(db, "abc12345-aaaa")).toBe("abc12345-aaaa");
     expect(resolveSession(db, "abc12345")).toBe("abc12345-aaaa"); // unique prefix
@@ -773,7 +741,7 @@ describe("query (populated archive)", () => {
 
   test("resolveSession treats LIKE wildcards in a prefix literally (#48)", () => {
     writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // `_` would match any character unescaped; `%` would match everything.
     expect(resolveSession(db, "abc_2345")).toBeNull();
     expect(resolveSession(db, "%")).toBeNull();
@@ -783,7 +751,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "hi", { cwd: "/home/user/myXapp" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Unescaped, `my_app` would match `myXapp` via the `_` wildcard.
     expect(listThreads(db, { project: "my_app" }).length).toBe(0);
     expect(listThreads(db, { project: "myXapp" }).length).toBe(1);
@@ -793,7 +761,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "branchy work", { gitBranch: "feature/myXapp" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(listThreads(db, { branch: "my_app" }).length).toBe(0);
     expect(listThreads(db, { branch: "myXapp" }).length).toBe(1);
     expect(search(db, "branchy", 10, { branch: "my_app" }).length).toBe(0);
@@ -807,11 +775,11 @@ describe("query (populated archive)", () => {
       userMsg("STUB", "sa1", "sub work", { isSidechain: true }),
     ]);
     const path = writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(0);
     // A genuinely deleted source still counts.
     fs.rmSync(path);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(1);
   });
 
@@ -827,7 +795,7 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "u3", "another", { timestamp: ts(3) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const s = stats(db);
     expect(s.sessions).toBe(3);
     expect(s.threads).toBe(2); // RESUME folds into ORIG; OTHER is its own thread

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { escapeLike } from "./fts.ts";
+import { escapeLike, threadOnBranch } from "./fts.ts";
 
 // Design notes: docs/architecture.md ("Threads").
 
@@ -70,12 +70,6 @@ export interface ThreadRow {
   body_available: number;
 }
 
-// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
-// LIKE-escaped by the caller.
-export const threadOnBranch = (rootExpr: string): string =>
-  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
-  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
-
 export const listThreads = (
   db: Database,
   opts: { project?: string; branch?: string; since?: string; limit?: number } = {},
@@ -136,7 +130,8 @@ export const recentThreads = (
     .all(...params) as ThreadRow[];
 };
 
-export interface ThreadDisplay {
+export interface ThreadIdentity {
+  id: string;
   last_ts: string | null;
   project_path: string | null;
   provider: string | null;
@@ -148,7 +143,11 @@ export interface ThreadDisplay {
 // `digest search` spread this shape straight into their result rows, which makes
 // the order below their JSON key order. A rest-spread of the SELECT would follow
 // the column order instead.
-export const threadDisplay = (row: Partial<ThreadDisplay>): ThreadDisplay => ({
+export const threadIdentity = (
+  id: string,
+  row: Partial<Omit<ThreadIdentity, "id">> = {},
+): ThreadIdentity => ({
+  id,
   last_ts: row.last_ts ?? null,
   project_path: row.project_path ?? null,
   provider: row.provider ?? null,
@@ -156,33 +155,26 @@ export const threadDisplay = (row: Partial<ThreadDisplay>): ThreadDisplay => ({
   title: row.title ?? null,
 });
 
-export const noThreadDisplay = (): ThreadDisplay => threadDisplay({});
-
-// A root with no rollup row is simply absent from the map; attachThreadDisplay
-// applies the caller's fallback.
-const hydrateThreadDisplay = (db: Database, roots: string[]): Map<string, ThreadDisplay> => {
-  if (roots.length === 0) return new Map();
-  const placeholders = roots.map(() => "?").join(", ");
+const hydrateThreadIdentity = (db: Database, ids: string[]): Map<string, ThreadIdentity> => {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(", ");
   const rows = db
     .query(
       `SELECT id, title, last_ts, project_path, provider, model
        FROM threads WHERE id IN (${placeholders})`,
     )
-    .all(...roots) as (ThreadDisplay & { id: string })[];
-  return new Map(rows.map((row) => [row.id, threadDisplay(row)]));
+    .all(...ids) as ThreadIdentity[];
+  return new Map(rows.map((row) => [row.id, threadIdentity(row.id, row)]));
 };
 
-// `fallback` is a parameter because the two policies for a thread with no rollup
-// row are both deliberate and used to be three copies that could drift: `search`
-// answers from the matched session's own columns, the summary-backed callers from
-// nothing.
-export const attachThreadDisplay = <H extends { root: string }>(
+// A thread with no rollup row keeps its hit, with an identity that is nothing but
+// the id: a summary has to outlive the sessions rows it was written from.
+export const attachThreadIdentity = <H extends { id: string }>(
   db: Database,
   hits: H[],
-  fallback: (hit: H) => ThreadDisplay,
-): { hit: H; display: ThreadDisplay }[] => {
-  const byRoot = hydrateThreadDisplay(db, [...new Set(hits.map((hit) => hit.root))]);
-  return hits.map((hit) => ({ hit, display: byRoot.get(hit.root) ?? fallback(hit) }));
+): { hit: H; identity: ThreadIdentity }[] => {
+  const byId = hydrateThreadIdentity(db, [...new Set(hits.map((hit) => hit.id))]);
+  return hits.map((hit) => ({ hit, identity: byId.get(hit.id) ?? threadIdentity(hit.id) }));
 };
 
 export const rootOf = (db: Database, sessionId: string): string => {
@@ -212,17 +204,37 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
     .all(root) as ThreadMessage[];
 };
 
+// A slash-command turn wraps what the user typed in tags, so the tags are peeled
+// off rather than shown. The command name is the fallback: `/retro` with no
+// arguments still tells the reader what the session opened with.
+const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
+
+const typedWords = (text: string): string => {
+  if (!text.startsWith("<command-")) return text;
+  const args = COMMAND_ARGS.exec(text)?.[1]?.trim();
+  if (args) return args;
+  return COMMAND_NAME.exec(text)?.[1]?.trim() || text;
+};
+
+// Three tiers, worst last: a skill body and flattened tool output are injected and
+// can never be the user's words, while a slash-command turn still carries them in
+// its arguments.
 export const threadOpeningPrompt = (db: Database, root: string): string | null => {
   const row = db
     .query(
       `SELECT text FROM messages
        WHERE ${THREAD_MEMBERSHIP}
          AND role = 'user' AND is_sidechain = 0
-       ORDER BY (CASE WHEN text LIKE '[%' OR text LIKE '<command-%' THEN 1 ELSE 0 END), ts, id
+       ORDER BY (CASE
+                   WHEN text LIKE '[%'
+                     OR text LIKE 'Base directory for this skill:%' THEN 2
+                   WHEN text LIKE '<command-%' THEN 1
+                   ELSE 0 END), ts, id
        LIMIT 1`,
     )
     .get(root) as { text: string | null } | null;
-  return row?.text ?? null;
+  return row?.text == null ? null : typedWords(row.text);
 };
 
 // Same ORDER BY as threadMessages, so search's #N and show's numbering agree.

@@ -2,8 +2,9 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { SCHEMA_VERSION } from "./db.ts";
-import { summaryCoverage } from "./digest/index.ts";
+import { summaryCoverage } from "./digest/stale.ts";
 import { orphanedCursorPaths } from "./scan.ts";
+import type { SourceAdapter } from "./sources/adapter.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
 // Read-only by construction: doctor never repairs, it names the command that
@@ -94,11 +95,11 @@ const schemaCheck = (db: Database): Check => {
 
 // Counted through the same reader the prune deletes through, so this can never
 // disagree with what `cerebro index` would remove.
-const orphanedCursors = (db: Database): Check => {
+const orphanedCursors = (db: Database, adapters: SourceAdapter[]): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
   const cursors = (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
   if (cursors === 0) return check.ok("0 rows");
-  const orphans = orphanedCursorPaths(db, discoverAllSessionFiles());
+  const orphans = orphanedCursorPaths(db, discoverAllSessionFiles(adapters));
   if (orphans === null) {
     return check.unknown("no session files discovered; cannot tell orphans from a failed scan");
   }
@@ -193,6 +194,7 @@ export interface DoctorOptions {
   // edge so doctor never decides on its own where to look.
   deployedBinary: string;
   settingsFile: string;
+  adapters: SourceAdapter[];
   full?: boolean;
 }
 
@@ -205,7 +207,7 @@ export const runDoctor = (db: Database, dbPath: string, opts: DoctorOptions): Do
     ftsCheck(db, "messages_fts"),
     ftsCheck(db, "summaries_fts"),
     walSize(dbPath),
-    orphanedCursors(db),
+    orphanedCursors(db, opts.adapters),
     emptySessions(db),
     digestCoverage(db),
     hookWiring(opts.settingsFile),
