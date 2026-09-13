@@ -21,8 +21,9 @@ export const dryRunReport = (plan: DryRunResult): string[] => {
     lines.push(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
     lines.push("  On an up-to-date archive dedup collapses this to ~0 net-new messages.");
   } else if (plan.filesToRead === 0) {
+    const skipped = plan.skippedFiles > 0 ? `, ${plan.skippedFiles} not indexable` : "";
     lines.push(
-      `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged.`,
+      `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged${skipped}.`,
     );
   } else {
     lines.push("Dry run. Would index:");
@@ -30,7 +31,8 @@ export const dryRunReport = (plan: DryRunResult): string[] => {
     lines.push(`  New bytes:     ${humanBytes(plan.newBytes)}`);
     lines.push(
       `  Files:         ${plan.newFiles} new, ${plan.grownFiles} grown, ` +
-        `${plan.truncatedFiles} truncated, ${plan.unchangedFiles} unchanged (skipped)`,
+        `${plan.truncatedFiles} truncated, ${plan.unchangedFiles} unchanged, ` +
+        `${plan.skippedFiles} not indexable`,
     );
   }
   lines.push("\nNothing written. Run `cerebro index` to apply.");

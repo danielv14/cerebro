@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { DIGEST_PROMPT } from "../src/digest/index.ts";
+import { DIGEST_PROMPT } from "../src/digest/prompt.ts";
 import type { GitResolver } from "../src/git.ts";
 import { dryRunIndex, runIndex } from "../src/indexer.ts";
 import {
@@ -704,5 +704,31 @@ describe("dryRunIndex", () => {
     const plan = dryRunIndex(db);
     expect(plan.candidateMessages).toBe(0);
     expect(plan.filesToRead).toBe(0);
+    expect(plan.skippedFiles).toBe(1);
+  });
+
+  test("a tree with a skipped file reports the same file total as the real run", () => {
+    writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
+    writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
+    // A mid-write file: one complete line, then a half-written one.
+    const partial = writeSession(env.projects, "-repo", "MID", [userMsg("MID", "m1", "first")]);
+    runIndex(db);
+    appendRaw(partial, '{"type":"user","uuid":"m2",');
+
+    const plan = dryRunIndex(db);
+    const real = runIndex(db);
+
+    expect(plan.filesToRead).toBe(real.filesIndexed);
+    expect(plan.filesScanned).toBe(real.filesScanned);
+    // Neither the digest transcript nor the mid-write tail counts as work done.
+    expect(real.filesIndexed).toBe(0);
+    expect(real.relinked).toBe(false);
+    expect(
+      plan.newFiles +
+        plan.grownFiles +
+        plan.truncatedFiles +
+        plan.unchangedFiles +
+        plan.skippedFiles,
+    ).toBe(plan.filesScanned);
   });
 });
