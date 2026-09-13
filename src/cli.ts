@@ -27,7 +27,9 @@ import { statsCommand } from "./commands/stats.ts";
 import { openDb } from "./db.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
 import { HELP } from "./help.ts";
-import { defaultDbPath } from "./paths.ts";
+import { claudeProjectsDir, defaultDbPath } from "./paths.ts";
+import type { SourceAdapter } from "./sources/adapter.ts";
+import { sourceAdapters } from "./sources/registry.ts";
 
 // Design notes: docs/architecture.md ("CLI").
 
@@ -122,6 +124,7 @@ export interface CliEnv {
   now?: number;
   cwd?: string;
   resolveGit?: GitResolver;
+  adapters?: SourceAdapter[];
 }
 
 export const runCli = (
@@ -205,6 +208,8 @@ export const runCli = (
   const cwd = env.cwd ?? process.cwd();
   // One resolver per dispatch, so its per-cwd cache lives exactly as long as the run.
   const resolveGit = env.resolveGit ?? createGitResolver();
+  // The one place the session-file root is resolved, next to the database path.
+  const adapters = env.adapters ?? sourceAdapters(claudeProjectsDir());
   const context: CommandContext<Record<string, unknown>> = {
     args: commandArgs,
     rest,
@@ -212,6 +217,7 @@ export const runCli = (
     now,
     cwd,
     resolveGit,
+    adapters,
     progress: io.log,
   };
 

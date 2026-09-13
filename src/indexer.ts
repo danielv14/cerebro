@@ -3,7 +3,7 @@ import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
-import { adapterFor, discoverAllSessionFiles, sourceAdapters } from "./sources/registry.ts";
+import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
 
 // Design notes: docs/architecture.md ("Indexer").
@@ -255,21 +255,21 @@ const isDigestRunTranscript = (
 };
 
 export interface IndexOptions {
+  adapters: SourceAdapter[];
   full?: boolean;
   // Implies full.
   rebuild?: boolean;
-  adapters?: SourceAdapter[];
   resolveGit?: GitResolver;
   onSkip?: (line: string) => void;
 }
 
-export const runIndex = (db: Database, opts: IndexOptions = {}): IndexResult => {
+export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   const rebuild = opts.rebuild ?? false;
   const readAll = (opts.full ?? false) || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
   const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
-  const adapters = opts.adapters ?? sourceAdapters();
+  const adapters = opts.adapters;
   const resolveGit = opts.resolveGit ?? createGitResolver();
   const files = discoverAllSessionFiles(adapters);
   const saveState = db.query(
@@ -349,8 +349,8 @@ export interface DryRunResult {
 // new so it equals net-new, but a --full dry run reports the whole archive.
 export const dryRunIndex = (
   db: Database,
+  adapters: SourceAdapter[],
   full = false,
-  adapters: SourceAdapter[] = sourceAdapters(),
 ): DryRunResult => {
   const files = discoverAllSessionFiles(adapters);
 

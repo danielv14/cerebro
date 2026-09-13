@@ -33,7 +33,6 @@ describe("thread (identity + membership)", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -60,7 +59,7 @@ describe("thread (identity + membership)", () => {
         timestamp: ts(4),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   };
 
   describe("rootOf", () => {
@@ -115,7 +114,7 @@ describe("thread (identity + membership)", () => {
         userMsg("S", "u2", "the real opening question", { timestamp: ts(1) }),
         assistantMsg("S", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       // Prose wins over the earlier `<command-` echo despite its later timestamp.
       expect(threadOpeningPrompt(db, "S")).toBe("the real opening question");
     });
@@ -141,7 +140,7 @@ describe("thread (identity + membership)", () => {
         ),
         assistantMsg("K", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       expect(threadOpeningPrompt(db, "K")).toBe("senaste tva veckorna");
     });
 
@@ -164,7 +163,7 @@ describe("thread (identity + membership)", () => {
           },
         ),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       expect(threadOpeningPrompt(db, "N")).toBe("/standup");
     });
 
@@ -209,7 +208,7 @@ describe("thread (identity + membership)", () => {
         userMsg("S", "u2", "no timestamp", { timestamp: null }),
         assistantMsg("S", "a1", "answer", { parentUuid: "u1", timestamp: ts(1) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       const idOf = (text: string): number =>
         (db.query("SELECT id FROM messages WHERE text = ?").get(text) as { id: number }).id;
       expect(messageOrdinal(db, "S", idOf("no timestamp"))).toBe(1);
@@ -237,7 +236,7 @@ describe("thread (identity + membership)", () => {
       // zero-message session, which the threads view no longer counts (#83).
       writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
       writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "b", { timestamp: ts(1) })]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
       expect(countThreads(db)).toBe(2);
     });
   });
@@ -254,7 +253,7 @@ describe("thread (identity + membership)", () => {
       writeSession(env.projects, "-other", "B", [
         userMsg("B", "ub", "beta", { cwd: "/other", timestamp: ts(1) }),
       ]);
-      runIndex(db);
+      runIndex(db, { adapters: env.adapters });
     };
 
     test("attaches the thread's rollup identity to each hit", () => {

@@ -29,6 +29,14 @@ downstream (scan, schema, FTS, search, relevance, digests) is source-agnostic.
 The full adapter contract and its guarantees are in
 [source-adapters.md](source-adapters.md).
 
+Discovery roots are arguments, never environment reads. `createClaudeCodeAdapter`
+takes its projects root and the CLI edge resolves it once from
+`claudeProjectsDir()`, next to where the database path is resolved; the built
+adapter list travels down the command context beside `now`, `cwd` and
+`resolveGit`, so `runIndex`, `dryRunIndex` and `doctor` all receive it rather
+than consulting a registry that reads `process.env`. A test builds its adapters
+from its fixture tree and hands them in.
+
 - `adapter.ts` declares the contract: `SessionFile`, `Classified`,
   `SourceAdapter`, and `parseLine` (returns `undefined` on parse failure so a
   malformed line is distinguishable from a line that parses to a falsy value).
@@ -434,9 +442,17 @@ archive.
 
 The two checks that probe the machine rather than the archive (that binary and
 `settings.json`) take their paths as arguments, resolved at the CLI edge from
-`deployedBinaryPath()` and `claudeDir()`. Doctor stays read-only by
+`deployedBinaryPath()` and `settingsPath()`. Doctor stays read-only by
 construction and stops deciding on its own where to look, so a test points them
 at a fixture instead of steering `CLAUDE_CONFIG_DIR` and restoring it.
+
+Both build on `claudeConfigDir()` in `src/paths.ts`, the one expression for
+"where Claude Code keeps its config". `bun run deploy` and the two hook scripts
+build the same `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` path in bash, so all four
+have to change together; with `CLAUDE_CONFIG_DIR` set they used to disagree, and
+deploy installed the binary where the hooks and doctor did not look.
+`CEREBRO_CLAUDE_DIR` answers the different question of where transcripts are
+read from, and only that.
 
 ## CLI (`src/cli.ts`, `src/commands/`)
 

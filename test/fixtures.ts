@@ -2,12 +2,15 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SourceAdapter } from "../src/sources/adapter.ts";
+import { sourceAdapters } from "../src/sources/registry.ts";
 
-// A throwaway ~/.claude directory for one test. Point CEREBRO_CLAUDE_DIR at
-// `claudeRoot` and write session files under `projects`.
+// A throwaway ~/.claude directory for one test: write session files under
+// `projects` and hand `adapters` to runIndex, dryRunIndex, runDoctor or runCli.
 export interface TempClaude {
   claudeRoot: string;
   projects: string;
+  adapters: SourceAdapter[];
   cleanup: () => void;
 }
 
@@ -18,6 +21,7 @@ export const makeClaudeDir = (): TempClaude => {
   return {
     claudeRoot,
     projects,
+    adapters: sourceAdapters(projects),
     cleanup: () => fs.rmSync(claudeRoot, { recursive: true, force: true }),
   };
 };

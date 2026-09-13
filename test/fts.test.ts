@@ -142,7 +142,6 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -171,7 +170,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
         timestamp: ts(10),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const searchHits = search(db, "capacitor", 10);
     expect(searchHits).toHaveLength(1);
@@ -205,7 +204,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
         ),
       );
     }
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     expect(relevantThreads(db, "limiter", 20)).toHaveLength(20);
   });
@@ -230,7 +229,7 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
     writeSession(env.projects, "-repo", "BURIED", [
       userMsg("BURIED", "b1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     let threads: string[] = [];
     const queries = countQueriesMatching(db, "messages_fts MATCH", () => {

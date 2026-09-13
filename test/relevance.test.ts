@@ -23,7 +23,6 @@ describe("relevance ranking", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -36,7 +35,7 @@ describe("relevance ranking", () => {
       userMsg("S", "u1", "migrate the database layer from drizzle to knex"),
       assistantMsg("S", "a1", "done, the knex migration is complete", { parentUuid: "u1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const hits = relevantThreads(db, "how did the knex migration go", 3);
     expect(hits.length).toBe(1);
@@ -53,7 +52,7 @@ describe("relevance ranking", () => {
         message: { role: "assistant", content: "the knex migration is done", model: "opus-test" },
       },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const [hit] = relevantThreads(db, "knex migration", 3);
     expect(hit!.provider).toBe("claude-code");
@@ -65,7 +64,7 @@ describe("relevance ranking", () => {
       userMsg("S", "u1", "migrate the database layer from drizzle to knex"),
       assistantMsg("S", "a1", "done, the knex migration is complete", { parentUuid: "u1" }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // "Refactored" appears only in the summary, never in the raw transcript.
     writeSummary(db, "S", "Refactored to knex");
 
@@ -86,7 +85,7 @@ describe("relevance ranking", () => {
     writeSession(env.projects, "-repo", "RAW", [
       userMsg("RAW", "u2", "another knex migration in the web service", { timestamp: ts(10) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "SUMM", "Did a knex migration. Keywords: knex");
 
     const hits = relevantThreads(db, "knex migration", 3);
@@ -116,7 +115,7 @@ describe("relevance ranking", () => {
     writeSession(env.projects, "-repo", "NEW", [
       userMsg("NEW", "u2", "notes about the limiter approach", { timestamp: ts(halfYear) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const now = Date.parse(ts(halfYear));
     const hits = relevantThreads(db, "limiter", 2, now);
     expect(hits.map((h) => h.id)).toEqual(["NEW", "OLD"]);
@@ -147,7 +146,7 @@ describe("relevance ranking", () => {
         timestamp: ts(month),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const now = Date.parse(ts(month));
 
     // No scope: unchanged global behavior, recency decides.
@@ -181,7 +180,7 @@ describe("relevance ranking", () => {
     // an index run inside a real repo. The resolver itself is covered in
     // git.test.ts; here it is what makes git_root reach the sessions rows.
     const resolveGit: GitResolver = (cwd) => ({ root: cwd ?? null, remote: null });
-    runIndex(db, { resolveGit });
+    runIndex(db, { adapters: env.adapters, resolveGit });
     const now = Date.parse(ts(month));
 
     // repoRoot matches on git_root, and takes precedence over the cwd path.
@@ -205,7 +204,7 @@ describe("relevance ranking", () => {
         timestamp: ts(0),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), { cwd: "/repo-mine" });
     expect(hits.map((h) => h.id)).toEqual(["STRONG", "WEAK"]);
   });
@@ -218,7 +217,7 @@ describe("relevance ranking", () => {
     writeSession(env.projects, "-repo-other", "OTHER", [
       userMsg("OTHER", "u2", "some work", { cwd: "/repo-other", timestamp: ts(month) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     // Identical summaries: only repo and age differ, and the match is summary-only.
     writeSummary(db, "MINE", "Built the limiter middleware. Keywords: limiter");
     writeSummary(db, "OTHER", "Built the limiter middleware. Keywords: limiter");
@@ -234,7 +233,7 @@ describe("relevance ranking", () => {
 
   test("relevantThreads returns nothing for an unrelated or all-stopword prompt", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "database migration work")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(relevantThreads(db, "quux zzyzx nonexistent", 3).length).toBe(0);
     expect(relevantThreads(db, "och att den vi kan", 3).length).toBe(0);
   });

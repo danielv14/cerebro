@@ -34,11 +34,10 @@ describe("runDoctor", () => {
   // in the developer's ~/.claude and no real settings.json can make the
   // assertions flap, and no env var has to be saved and restored.
   const doctor = (opts: { full?: boolean } = {}): DoctorReport =>
-    runDoctor(db, ":memory:", { deployedBinary, settingsFile, ...opts });
+    runDoctor(db, ":memory:", { deployedBinary, settingsFile, adapters: env.adapters, ...opts });
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     deployedBinary = join(env.claudeRoot, "cerebro", "cerebro");
     settingsFile = join(env.claudeRoot, "settings.json");
     db = openDb(":memory:");
@@ -50,7 +49,7 @@ describe("runDoctor", () => {
 
   test("a healthy archive passes every hard check", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const report = doctor();
     expect(report.ok).toBe(true);
     expect(report.checks.some((c) => c.status === "fail")).toBe(false);
@@ -67,7 +66,7 @@ describe("runDoctor", () => {
     // The failure the builder rules out: a check whose branches disagree on their own
     // key, handing --json consumers two entries for one check.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const keys = doctor().checks.map((c) => c.key);
     expect(keys.length).toBe(new Set(keys).size);
     expect(keys.every((key) => key.length > 0)).toBe(true);
@@ -75,7 +74,7 @@ describe("runDoctor", () => {
 
   test("--full runs the complete integrity_check instead of quick_check", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byKey(doctor(), "integrity").detail).toBe("quick_check");
     expect(byKey(doctor({ full: true }), "integrity").detail).toBe("integrity_check");
   });
@@ -89,7 +88,7 @@ describe("runDoctor", () => {
 
   test("orphaned index_state rows are reported with the command that prunes them", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     db.run("INSERT INTO index_state (source_file) VALUES ('/gone/nowhere.jsonl')");
     const check = byKey(doctor(), "cursors");
     expect(check.status).toBe("warn");
@@ -105,14 +104,14 @@ describe("runDoctor", () => {
     // what the next `cerebro index` removes.
     const goneAfter = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "g1", "bye")]);
     writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "k1", "hi")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     fs.rmSync(goneAfter);
 
     const check = byKey(doctor(), "cursors");
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("1 of 2");
 
-    runIndex(db); // the prune removes what doctor counted, nothing else
+    runIndex(db, { adapters: env.adapters }); // the prune removes what doctor counted, nothing else
     const remaining = db.query("SELECT source_file FROM index_state").all() as {
       source_file: string;
     }[];
@@ -126,7 +125,7 @@ describe("runDoctor", () => {
     writeSession(env.projects, "-repo", "EMPTY", [
       { type: "custom-title", customTitle: "Title only", sessionId: "EMPTY" },
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const check = byKey(doctor(), "empty-sessions");
     expect(check.status).toBe("ok");
     expect(check.detail).toContain("1");
@@ -177,7 +176,7 @@ describe("runDoctor", () => {
 
   test("digest coverage warns while a backlog exists and passes once it is drained", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const stale = byKey(doctor(), "digest");
     expect(stale.status).toBe("warn");
     expect(stale.detail).toBe("0/1 threads summarized, 1 stale");
@@ -192,14 +191,14 @@ describe("runDoctor", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "RESUME", "Summary written before the original showed up.");
 
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
       assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(rootOf(db, "RESUME")).toBe("ORIG");
 
     const threadsLine = statsCommand
@@ -211,6 +210,7 @@ describe("runDoctor", () => {
         now: Date.parse(ts(0)),
         cwd: "/repo",
         resolveGit: () => ({ root: null, remote: null }),
+        adapters: env.adapters,
         progress: () => {},
       })
       .lines!.find((line) => line.startsWith("Threads:"));

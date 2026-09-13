@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { GitResolver } from "../git.ts";
+import type { SourceAdapter } from "../sources/adapter.ts";
 import type { OptionTable, OptionValues } from "./args.ts";
 
 // See CLAUDE.md ("How a command is shaped").
@@ -9,6 +10,8 @@ export interface CommandContext<A> {
   now: number;
   cwd: string;
   resolveGit: GitResolver;
+  // The registered sources, built at the CLI edge from the roots it resolved.
+  adapters: SourceAdapter[];
   rest: string[];
   dbPath: string;
   // Emits NOW, before the command returns: digest drain makes model calls over

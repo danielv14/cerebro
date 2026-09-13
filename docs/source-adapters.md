@@ -16,10 +16,12 @@ Three files under `src/sources/`:
   event shape, and the `SourceAdapter` interface. Read its doc comments first;
   they state the guarantees below next to the types that carry them.
 - `claude-code.ts` is the reference implementation's discovery half (the
-  `~/.claude/projects` walk). Its normalization half is
+  projects-directory walk). `createClaudeCodeAdapter(projectsRoot)` takes the
+  root it walks; it reads no environment. Its normalization half is
   `src/sources/claude-code-jsonl.ts`.
-- `registry.ts` holds the list of active adapters, the provider -> adapter
-  lookup, and the global oldest-first merge of every source's files.
+- `registry.ts` builds the registered adapters from the roots the CLI edge
+  resolved (`sourceAdapters(claudeCodeProjects)`), and holds the provider ->
+  adapter lookup and the global oldest-first merge of every source's files.
 
 An adapter is two functions and an id:
 
@@ -103,8 +105,8 @@ Optional but wired through when present:
    files copied from real logs: normalization, dedup idempotency (index twice,
    zero new), incremental append, provider + model on the session row, and FTS
    hits on the source's text. Add the id to the pinned provider list in the same
-   file. `runIndex(db, { adapters })` and `dryRunIndex(db, full, adapters)` both
-   take an injected adapter list, so tests never touch the registry or a real
+   file. `runIndex(db, { adapters })` and `dryRunIndex(db, adapters, full)` both
+   require an adapter list, so tests never touch the registry or a real
    archive; index the same fixtures through both and assert the counts agree, so
    dry-run parity (invariant #2) holds for your source too.
 5. Run `bun run typecheck`, `bun test`, `bun run check`, and update

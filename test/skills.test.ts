@@ -38,7 +38,6 @@ describe("skillUsage", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -57,7 +56,7 @@ describe("skillUsage", () => {
       assistantMsg("S", "a1", skillTool("commit"), { parentUuid: "u1", timestamp: ts(1) }),
       assistantMsg("S", "a2", skillTool("commit"), { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("commit")).toEqual({
       name: "commit",
       slash: 1,
@@ -73,7 +72,7 @@ describe("skillUsage", () => {
       assistantMsg("S", "a1", skillTool("deep-review"), { timestamp: ts(0) }),
       userMsg("S", "u1", skillResult("deep-review"), { parentUuid: "a1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("deep-review")?.total).toBe(1);
   });
 
@@ -95,7 +94,7 @@ describe("skillUsage", () => {
         timestamp: ts(1),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("standup")).toBeUndefined();
   });
 
@@ -107,7 +106,7 @@ describe("skillUsage", () => {
         timestamp: ts(0),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("X")).toBeUndefined();
   });
 
@@ -128,7 +127,7 @@ describe("skillUsage", () => {
         { timestamp: ts(0) },
       ),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("standup")).toBeUndefined();
   });
 
@@ -136,7 +135,7 @@ describe("skillUsage", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", `<command-name> oops\n${slashCall("commit")}`, { timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("commit")?.slash).toBe(1);
     expect(skillUsage(db).rows.length).toBe(1);
   });
@@ -150,7 +149,7 @@ describe("skillUsage", () => {
         timestamp: ts(0),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(skillUsage(db).rows).toEqual([]);
   });
 
@@ -160,7 +159,7 @@ describe("skillUsage", () => {
         timestamp: ts(0),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("changelog")?.model).toBe(1);
   });
 
@@ -172,7 +171,7 @@ describe("skillUsage", () => {
         timestamp: ts(1),
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("commit")).toMatchObject({ slash: 2, model: 1, total: 3 });
     expect(byName("cerebro")?.model).toBe(1);
   });
@@ -185,7 +184,7 @@ describe("skillUsage", () => {
     writeSubagent(env.projects, "-repo", "P", "agent-1", [
       assistantMsg("P", "s1", skillTool("code-review"), { timestamp: ts(2), isSidechain: true }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(byName("code-review")).toMatchObject({ model: 2, total: 2, sidechain: 1 });
   });
 
@@ -194,7 +193,7 @@ describe("skillUsage", () => {
       assistantMsg("S", "a1", skillTool("code-review:code-review"), { timestamp: ts(0) }),
       userMsg("S", "u1", slashCall("clear"), { parentUuid: "a1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(
       skillUsage(db)
         .rows.map((row) => row.name)
@@ -208,7 +207,7 @@ describe("skillUsage", () => {
       userMsg("S", "u2", slashCall("aaa"), { parentUuid: "u1", timestamp: ts(1) }),
       userMsg("S", "u3", slashCall("ccc"), { parentUuid: "u2", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(skillUsage(db).rows.map((row) => row.name)).toEqual(["bbb", "aaa", "ccc"]);
   });
 
@@ -216,7 +215,7 @@ describe("skillUsage", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", `${slashCall("aaa")}\n${slashCall("bbb")}`, { timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const usage = skillUsage(db, { limit: 1 });
     expect(usage.rows.length).toBe(1);
     expect(usage.distinct).toBe(2);
@@ -230,7 +229,7 @@ describe("skillUsage", () => {
         timestamp: "2026-03-01T10:00:00.000Z",
       }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const usage = skillUsage(db, { since: "2026-02-01" });
     expect(usage.rows[0]).toMatchObject({ name: "standup", slash: 1 });
     expect(usage.from).toBe("2026-02-01");
@@ -241,7 +240,7 @@ describe("skillUsage", () => {
       userMsg("S", "u1", slashCall("standup"), { timestamp: ts(0) }),
       assistantMsg("S", "a1", "done", { parentUuid: "u1", timestamp: ts(5) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     const usage = skillUsage(db);
     expect(usage.from).toBe(ts(0));
     expect(usage.to).toBe(ts(5));
@@ -249,7 +248,7 @@ describe("skillUsage", () => {
 
   test("an archive with no skill calls yields no rows", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "just a prompt")]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(skillUsage(db).rows).toEqual([]);
     expect(skillUsage(db).distinct).toBe(0);
   });

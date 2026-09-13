@@ -52,13 +52,12 @@ describe("runDigest", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "how do I tune the limiter", { timestamp: ts(0) }),
       assistantMsg("SESS", "a1", "raise the window", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
     db = openDb(":memory:");
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   });
   afterEach(() => {
     db.close();
@@ -273,14 +272,13 @@ describe("runDrain", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     for (const id of ["ONE", "TWO", "THREE"]) {
       writeSession(env.projects, "-repo", id, [
         userMsg(id, `${id}-u1`, `work on ${id}`, { timestamp: ts(0) }),
       ]);
     }
     db = openDb(":memory:");
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
   });
   afterEach(() => {
     db.close();

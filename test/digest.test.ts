@@ -262,7 +262,6 @@ describe("digest (summaries layer)", () => {
 
   beforeEach(() => {
     env = makeClaudeDir();
-    process.env.CEREBRO_CLAUDE_DIR = env.claudeRoot;
     db = openDb(":memory:");
   });
   afterEach(() => {
@@ -275,7 +274,7 @@ describe("digest (summaries layer)", () => {
       userMsg("S", "u1", "do the thing", { timestamp: ts(0) }),
       assistantMsg("S", "a1", "done", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const before = staleThreads(db);
     expect(before.map((t) => t.id)).toEqual(["S"]);
@@ -290,7 +289,7 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "real work", { timestamp: ts(0) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     // A session that indexed into a sessions row but contributed no messages
     // (e.g. a /clear-only or resume-marker session): rolls up to msgs = 0 in the
@@ -310,7 +309,7 @@ describe("digest (summaries layer)", () => {
       userMsg("S", "u1", "start", { timestamp: ts(0) }),
       assistantMsg("S", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "First summary. Keywords: start");
     expect(staleThreads(db).length).toBe(0);
 
@@ -320,7 +319,7 @@ describe("digest (summaries layer)", () => {
         assistantMsg("S", "a2", "more work later", { parentUuid: "a1", timestamp: ts(100) }),
       )}\n`,
     );
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const stale = staleThreads(db);
     expect(stale.map((t) => t.id)).toEqual(["S"]);
@@ -328,7 +327,7 @@ describe("digest (summaries layer)", () => {
 
   test("a thread becomes stale when its summary was written by an older prompt version", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "Summary. Keywords: work");
     expect(staleThreads(db).length).toBe(0);
 
@@ -342,7 +341,7 @@ describe("digest (summaries layer)", () => {
 
   test("writeSummary upserts: re-summarizing replaces the row and the FTS text", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     writeSummary(db, "S", "First version migrating to drizzle. Keywords: drizzle");
     expect(searchSummaries(db, "drizzle").map((h) => h.id)).toEqual(["S"]);
@@ -363,7 +362,7 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
 
     const root = writeSummary(db, "RESUME", "Thread summary. Keywords: start, more");
     expect(root).toBe("ORIG");
@@ -375,7 +374,7 @@ describe("digest (summaries layer)", () => {
   test("searchSummaries ranks by topic, brackets the match, and ignores stopword queries", () => {
     writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
     writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b", { timestamp: ts(10) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "A", "Set up the rate limiter middleware. Keywords: rate-limiter");
     writeSummary(db, "B", "Refactor the checkout flow. Keywords: checkout");
 
@@ -396,7 +395,7 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo-b", "BURIED", [
       userMsg("BURIED", "ub", "b", { timestamp: ts(10) }),
     ]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "DENSE", "limiter limiter limiter. Keywords: limiter");
     writeSummary(db, "BURIED", `limiter ${"filler ".repeat(200)} Keywords: filler`);
 
@@ -409,7 +408,7 @@ describe("digest (summaries layer)", () => {
     // thread. Hydration must tolerate the missing rollup row: keep the snippet, show
     // null metadata, never drop or throw.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "Set up the rate limiter middleware. Keywords: limiter");
     db.run("DELETE FROM sessions WHERE root_session_id = 'S'");
 
@@ -423,14 +422,14 @@ describe("digest (summaries layer)", () => {
 
   test("getSummary returns null when nothing is stored", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(getSummary(db, "S")).toBeNull();
   });
 
   test("countStaleThreads matches the unbounded stale listing", () => {
     writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "one", { timestamp: ts(0) })]);
     writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "two", { timestamp: ts(1) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
     writeSummary(db, "A", "Summary of A with enough length. Keywords: a");
     expect(countStaleThreads(db)).toBe(1);
@@ -439,7 +438,7 @@ describe("digest (summaries layer)", () => {
 
   test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
-    runIndex(db);
+    runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "Built the rate limiter middleware. Keywords: rate-limiter");
 
     // The seam returns the matching root with a bracketed snippet at the requested width.
