@@ -4,7 +4,6 @@ import {
   noSummaryHint,
   staleIds,
   staleListing,
-  summarySaved,
   summarySearchListing,
 } from "../../src/commands/digest.ts";
 
@@ -140,12 +139,6 @@ describe("digestShow", () => {
 });
 
 describe("status lines", () => {
-  test("summarySaved names the thread and char count", () => {
-    expect(summarySaved("0123456789abcdef", 123)).toBe(
-      "Saved summary for thread 01234567 (123 chars).",
-    );
-  });
-
   test("noSummaryHint points at the stale backlog", () => {
     expect(noSummaryHint("0123456789abcdef")).toBe(
       "No summary yet for 01234567. Generate the backlog with: cerebro digest stale",

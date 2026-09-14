@@ -180,7 +180,7 @@ is pure bm25). Threads in the same repo as `--cwd` (the git root, otherwise the 
 project path) additionally get their score multiplied by 1.5 in both tiers, worth
 roughly two months of freshness. It is a boost, never a filter: a clearly stronger match
 in another repo still shows up, which is the point for shared infrastructure. Without
-`--cwd` (and without a cwd in the hook payload) everything is ranked globally. Each hit
+`--cwd` everything is ranked globally. Each hit
 has a title, an opening prompt and a matching snippet. Default 3. Good when you want to
 know whether something similar has been done before.
 
@@ -193,10 +193,6 @@ Related past sessions:
 
 To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
 ```
-
-`recent` and `relevant` take `--context` (an agent-friendly block, silent when nothing
-matches) and `relevant` takes `--stdin` (reads the prompt and the cwd out of a hook's
-JSON payload). That is what the automated hooks use (see "Good to know").
 
 ### `cerebro show <session-id> [--full] [--range A..B]`
 Shows a whole logical thread (root + all resumes + subagent turns), ordered
@@ -335,8 +331,7 @@ the same database with its own FTS index. The summaries are dense and topical, s
 searching them finds "what was I working on around X" far better than bm25 against raw
 transcripts. cerebro owns the prompt, the size tiering and the storage format, and never
 summarizes on its own initiative: `digest run`/`digest drain` spawn the model only when
-someone asks for it, and the composable verbs (`input`/`prompt`/`write`) are still there
-for when you want to be the model yourself.
+someone asks for it.
 
 **When asked to find patterns or related work:** start with `cerebro digest search <query>`
 (dense summaries) and then go deeper with `cerebro show <id>`. If that comes back too
@@ -395,31 +390,23 @@ Added a token-bucket rate limiter to the auth middleware in api-server. ...
 Keywords: src/auth/middleware.ts, rate-limiter, 429, Retry-After
 ```
 
-**Producing a summary.** Three routes:
-- `cerebro digest run <id>` does the whole chain in one step: renders the transcript,
-  picks the model by size, spawns `claude -p --no-session-persistence`, refuses to store
-  output that cannot be a summary, and writes it in. Exit 0 only when something was
-  actually stored. `cerebro digest drain --limit N` does the same for the N stalest
-  threads, newest first, and does not let one broken thread stop the rest. This is what
-  the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is spawned.
-- Or you as the agent do it inline: read `cerebro digest input <id>`, summarize per
-  `cerebro digest prompt`, and write it back with `cerebro digest write <id>` (the summary
-  is read from stdin; `--model <name>` records which model wrote it). No subprocess
-  involved, you are the model.
-- Or pipe the steps yourself: `cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>`.
+**Producing a summary.** `cerebro digest run <id>` does the whole chain in one step:
+renders the transcript, picks the model by size, spawns `claude -p
+--no-session-persistence`, refuses to store output that cannot be a summary, and writes
+it in. Exit 0 only when something was actually stored. `cerebro digest drain --limit N`
+does the same for the N stalest threads, newest first, and does not let one broken thread
+stop the rest. This is what the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is
+spawned.
 
-`digest write` refuses to store text that cannot be a summary (too short, or something
-that looks like an error message along the lines of "Prompt is too long"/"API Error") and
-exits 1 when it does, leaving the thread stale so the reconciler retries it. The same
-guard sits in `digest run`/`drain`.
+The storage guard refuses text that cannot be a summary (too short, or something that
+looks like an error message along the lines of "Prompt is too long"/"API Error"), leaving
+the thread stale so the reconciler retries it.
 
-Use `cerebro digest input <id>`, not `show <id> --full`, as model input: it renders the
-same transcript but size-bounded so it fits in a single model context. Short threads come
-out verbatim; a giant thread is trimmed (water-fill: short messages are kept whole, the
-longest essays are trimmed first) so it cannot overflow even a 1M context. cerebro owns the
-model choice: `digest run`/`drain` measure the transcript where they render it and tier on
-that, and `cerebro digest model <id>` (or `--bytes <n>`) shows the same decision for a
-manual check. Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
+The transcript handed to the model is size-bounded so it fits in a single model context.
+Short threads go in verbatim; a giant thread is trimmed (water-fill: short messages are
+kept whole, the longest essays are trimmed first) so it cannot overflow even a 1M context.
+cerebro picks the model from the transcript size it measured when rendering.
+Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
 -> `claude-sonnet-4-6[1m]` in one shot (1M context, flat pricing, no long-context premium),
 so that a thread of 400-600k tokens is summarized whole instead of truncated. The `[1m]`
 suffix is required: that is how Claude Code picks the 1M variant; without it `claude -p`

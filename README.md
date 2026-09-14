@@ -145,7 +145,7 @@ all, and the rules it takes, is in
   both ride along in every `--json` listing (`sessions`, `recent`, `relevant`,
   `search`, `digest search`), read from the thread rollup so the five agree.
   Adding a source (e.g. a Codex CLI adapter) is described in
-  [docs/source-adapters.md](docs/source-adapters.md).
+  [docs/architecture.md](docs/architecture.md#sources-srcsources).
 - **Tool output is capped.** Prose and reasoning are kept in full, but each
   tool call and tool result is truncated to its first 1 KB (plus a
   `[+N chars truncated]` marker). The first kilobyte holds the searchable part
@@ -198,22 +198,13 @@ cerebro digest run <id>                     # summarize one thread: render, pick
                                             #   call it, check the output, store it
 cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
                                             #   (default 8); one failure never aborts the run
-cerebro digest prompt                       # print the canonical summarization prompt
-cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
-                                            #   (--bytes: tier an already-measured size
-                                            #    without re-rendering the transcript)
-cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
-                                            #   rejects error-looking or too-short input with
-                                            #   exit 1 so the thread stays stale and is retried)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
 
 `digest run` does the whole sequence in one command and is what the hooks call;
 `digest drain` does it for the stalest N. [docs/digest.md](docs/digest.md) covers
-the workflows: what summaries buy in lookup latency, how to drive the steps
-yourself or summarize inline as an agent, and how coverage is kept up.
+what summaries buy in lookup latency and how coverage is kept up.
 
 ## Automation
 
@@ -262,8 +253,7 @@ files, handed to the code as an adapter list rather than steered through the
 environment, never the real archive. CI runs `biome ci`,
 typecheck, tests and a compile build on every PR.
 
-`CLAUDE.md` has the working rules and the archive invariants,
-[docs/layout.md](docs/layout.md) maps the source tree module by module, and
+`CLAUDE.md` has the working rules and the archive invariants, and
 [docs/architecture.md](docs/architecture.md) explains how the modules fit
 together and why. Built on Bun (`bun:sqlite`, synchronous) with two small
 pure-JS dependencies and no native or network ones.

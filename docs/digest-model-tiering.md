@@ -19,14 +19,11 @@ variant. Plain `claude-sonnet-4-6` gets the default 200k window, and a giant
 thread still fails with "Prompt is too long".
 
 `digest run` and `digest drain` measure the transcript where they render it and
-choose on that; `cerebro digest model` exposes the same decision for manual
-inspection (`--bytes <n>` decides from an already-measured size, `<id>` renders
-and measures). The input is the rendered transcript's byte size (the same
-size-bounded render `cerebro digest input` prints; see [digest.md](digest.md)),
-which is capped so that even the largest thread cannot overflow the 1M
-context. The threshold and that cap are both byte counts, and a body that has to
-be trimmed is cut on a character boundary, so a Swedish or CJK thread is measured
-in the same unit the budget was derived in.
+choose on that. The input is the rendered transcript's byte size, which is capped
+so that even the largest thread cannot overflow the 1M context. The threshold and
+that cap are both byte counts, and a body that has to be trimmed is cut on a
+character boundary, so a Swedish or CJK thread is measured in the same unit the
+budget was derived in.
 
 The threshold comes from a token budget, not the raw window size. `claude -p`
 prepends its own system prompt and tool definitions (~77k tokens measured), so

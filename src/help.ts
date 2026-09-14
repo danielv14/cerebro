@@ -8,8 +8,8 @@ Usage:
                                          --all for every matching message)
   cerebro sessions [--project P] [--branch B] [--since D] [--limit N]
                                          List threads, newest first
-  cerebro recent [--cwd P] [--days D] [--limit N] [--context]   Recent threads for one repo
-  cerebro relevant <prompt> [--limit N] [--cwd P] [--context]
+  cerebro recent [--cwd P] [--days D] [--limit N]   Recent threads for one repo
+  cerebro relevant <prompt> [--limit N] [--cwd P]
                                          Past threads relevant to a prompt (threads in
                                          --cwd's repo rank higher)
   cerebro show <session-id> [--full] [--range A..B]
@@ -34,18 +34,12 @@ Digest actions:
   cerebro digest stale [--limit N] [--ids]    List threads needing a (re)summary
   cerebro digest run <id> | --stdin           Summarize one thread end to end
   cerebro digest drain [--limit N]            Summarize the stalest N threads (default 8)
-  cerebro digest prompt                       Print the summarization prompt
-  cerebro digest input <id>                   Print the size-bounded transcript to summarize
-  cerebro digest model <id> | --bytes N       Print the model the size tiering would pick
-  cerebro digest write <id> [--model M]       Store a summary for a thread (reads it from stdin)
   cerebro digest search <query> [--limit N]   Full-text search the summaries
   cerebro digest show <id>                    Print a thread's stored summary
 
   run/drain spawn \`claude -p\` with the model the tiering picked and store the
   result only if it succeeded and is not an error string. cerebro owns the prompt,
   the tiering and the storage guard; it never summarizes on its own initiative.
-  The steps are still separately available if you want to drive them yourself:
-    cerebro digest input <id> | claude -p "$(cerebro digest prompt)" | cerebro digest write <id>
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
@@ -77,16 +71,10 @@ Options:
   --to <path>     backup: explicit target file (default: timestamped in backups/)
   --keep <n>      backup: prune oldest default-named backups beyond n
   --cwd <path>    recent: directory to scope by (default: current dir); relevant:
-                  repo whose threads get a ranking boost (default: the --stdin
-                  payload's cwd, else no boost)
+                  repo whose threads get a ranking boost (default: no boost)
   --days <n>      recent: only threads active within the last n days (default 14)
-  --context       recent/relevant: emit an agent-facing context block (for a hook)
-  --stdin         relevant: read the prompt (and cwd) from a hook's JSON payload on
-                  stdin; digest run: read the session id from a SessionEnd payload
+  --stdin         digest run: read the session id from a SessionEnd payload
   --ids           digest stale: print one full session id per line (for scripts)
-  --model <name>  digest write: record which model produced the summary
-  --bytes <n>     digest model: tier by an already-measured transcript byte count
-                  (skips re-rendering the transcript; used by the hooks)
   --json          search/sessions/recent/relevant/show/stats/skills/doctor/version/
                   digest stale|search|show: emit the rows as JSON instead of the
                   human listing. A command that does not list it here rejects it,

@@ -28,12 +28,7 @@ export interface CommandOutput {
   // is emitted rather than treated as missing.
   json?: unknown;
   lines?: string[];
-  // Raw stdout, no trailing newline.
-  raw?: string;
   empty?: string;
-  // The contract with context-injecting hooks: silence means "inject nothing";
-  // an empty-state line would end up in the model.
-  silentWhenEmpty?: boolean;
   exitCode?: number;
 }
 

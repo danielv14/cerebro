@@ -50,7 +50,7 @@ describe("DIGEST_PROMPT", () => {
   });
 });
 
-describe("rejectSummaryReason (digest write guard)", () => {
+describe("rejectSummaryReason (the storage guard)", () => {
   test("accepts a normal summary", () => {
     expect(
       rejectSummaryReason("Fixed the auth middleware in api-server. Keywords: auth, middleware"),
