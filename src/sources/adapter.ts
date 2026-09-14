@@ -1,4 +1,4 @@
-// The source-adapter contract. Guarantees and how-to: docs/source-adapters.md.
+// The source-adapter contract. Guarantees and how-to: docs/architecture.md.
 
 export interface SessionFile {
   path: string;

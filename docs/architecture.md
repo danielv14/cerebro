@@ -1,13 +1,11 @@
 # Architecture and design notes
 
 How cerebro's modules fit together and why they are shaped the way they are.
-The code itself keeps its comments short and local (a specific edge case, a
-non-obvious constraint); the module-level story lives here. The load-bearing
-invariants are in `CLAUDE.md`; this document explains the design around them.
-It is deliberately not an inventory: it covers the decisions a reader cannot
-recover from the code, and it should shrink when code starts explaining itself,
-not grow with every change. The inventory, one line per module, is
-[layout.md](layout.md).
+The code keeps its comments short and local; the module-level story lives here.
+The load-bearing invariants are in `CLAUDE.md`; this document explains the
+design around them. It is not an inventory of the source tree: it covers the
+decisions a reader cannot recover from the code, and it should shrink when code
+starts explaining itself.
 
 The pipeline, end to end:
 
@@ -20,70 +18,131 @@ source adapters (discovery + normalization)
   -> CLI (commands as data, one dispatcher that parses, validates and renders)
 ```
 
+Built on Bun (`bun:sqlite`, synchronous, no native or network deps). Two small
+pure-JS dependencies: `stopword` filters filler words out of relevance queries,
+and `valibot` validates the untrusted input boundaries (the session JSONL and
+the digest hook payload). Ranked search comes from SQLite FTS5 indexes over the
+messages and the summaries.
+
 ## Sources (`src/sources/`)
 
-The source-adapter seam decouples the archive from any one AI tool. Each
-adapter owns two things: discovering its session files on disk and normalizing
-raw JSONL lines into the `Classified` events the indexer stores. Everything
-downstream (scan, schema, FTS, search, relevance, digests) is source-agnostic.
-The full adapter contract and its guarantees are in
-[source-adapters.md](source-adapters.md).
+The source-adapter seam decouples the archive from any one AI tool. Each adapter
+owns two things: discovering its session files on disk and normalizing raw lines
+into the `Classified` events the indexer stores. Everything downstream is
+source-agnostic, and every session row records its `provider` and `model`.
 
-Discovery roots are arguments, never environment reads. `createClaudeCodeAdapter`
-takes its projects root and the CLI edge resolves it once from
-`claudeProjectsDir()`, next to where the database path is resolved; the built
-adapter list travels down the command context beside `now`, `cwd` and
-`resolveGit`, so `runIndex`, `dryRunIndex` and `doctor` all receive it rather
-than consulting a registry that reads `process.env`. A test builds its adapters
-from its fixture tree and hands them in.
+An adapter is two functions and an id (`SourceAdapter` in `adapter.ts`:
+`discover` walks the on-disk layout, `classifyLines` normalizes). The indexer
+drives everything else: it merges all adapters' files oldest-first, keeps a byte
+cursor per file, reads only appended bytes, classifies them through the owning
+adapter, and writes normalized rows. An adapter never touches the database.
 
-- `adapter.ts` declares the contract: `SessionFile`, `Classified`,
-  `SourceAdapter`, and `parseLine` (returns `undefined` on parse failure so a
-  malformed line is distinguishable from a line that parses to a falsy value).
-- `claude-code.ts` owns the Claude Code on-disk layout: top-level
-  `<project>/<session-uuid>.jsonl` files, and `<uuid>/subagents/*.jsonl`
-  transcripts attributed to the parent session (invariant #6). Discovery is
-  unsorted; the registry orders the merged set.
-- `registry.ts` merges every adapter's files and sorts oldest-first by mtime,
-  tiebreak sessionId (invariant #3: an original session must be indexed before
-  any resume that branches from it). `adapterFor` throws on an unknown
-  provider: files only enter the pipeline through an adapter's own discover, so
-  an unknown provider is a programming error, not something to guess around.
-- `claude-code-jsonl.ts` is the normalization half of the Claude Code adapter
-  and one of
-  cerebro's untrusted I/O boundaries. The accepted shapes are Valibot schemas
-  validated with `safeParse`, deliberately tolerant of an evolving log: an
-  unknown event type classifies to `skip`, a missing or wrongly-typed optional
-  field defaults to null, an unrecognized content block is dropped, and unknown
-  keys are ignored. For the message variant only `type`, `uuid` and `message`
-  are load-bearing; the optional scalars stay `unknown` and are coerced in the
-  mapping, so a changed field type degrades that field instead of dropping the
-  whole turn. `flattenContent` renders block arrays as greppable text: prose
-  and thinking pass through, tool blocks get a compact tag and a size cap
-  (tool plumbing dominates transcript bytes and ages worst; the head of the
-  payload carries the searchable identifiers, and errors are exempt because a
-  truncated stack trace is useless). `toolUseTag` is exported so `skills`
-  derives its marker from the flattener instead of duplicating the string.
+Discovery roots are arguments, never environment reads. The CLI edge resolves the
+projects root once from `claudeProjectsDir()`, and the built adapter list travels
+down the command context beside `now`, `cwd` and `resolveGit`, so `runIndex`,
+`dryRunIndex` and `doctor` all receive it rather than consulting a registry that
+reads `process.env`; a test builds its adapters from its fixture tree and hands
+them in. `adapterFor` throws on an unknown provider: files only enter the
+pipeline through an adapter's own discover, so an unknown provider is a
+programming error, not something to guess around.
+
+`claude-code-jsonl.ts` is the normalization half of the Claude Code adapter and
+one of cerebro's untrusted I/O boundaries. The accepted shapes are Valibot
+schemas validated with `safeParse`, deliberately tolerant of an evolving log: an
+unknown event type classifies to `skip`, a missing or wrongly-typed optional
+field defaults to null, an unrecognized content block is dropped, and unknown
+keys are ignored. For the message variant only `type`, `uuid` and `message` are
+load-bearing; the optional scalars stay `unknown` and are coerced in the
+mapping, so a changed field type degrades that field instead of dropping the
+whole turn. `flattenContent` renders block arrays as greppable text: prose and
+thinking pass through, tool blocks get a compact tag and a size cap. Tool
+plumbing dominates transcript bytes and ages worst, the head of the payload
+carries the searchable identifiers, and errors are exempt because a truncated
+stack trace is useless. `toolUseTag` is exported so `skills` derives its marker
+from the flattener instead of duplicating the string.
+
+### What a new adapter must guarantee
+
+These map onto the archive invariants in `CLAUDE.md`; breaking one silently
+corrupts the archive. `adapter.ts` states them next to the types that carry them,
+and `test/sources.test.ts` has a complete fake adapter driven end to end through
+`runIndex` as a template.
+
+1. **Append-only files.** The scan layer advances a byte cursor per file and
+   never re-reads old bytes on an incremental run. A source that rewrites
+   earlier bytes in place cannot be indexed this way.
+2. **A stable, globally unique message id** (`Classified.uuid`). This is the
+   dedup key: re-reads and rebuilds are idempotent only because the same message
+   always classifies to the same id. Without native per-message ids, synthesize
+   one that is stable across re-reads and collision-free against other sources
+   (prefix it with the provider id), and never derive it from anything that
+   changes when the file is appended to.
+3. **A provider id you never rename** (`SourceAdapter.id`). It is stamped on
+   every session row the adapter discovers, and the schema migration's backfill
+   only heals a NULL provider, not a stale one, so a rename orphans history
+   instead of failing. The registered ids are pinned as literals in
+   `test/sources.test.ts`, which turns a later rename into a red test.
+4. **Honest attribution** (`SessionFile.sessionId`). Every message in a file is
+   attributed to the file's owning session. Subagent transcripts name the parent
+   session and use `kind: "subagent"`; a source without subagents never emits
+   that kind.
+5. **Honest parent links** (`Classified.parentUuid`). Cross-session links are how
+   resumes fold into one logical thread. A source without resume semantics
+   returns null everywhere and its sessions are all thread roots. Never
+   fabricate links.
+6. **Tolerant parsing.** The log format will evolve under you, and a parser that
+   throws loses whole files. Validate with Valibot the way
+   `claude-code-jsonl.ts` does, fold whatever is searchable into `text`, and
+   drop the rest.
+
+Titles, `model`, `cwd` and `gitBranch` are optional and wired through when
+present; titles use the shared priority scale (user-set 3 > tool-generated 2 >
+derived summary 1). `SessionFile.projectDir` is the source's own grouping
+directory if it has one; nothing downstream reads it, so a source that groups
+differently omits it rather than inventing a value.
+
+Answer four questions against real logs before coding an adapter, and write the
+answers into its header comment: what is the dedup key, how do resumes link (if at
+all), what is the owning session of each file, and are there title events. What
+you do not need to touch: the schema, the indexer, the scan layer, search, threads
+or digests. If a new source seems to need a change there, reconsider the adapter
+design first.
+
+### What stays Claude-specific on purpose
+
+Claude Code is the only registered adapter. Sessions indexed before the seam
+existed were backfilled with `provider = 'claude-code'`; their `model` is NULL
+until an `index --full` re-harvests it for files still on disk.
+
+- The digest pipeline spawns the `claude` CLI to *write* summaries, behind the
+  `Summarizer` seam. A different summarizer backend is a new `Summarizer`, not a
+  source adapter.
+- The hooks ([hooks.md](hooks.md)) are Claude Code's hook system; a source without
+  an equivalent trigger relies on the scheduled reconciler
+  ([scheduling.md](scheduling.md)). cerebro's own home stays `~/.claude/cerebro`
+  regardless of sources.
+- The digest prompt's opening sentence names Claude Code, and neutralizing it is
+  not free: that sentence is also the marker `isDigestRunTranscript` matches on,
+  so rewording it hides existing digest transcripts from a `--full` re-read
+  unless the check keeps recognizing the old wording too. Adding a second adapter
+  is what makes the wording wrong, so do it then.
 
 ## Scan layer (`src/scan.ts`)
 
 Bytes, cursors, mtimes and `index_state`; nothing about messages or sessions.
 `runIndex` and `dryRunIndex` both consume this module, which is what makes
-invariant #2 (they must agree on what counts as indexable) structural: there is
-one splitter (`splitBuffer`), one read plan (`planFileRead`), and one
-discover-state-plan-read-split walk (`eachIndexableFile`).
-
-The per-file cursor is a byte offset, so reads work on bytes: `0x0A` never
-appears inside a UTF-8 multibyte sequence, making a newline split of the byte
-buffer safe (invariant #1). `splitBuffer` only advances the cursor past a
-trailing newline, or past a final unterminated line that parses as JSON; an
-unparseable tail is a mid-write line left for the next run.
+invariant #2 structural: there is one splitter (`splitBuffer`), one read plan
+(`planFileRead`), and one discover-state-plan-read-split walk
+(`eachIndexableFile`). The per-file cursor is a byte offset, so reads work on
+bytes (invariant #1), and `splitBuffer` only advances past a trailing newline or
+a final unterminated line that parses as JSON; an unparseable tail is a mid-write
+line left for the next run.
 
 `planFileRead` decides skip/read/truncate per file. A file flagged `is_digest`
-(cerebro's own summarization transcript, see below) is permanently excluded
-even when it grows: the content guard only inspects reads that start at byte 0,
-so without the flag a digest transcript still being written when first detected
-would leak its later lines into the archive on the next incremental run.
+(cerebro's own summarization transcript, see below) is permanently excluded even
+when it grows: the content guard only inspects reads starting at byte 0, so
+without the flag a digest transcript still being written when first detected would
+leak its later lines into the archive on the next incremental run.
 
 `orphanedCursorPaths` is the one owner of the orphan predicate: the indexer's
 presence reconciliation deletes through it and `doctor` counts through it, so
@@ -94,13 +153,13 @@ must stay distinguishable from "no orphans".
 
 ## Indexer (`src/indexer.ts`)
 
-`runIndex` walks the scan layer's output inside a per-file transaction:
-classify the new lines, insert messages deduped on UUID (invariant #4), then
-write the session row. `--full` clears cursors and re-reads everything (dedup
-makes it idempotent); `--rebuild` additionally refreshes the payload of
-already-indexed messages in place (the only way a `flattenContent` change
-reaches old rows) while never touching `session_id` or deleting anything, so
-messages whose source file is gone keep their only copy.
+`runIndex` walks the scan layer's output inside a per-file transaction: classify
+the new lines, insert messages deduped on UUID (invariant #4), then write the
+session row. `--full` clears cursors and re-reads everything (dedup makes it
+idempotent); `--rebuild` additionally refreshes the payload of already-indexed
+messages in place, the only way a `flattenContent` change reaches old rows, while
+never touching `session_id` or deleting anything, so messages whose source file is
+gone keep their only copy.
 
 Two session-row writers exist on purpose (invariant #7):
 
@@ -111,42 +170,39 @@ Two session-row writers exist on purpose (invariant #7):
   `custom-title` indexed earlier.
 - `touchParentSession` is for subagent files: the existing row wins each
   `COALESCE` so a subagent never clobbers the parent's identity fields, the
-  fields a subagent cannot know are passed NULL, and `title_priority` is
-  frozen.
+  fields a subagent cannot know are passed NULL, and `title_priority` is frozen.
 
 Merging them behind a `prefer` flag is a decided non-goal: it hides the one
 thing that differs, and a wrong merge silently mis-attributes sessions.
 
 `reconcilePresence` reconciles the archive against disk: sessions whose source
 file is gone are flagged body-unavailable (a NULL `source_file`, i.e. a
-subagent-only parent stub, correctly reads as unavailable too), and
-`index_state` cursors for vanished files are pruned. Unlike sessions and
-messages, where the row *is* the archive, a cursor into an unreadable file
-carries no information, and Claude Code deletes session files on its own
-schedule, so without pruning the one working table grows forever. A pruned file
-that reappears is re-read from byte 0 and UUID dedup makes that a no-op.
+subagent-only parent stub, correctly reads as unavailable too), and `index_state`
+cursors for vanished files are pruned. Unlike sessions and messages, where the
+row *is* the archive, a cursor into an unreadable file carries no information,
+and Claude Code deletes session files on its own schedule, so without pruning the
+one working table grows forever. A pruned file that reappears is re-read from
+byte 0 and UUID dedup makes that a no-op.
 
 `isDigestRunTranscript` keeps cerebro's own headless `claude -p` summarization
-runs out of the archive: such a transcript opens with the digest prompt as a
-user message, and indexing it would feed prompt boilerplate back into search.
-New digest runs pass `--no-session-persistence` and write no transcript at all;
-the guard covers transcripts already on disk. Detection only runs on reads that
-start at byte 0, and a detected file is flagged `is_digest` so it is never read
-again.
+runs out of the archive: such a transcript opens with the digest prompt as a user
+message, and indexing it would feed prompt boilerplate back into search. New
+digest runs pass `--no-session-persistence` and write no transcript at all; the
+guard covers transcripts already on disk. Detection only runs on reads starting at
+byte 0, and a detected file is flagged `is_digest` so it is never read again.
 
 `relinkThreads` only runs when at least one file was read: a run that read no
 file inserted no message, so no new cross-session parent link can exist. This
 keeps a no-op index O(files discovered) instead of O(archive), which is what
 keeps the synchronous `/clear` hook cheap. The accepted consequence: a run that
-crashed after ingest but before the relink leaves stale links that a later
-no-op run does not repair; `cerebro index --full` always relinks. The gate is
-on files read, not the message delta, because a file can contribute only title
-events.
+crashed after ingest but before the relink leaves stale links that a later no-op
+run does not repair; `cerebro index --full` always relinks. The gate is on files
+read, not the message delta, because a file can contribute only title events.
 
-`dryRunIndex` reports what a run would do through the exact same scan and skip
-logic, writing nothing. `candidateMessages` is counted before UUID dedup: in
-incremental mode new bytes are genuinely new so it equals net-new, while a
-`--full` dry run reports the whole archive.
+`dryRunIndex` reports what a run would do through the same scan and skip logic,
+writing nothing. `candidateMessages` is counted before UUID dedup: in incremental
+mode new bytes are genuinely new so it equals net-new, while a `--full` dry run
+reports the whole archive.
 
 ## Database (`src/db.ts`)
 
@@ -156,18 +212,18 @@ hot-path open does no schema work. DDL, migrations and the stamp commit as one
 `BEGIN IMMEDIATE` transaction: two binaries built for different schema versions
 racing the first open after an upgrade could otherwise interleave a
 current-looking stamp over the other build's view, which the version gate would
-trust forever; the view-shape re-check heals databases an old unwrapped binary
-already wedged. The migrations are check-then-ALTER, so they need the same
-write lock to keep the loser from throwing on the winner's column.
+trust forever. The view-shape re-check heals databases an old unwrapped binary
+already wedged, and the check-then-ALTER migrations need the same write lock to
+keep the loser from throwing on the winner's column.
 
 Connection pragmas (busy_timeout, foreign_keys, WAL) run on every open, outside
-the version gate: cerebro is opened concurrently by short-lived processes
-against one WAL file, and the 5s busy_timeout rides out checkpoint and
-WAL-recovery windows that would otherwise fail instantly with SQLITE_BUSY.
+the version gate: cerebro is opened concurrently by short-lived processes against
+one WAL file, and the 5s busy_timeout rides out checkpoint and WAL-recovery
+windows that would otherwise fail instantly with SQLITE_BUSY.
 
-`messages.line_no` is legacy, always NULL, and kept on purpose: the deployed
-hook binary is a frozen snapshot whose INSERT names the column; dropping it
-would make every automated index run fail silently until the next deploy.
+`messages.line_no` is legacy, always NULL, and kept on purpose: the deployed hook
+binary is a frozen snapshot whose INSERT names the column, so dropping it would
+make every automated index run fail silently until the next deploy.
 
 The FTS tables are contentless-delta (`content=` tables) kept in sync by
 insert/delete/update triggers; the update triggers exist because `--rebuild`
@@ -175,105 +231,85 @@ updates message text in place and re-summarizing upserts summaries.
 
 ## Threads (`src/thread.ts`)
 
-The thread module owns what a thread is, end to end: identity and membership,
-the `threads` rollup view (DDL and row shape), the listings that read it, and
-`relinkThreads`, the sole writer of `root_session_id`. A logical thread is a
-root session plus its resumes and folded subagent transcripts, all sharing one
-`root_session_id`. The db module consumes the view DDL as an opaque fragment,
-so adding a rollup column is a one-file change here plus a `SCHEMA_VERSION`
-bump.
-
-Key design points:
+The thread module owns what a thread is, end to end: identity and membership, the
+`threads` rollup view (DDL and row shape), the listings that read it, and
+`relinkThreads`, the sole writer of `root_session_id`. A logical thread is a root
+session plus its resumes and folded subagent transcripts, all sharing one
+`root_session_id`. The db module consumes the view DDL as an opaque fragment, so
+adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 
 - **Membership is expressed once** (`THREAD_MEMBERSHIP`): every reader that
   scopes to a thread's sessions composes the same fragment, so the rule cannot
   drift between queries.
-- **The view is root-preferring**: a rollup column takes the root session's
-  value and falls back to MAX over the resumes only when the root's is NULL.
-  The aggregate runs over unfiltered rows; callers that scope by project filter
-  the view's *output*, because filtering raw sessions before the GROUP BY would
-  drop resume/subagent rows whose project_path is NULL or differs.
+- **The view is root-preferring**: a rollup column takes the root session's value
+  and falls back to MAX over the resumes only when the root's is NULL. The
+  aggregate runs over unfiltered rows; callers that scope by project filter the
+  view's *output*, because filtering raw sessions before the GROUP BY would drop
+  resume rows whose project_path is NULL or differs.
 - **The view's columns are declared once** (`THREADS_VIEW_COLUMN_EXPRS`) and
   drive both the CREATE VIEW and the shape check `openDb` runs, so the two
-  cannot drift. The shape check exists because `CREATE VIEW IF NOT EXISTS`
-  silently keeps an old view; see the db section for the race it closes.
-- **`HAVING SUM(msg_count) > 0`** is what makes "a thread" mean the same thing
-  to every reader: a session opened and closed right away still gets a sessions
-  row (sidecar metadata that outlives Claude Code's own cleanup) with zero
-  messages, and excluding it in the view rather than per listing keeps
+  cannot drift. `CREATE VIEW IF NOT EXISTS` silently keeps an old view; see the
+  db section for the race that closes.
+- **`HAVING SUM(msg_count) > 0`** is what makes "a thread" mean the same thing to
+  every reader: a session opened and closed right away still gets a sessions row
+  with zero messages, and excluding it in the view rather than per listing keeps
   `countThreads`, `topProjects` and the listings agreeing. Nothing is deleted;
   `show` on such a session still resolves.
 - **The branch filter is any-session**, not root-preferring: branch work often
-  starts in a resume of a thread whose root sat on master, so a thread touches
-  a branch when any of its sessions was recorded on it. `search --branch` and
+  starts in a resume of a thread whose root sat on master, so a thread touches a
+  branch when any of its sessions was recorded on it. `search --branch` and
   `sessions --branch` compose the same `threadOnBranch` fragment.
 - **`attachThreadIdentity`** is the step every ranked-hit path runs after dedup:
-  hydrate the rollup once for the whole batch and pair each hit with its
-  thread's identity row, leaving the caller to map that into its own result
-  shape. It reads that identity from the
-  rollup, not the root's own sessions row: for a thread with resumes the root's
-  row carries the first session's `last_ts` and often no title, which made
-  `relevant` and `digest search` disagree with `sessions` and `recent` on the
-  same thread. There is one policy: the rollup row, or an all-null display. A
-  root with no rollup row keeps its hit rather than being dropped, which is what
-  lets a summary survive its sessions rows being deleted.
-  `threadIdentity` is the single construction site for the shape, id included,
-  which is what fixes the JSON key order of the two callers that spread it
-  whole; a test pins that order for all three listings. `id` means the thread on
-  every hit shape and every listing row, and the message's own rowid is
-  `message_id`: `search --json` used to call that one `id` while every other
-  listing meant the thread by it. Owning
-  the step here is what keeps a new display column (`provider` and `model` cost
-  five source files and five test files) from being paid for three times.
-- **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER
-  over the exact ORDER BY that `threadMessages` sorts with, owned next to it so
+  hydrate the rollup once for the whole batch and pair each hit with its thread's
+  identity row, leaving the caller to map that into its own result shape. It reads
+  that identity from the rollup, not the root's own sessions row: for a thread
+  with resumes the root's row carries the first session's `last_ts` and often no
+  title, which made `relevant` and `digest search` disagree with `sessions` and
+  `recent` on the same thread. There is one policy, the rollup row or an all-null
+  display, and a root with no rollup row keeps its hit rather than being dropped,
+  which is what lets a summary survive its sessions rows being deleted.
+  `threadIdentity` is the single construction site for the shape, id included. `id`
+  means the thread on every hit shape and every listing row; the message's own
+  rowid is `message_id`.
+- **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER over
+  the exact ORDER BY that `threadMessages` sorts with, owned next to it so
   search's `#N` ordinals and `show`'s numbering share one definition.
 - **`relinkThreads`** builds thread identity across resumes: a resume's first
-  main-chain message has a `parentUuid` owned by an earlier session; chaining
+  main-chain message has a `parentUuid` owned by an earlier session, and chaining
   those parents up gives each thread's root. Sidechain rows are excluded (the
-  resume link lives on the first main-chain turn). Ordering is by id, not ts:
-  for a session's main-chain messages, insertion order equals file order equals
-  conversational order on every path, so the lowest id is the true first turn
-  even with missing or unordered timestamps. The walk to the root guards
-  against cycles. Cost is linear in archive size, which is why `runIndex` gates
-  it on having read a file.
+  resume link lives on the first main-chain turn). Ordering is by id, not ts: for
+  a session's main-chain messages, insertion order equals file order equals
+  conversational order on every path, so the lowest id is the true first turn even
+  with missing or unordered timestamps. The walk guards against cycles. Cost is
+  linear in archive size, which is why `runIndex` gates it on having read a file.
 
 ## FTS layer (`src/fts.ts`)
 
 `RankedHit` is the one declared shape both relevance tiers rank against: thread
 id, snippet, bm25 score, and the three rollup columns the ranking reads
-(`last_ts`, `git_root`, `project_path`). Two adapters produce it.
-`rankedMessageHits` here is the message-FTS one; `searchSummaryRoots` in
-`src/digest/store.ts` is the summary-FTS one. They stay two queries rather than
-one branch because the two FTS tables and their snippets differ, and the summary
-one lives under `digest/` because the summaries table and its index are that
-layer's to own. Before the shape had a name, the relevance module consumed both
-through an anonymous structural type and its repo-boost helper typed its
-argument inline, so adding a rollup column to the ranking meant two query edits,
-two hit interfaces and an untyped consumer.
+(`last_ts`, `git_root`, `project_path`). `rankedMessageHits` here produces the
+message-FTS one and `searchSummaryRoots` in `src/digest/store.ts` the summary-FTS
+one. They stay two queries because the two FTS tables and their snippets differ,
+and the summary one lives under `digest/` because that table and its index are
+that layer's to own.
 
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per
-thread", and the two paths repeatedly disagreed about the same thread. The join, the dedup and the
-window growth live here once, and the step after them (hydrating the thread
-rollup and attaching it to each hit) is `attachThreadIdentity` in the thread
-module, which owns that metadata. A caller keeps its ranking function, the size
-of its first fetch and its own result shape.
+thread", and the two repeatedly disagreed about the same thread. The join, the
+dedup and the window growth live here once; a caller keeps only its ranking
+function, the size of its first fetch and its own result shape.
 
 - `escapeLike` escapes user-supplied LIKE fragments; every LIKE built from user
-  input pairs it with an explicit `ESCAPE '\'`. `threadOnBranch` is the shared
-  any-session branch predicate, used by the hit filters here and by
-  `listThreads`.
+  input pairs it with an explicit `ESCAPE '\'`.
 - `HitFilters` is what a caller narrows a hit by: named filters (`project`,
   `branch`, `since`, `role`, `prose`), turned into SQL here. `search` used to
-  hand in raw predicate strings, which made the table aliases (`m` = message,
-  `s` = session, `t` = rollup) part of the query's interface without being
-  declared anywhere, so renaming one broke search at runtime only. The aliases
-  are private to this module now.
-- `toMatchQuery` turns prose into an OR-of-tokens FTS5 query: implicit AND
-  would require every word to co-occur and return nothing for a conversational
-  prompt, and Swedish/English stopwords are dropped via the `stopword` package
-  so filler words do not match unrelated threads.
+  hand in raw predicate strings, which made the table aliases part of the query's
+  interface without being declared anywhere, so renaming one broke search at
+  runtime only. The aliases are private to this module now.
+- `toMatchQuery` turns prose into an OR-of-tokens FTS5 query: implicit AND would
+  require every word to co-occur and return nothing for a conversational prompt,
+  and Swedish/English stopwords are dropped via the `stopword` package so filler
+  words do not match unrelated threads.
 - `rankedMessageHits` attaches the thread rollup via LEFT JOIN (root-preferring
   `last_ts`/repo, so a resume with a NULL git_root still ranks with the thread's
   repo), plus the matched message's own git branch, which `search` shows instead
@@ -282,48 +318,45 @@ of its first fetch and its own result shape.
   malformed MATCH so each caller keeps its own fallback.
 - `dedupedHitWindow` implements the shared window policy: fetch
   `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
-  thread, and grow the window geometrically (x4, up to 3 rounds) only when it
-  was genuinely exhausted: fewer distinct threads than asked for AND a full
+  thread, and grow the window geometrically (x4, up to 3 rounds) only when it was
+  genuinely exhausted, meaning fewer distinct threads than asked for AND a full
   window came back. A fixed window is not enough because one chatty thread can own
-  every row in it and starve the threads ranked below. Growth re-fetches one
-  deep window rather than paging with LIMIT/OFFSET: `ORDER BY bm25 LIMIT n`
-  uses a bounded top-N sorter, so a deeper n is nearly free while every extra
-  page re-ranks the whole match set. Callers on a latency path can disable
-  growth and answer out of the first fetch.
+  every row in it and starve the threads below. Growth re-fetches one deep window
+  rather than paging: `ORDER BY bm25 LIMIT n` uses a bounded top-N sorter, so a
+  deeper n is nearly free while every extra page re-ranks the whole match set.
+  Callers on a latency path can disable growth and answer out of the first fetch.
 
 ## Search (`src/search.ts`)
 
 `search` owns the command's policy (window sizing, the sanitized retry, the
 result shape) and no SQL at all: it names `HitFilters` and the FTS module builds
-the query. `SearchOpts` is those filters plus `--all`.
+the query.
 
-The `search` command's semantics: user queries pass to MATCH verbatim so power
-users can use FTS5 operators; on a syntax error the query is retried once as a
-sanitized phrase query of the bare tokens (the retry wraps the whole window,
-because a query FTS5 accepted once stays valid at every window size). Results
-are deduplicated to the best hit per thread by default; `--all` disables that.
+User queries pass to MATCH verbatim so power users can use FTS5 operators; on a
+syntax error the query is retried once as a sanitized phrase query of the bare
+tokens (the retry wraps the whole window, because a query FTS5 accepted once stays
+valid at every window size). Results are deduplicated to the best hit per thread
+by default; `--all` disables that.
 
 Filter semantics worth knowing:
 
 - `--project` is thread-level: it reads the root's representative project_path
   from the rollup rather than the matched message's own session row. Filtering
   on the session would silently drop every hit in a resume whose lines carry no
-  cwd or a differing one (a subdirectory, a worktree, a moved repo). The
-  rollup value is the same one `sessions --project` matches on, so the two
-  commands agree by construction.
-- `--branch` is any-session (see the thread section).
+  cwd or a differing one (a subdirectory, a worktree, a moved repo). The rollup
+  value is the same one `sessions --project` matches on, so the two commands
+  agree by construction.
 - `--since` is per message, deliberately: it is a property of the turn, not the
   thread.
 - `--prose` is a prefix heuristic, not a parser: a tool-only message always
-  starts with `[tool_` as `flattenContent` renders it. A message that opens
-  with prose and calls a tool further down is kept on purpose.
+  starts with `[tool_` as `flattenContent` renders it. A message that opens with
+  prose and calls a tool further down is kept on purpose.
 
 Title, project, provider and model on a hit are the thread's, attached by
-`attachThreadIdentity` in one query over the kept hits; `ts` and `git_branch`
-stay the matched message's own, and a search hit carries no thread `last_ts` at
-all. The ordinal is computed once per kept hit rather than in the hit
-query, where it would run a thread-wide COUNT for every matched row the sorter
-sees.
+`attachThreadIdentity` in one query over the kept hits; `ts` and `git_branch` stay
+the matched message's own. The ordinal is computed once per kept hit rather than
+in the hit query, where it would run a thread-wide COUNT for every matched row the
+sorter sees.
 
 ## Relevance (`src/relevance.ts`)
 
@@ -336,126 +369,110 @@ bm25 scores are not comparable across the two indexes:
 2. **Raw transcripts** top up threads with no summary yet, so the command keeps
    working during backfill and for un-summarized recent sessions.
 
-Within each tier the bm25 score is recency-decayed (`decayedRank`): half-life
-90 days, unknown age treated as a year. bm25 is negative (lower = better), so
+Within each tier the bm25 score is recency-decayed (`decayedRank`): half-life 90
+days, unknown age treated as a year. bm25 is negative (lower = better), so
 multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0.
-`search` and `digest search` stay pure bm25 on purpose: an explicit search
-should be deterministic text relevance; the recall surface should favor fresh
-work.
+`search` and `digest search` stay pure bm25: an explicit search should be
+deterministic text relevance, while the recall surface should favor fresh work.
 
 The same-repo boost (`repoBoost`, 1.5x) prefers threads in the repo the prompt
-was typed in, matched on the thread's git_root when the cwd is in a repo, else
-on exact project_path (the same pairing `recent` scopes by). 1.5x is worth
-roughly two months of recency at the 90-day half-life. It is a boost, never a
-filter, so a much stronger cross-repo match stays reachable.
+was typed in, matched on the thread's git_root when the cwd is in a repo, else on
+exact project_path (the same pairing `recent` scopes by). 1.5x is worth roughly
+two months of recency at the 90-day half-life. It is a boost, never a filter, so
+a much stronger cross-repo match stays reachable.
 
-Both tiers hand their chosen threads to `attachThreadIdentity`, so the identity
-is read once for the whole result and lives in the thread module rather than
-here.
-
-The raw tier's window is deduped on the tier's own decayed-and-boosted rank
-(not on bm25), so the hit kept per thread is the one it actually ranks on.
-Growth is off at the default limit of 3: `relevant` was built for a
-per-prompt-latency budget, the first window holds far more than three threads
+The raw tier's window is deduped on the tier's own decayed-and-boosted rank (not
+on bm25), so the hit kept per thread is the one it actually ranks on. Growth is
+off at the default limit of 3: the first window holds far more than three threads
 unless the archive has barely any matches at all, and that is the one case a
 deeper fetch cannot fix. A caller that raises `--limit` has traded latency for
 coverage and gets the growth rounds.
 
 ## Digest (`src/digest/`)
 
-The curated-summary layer: one LLM-written summary per thread, stored in the
-same database.
+The curated-summary layer: one LLM-written summary per thread, stored in the same
+database. cerebro owns the prompt, the size tiering and the storage guard, and
+never summarizes on its own initiative; the hooks decide when.
 
-- **`prompt.ts`** owns the summarization contract: the prompt, its version
-  (bump it to invalidate existing summaries; `staleThreads` then re-surfaces
-  them), the size-to-model tiering and the transcript rendering. cerebro has no
-  tokenizer, so transcripts are sized in bytes at a conservative 3
-  bytes/token; the budget reserves ~90k tokens for `claude -p`'s own system
-  prompt, tools and the response (a measured overflow showed ~77k tokens of
-  fixed non-transcript overhead). `buildDigestInput` renders a thread verbatim
-  below budget; above it every message is kept but each body is capped to the
-  fair share found by a binary-search water-fill, so short steering messages
-  stay whole while the longest essays are trimmed first. The tiering numbers
-  and env overrides are documented in
+- **`prompt.ts`** owns the summarization contract: the prompt, its version (bump
+  it to invalidate existing summaries; `staleThreads` then re-surfaces them), the
+  size-to-model tiering and the transcript rendering. cerebro has no tokenizer,
+  so transcripts are sized in bytes at a conservative 3 bytes/token; the budget
+  reserves ~90k tokens for `claude -p`'s own system prompt, tools and the
+  response (a measured overflow showed ~77k tokens of fixed non-transcript
+  overhead). `buildDigestInput` renders a thread verbatim below budget; above it
+  every message is kept but each body is capped to the fair share found by a
+  binary-search water-fill, so short steering messages stay whole while the
+  longest essays are trimmed first. The numbers and env overrides are in
   [digest-model-tiering.md](digest-model-tiering.md).
 - **`stale.ts`** owns the staleness predicate (never summarized, summarized
-  before the thread's latest activity, or summarized by an older prompt
-  version), defined once for the listing, the count and the coverage reading so
-  they cannot drift.
+  before the thread's latest activity, or summarized by an older prompt version),
+  defined once for the listing, the count and the coverage reading so they cannot
+  drift.
 - **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
-  is the storage guard: a past incident stored a "Prompt is too long" error as
-  a summary through a pipeline that skipped the exit-code gate, so the storage
-  contract itself refuses error-shaped or fragment-length text.
-  `writeSummary` stamps `source_last_ts` from the moment the transcript was
-  rendered, not when the model returned: a call takes minutes, and messages
-  indexed in between must stay stale rather than be marked covered by a summary
-  that never saw them. `searchSummaryRoots` is the single owner of the
-  summaries_fts query shape, shared by `relevant`'s summary tier and
-  `digest search`; `searchSummaries` attaches display identity through
-  `attachThreadIdentity`, which is what lets a summary outlive its
-  sessions rows.
-- **`config.ts`** resolves the digest environment (`CEREBRO_DIGEST_MODEL`,
-  `CEREBRO_DIGEST_MODEL_LARGE`, `CEREBRO_DIGEST_HAIKU_MAX_CHARS`,
-  `CEREBRO_DIGEST_TIMEOUT_MS`, `CEREBRO_CLAUDE_BIN`) into one `DigestConfig`.
-  The CLI edge calls it once per invocation and passes the result down, so
-  nothing in the pipeline reads `process.env`: the tiering, the timeout and the
-  binary path are arguments, and a test supplies them directly instead of
-  mutating the process's environment and restoring it.
-
-  Reading the environment *at* that edge is deliberate and is where it stops.
-  The config does not move onto the command context next to `now`, `cwd` and
-  `resolveGit`: those three are ambient to every command, while a digest config
-  would teach the shared context about one command group, and the next such
-  need would add another field. The cost is paid in `test/cli.test.ts`, where
-  the tests that assert the shipped tiering clear the overrides in a
-  `beforeEach` because they drive `runCli` and env is the contract they are
-  testing.
+  is the storage guard: a past incident stored a "Prompt is too long" error as a
+  summary through a pipeline that skipped the exit-code gate, so the storage
+  contract itself refuses error-shaped or fragment-length text. `writeSummary`
+  stamps `source_last_ts` from when the transcript was rendered, not when the
+  model returned: a call takes minutes, and messages indexed in between must stay
+  stale rather than be marked covered by a summary that never saw them.
+  `searchSummaryRoots` owns the summaries_fts query shape, shared by `relevant`'s
+  summary tier and `digest search`.
+- **`config.ts`** resolves the digest environment into one `DigestConfig` at the
+  CLI edge, so nothing in the pipeline reads `process.env` and a test supplies the
+  tiering, timeout and binary path directly. It does not move onto the command
+  context next to `now`, `cwd` and `resolveGit`: those three are ambient to every
+  command, while a digest config would teach the shared context about one command
+  group, and the next such need would add another field.
 - **`run.ts`** is the summarize pipeline (render, tier, call, guard, store) and
   the one place cerebro spawns a model, behind the `Summarizer` seam
   (`createClaudeSummarizer` builds one that spawns the CLI with the configured
-  binary and timeout; tests pass a fake). The pipeline used to
-  live twice in bash, untestable and drifting. The spawn passes
-  `--no-session-persistence` so the one-shot run is not recorded as a session
-  the indexer would then have to skip, and enforces a generous timeout so a
-  wedged call cannot hang a drain forever (a timeout is an ordinary failure;
-  the thread stays stale and is retried). A `fatal` result (the binary cannot
-  be run at all) aborts a drain, since every remaining thread would fail the
-  same way; any other per-thread failure is counted and the drain continues.
-  An empty rendered transcript is never summarized: the prompt would dutifully
-  answer with the no-content form and storing it would permanently mark the
-  thread fresh.
+  binary and timeout; tests pass a fake). The pipeline used to live twice in
+  bash, untestable and drifting. The spawn passes `--no-session-persistence` so
+  the one-shot run is not recorded as a session the indexer would have to skip,
+  and enforces a generous timeout so a wedged call cannot hang a drain forever (a
+  timeout is an ordinary failure; the thread stays stale and is retried). A
+  `fatal` result, meaning the binary cannot be run at all, aborts a drain since
+  every remaining thread would fail the same way; any other per-thread failure is
+  counted and the drain continues. An empty rendered transcript is never
+  summarized: the prompt would answer with the no-content form and storing it
+  would permanently mark the thread fresh.
+
+`signature.ts` holds the prompt's opening sentence in a leaf module (no imports)
+so the indexer can recognize cerebro's own summarization transcripts without
+pulling in the digest layer. The directory has no barrel: every consumer imports
+the module it uses, and the one re-export file that existed was the only reason
+the signature had to sit outside the directory it belongs to.
 
 ## Skills (`src/skills.ts`)
 
-Counts how often each named command was invoked, out of the archive. It lives
-in cerebro because the markers do: a skill call is text inside a turn, one of
-the two forms is cerebro's own flattener rendering, and an outside consumer
-counting those strings would silently report every skill as unused the day the
-flattener changes. "Named command", not "skill", is the honest unit: the slash
-marker is Claude Code's expansion of any `/name`, built-ins included, and
-filtering them would be a denylist to maintain.
+Counts how often each named command was invoked, out of the archive. It lives in
+cerebro because the markers do: a skill call is text inside a turn, one of the two
+forms is cerebro's own flattener rendering, and an outside consumer counting those
+strings would silently report every skill as unused the day the flattener changes.
+"Named command", not "skill", is the honest unit: the slash marker is Claude
+Code's expansion of any `/name`, built-ins included, and filtering them would be a
+denylist to maintain.
 
 The counting rules deal with quoting: a marker only counts when it opens a line
 (a real slash expansion always does; mid-line occurrences are cerebro's own
 listings quoted back through a tool_result), the role decides which marker can
-appear at all, user turns that open with a flattened tool tag are machine
-output, and names are bounded by a shape regex so an unclosed tag cannot turn
-an arbitrary slice of transcript into a "name". The model-side payload is
-matched with a regex rather than JSON.parse because the tool-text cap truncates
-long argument lists mid-JSON, which would drop exactly the calls that carry
-arguments.
+appear at all, user turns opening with a flattened tool tag are machine output,
+and names are bounded by a shape regex so an unclosed tag cannot turn an
+arbitrary slice of transcript into a "name". The model-side payload is matched
+with a regex rather than JSON.parse because the tool-text cap truncates long
+argument lists mid-JSON, dropping exactly the calls that carry arguments.
 
 ## Doctor (`src/doctor.ts`)
 
-A read-only health report: doctor never repairs, prunes, optimizes or deploys;
-it reports and names the command that fixes each thing. A diagnostic that
-mutates is not trustworthy on an archive that is the only copy of deleted
-sessions. Only "fail" (corruption, a schema this build cannot speak) sets exit
-1, so doctor works as a cron guard without going red on warnings; "unknown" is
-what a check degrades to when its input is unreadable, each check
-independently. `quick_check` is the default integrity form because
-`integrity_check` walks every page and is slow on a large archive; `--full`
-opts in. The deployed-drift check spawns the deployed binary's `version` and
+A read-only health report: doctor never repairs, prunes, optimizes or deploys; it
+reports and names the command that fixes each thing. A diagnostic that mutates is
+not trustworthy on an archive that is the only copy of deleted sessions. Only
+"fail" (corruption, a schema this build cannot speak) sets exit 1, so doctor works
+as a cron guard without going red on warnings; "unknown" is what a check degrades
+to when its input is unreadable, each check independently. `quick_check` is the
+default integrity form because `integrity_check` walks every page and is slow on a
+large archive. The deployed-drift check spawns the deployed binary's `version` and
 compares build stamps, which is why `version` must answer without opening the
 archive.
 
@@ -476,9 +493,13 @@ of where transcripts are read from, and only that.
 
 ## CLI (`src/cli.ts`, `src/commands/`)
 
-The command shape (options as data, one dispatcher owning parsing, validation,
-db lifetime and rendering) is documented in `CLAUDE.md` ("How a command is
-shaped"). Details that live in the code:
+A command declares the flags it accepts as data (`commands/args.ts`) and returns
+a `CommandOutput`; it never prints, never chooses between JSON and a listing, and
+cannot read a flag it did not declare. `runCli` owns parsing, rejecting undeclared
+flags (`cerebro sessions --keep 3` used to parse fine and silently ignore
+`--keep`), coercion, the database lifetime, the ambient clock/cwd/git resolver,
+and rendering. `defineCommand` and `defineDbLessCommand` in `commands/command.ts`
+are the two builders, and `test/cli.test.ts` pins the per-command option tables.
 
 - The dispatch table is a Map so a command name colliding with an
   `Object.prototype` key can never resolve to an inherited function.
@@ -486,13 +507,6 @@ shaped"). Details that live in the code:
   `parseArgs` needs it before the command is known; a name declared with two
   different kinds throws at startup naming both sides, because resolving it
   silently would break the losing command for every user.
-- Rejecting undeclared flags is the check that used to be missing:
-  `cerebro sessions --keep 3` used to parse fine and silently ignore `--keep`.
-- The `CliIO` sink exists so tests can drive `runCli` with a capturing sink and
-  assert on lines and exit code without spawning the binary.
-- `CommandOutput.silentWhenEmpty` is the contract with context-injecting hooks:
-  silence means "inject nothing", and an empty-state line would end up in the
-  model's context.
 - `progress` exists for `digest drain` alone: it makes up to N model calls over
   minutes and its only witness is a log file someone tails; buffering the lines
   would make a hung call indistinguishable from a slow one.
@@ -500,44 +514,29 @@ shaped"). Details that live in the code:
   binary's `version`, and that answer must not depend on whether its archive is
   readable.
 - The ambient values a command reads (`now`, `cwd`, `resolveGit`) come from the
-  dispatcher, one per run, and are injectable. `resolveGit` is the
-  `GitResolver` seam: `index` hands it to `runIndex`, `recent` and `relevant`
-  scope by the root it returns, and a test drives the whole command with a
-  known repo state instead of depending on which directories on the machine
-  happen to be git repos.
+  dispatcher, one per run, and are injectable. `resolveGit` is the `GitResolver`
+  seam: `index` hands it to `runIndex`, `recent` and `relevant` scope by the root
+  it returns, and a test drives the whole command with a known repo state instead
+  of depending on which directories on the machine happen to be git repos.
 
-Renderers live with their commands; `render.ts` keeps only the shared
-vocabulary (id/time/path/size shorthands). CLI output is consumed by hooks and
-agents, so exact bytes are load-bearing: spacing, widths, truncation lengths
-and labels are pinned by tests. Timestamps are stored verbatim UTC and
-displayed in wall-clock time (default zone Europe/Stockholm, `CEREBRO_TZ`
-overrides); the sv-SE locale is not a preference but what produces the
-`YYYY-MM-DD HH:mm` shape the tests pin, so it stays fixed while the zone moves.
+Renderers live with their commands; `render.ts` keeps only the shared vocabulary
+(id/time/path/size shorthands). CLI output is consumed by hooks and agents, so
+exact bytes are load-bearing: spacing, widths, truncation lengths and labels are
+pinned by tests. Timestamps are stored verbatim UTC and displayed in wall-clock
+time (default zone Europe/Stockholm, `CEREBRO_TZ` overrides); the sv-SE locale is
+what produces the `YYYY-MM-DD HH:mm` shape the tests pin, so it stays fixed while
+the zone moves.
 
-## Backup (`src/backup.ts`)
+## Backup and build stamp
 
-The archive is the only copy of every session Claude Code has already deleted,
-so it has a backup story of its own. `VACUUM INTO` takes a consistent snapshot
-even against a concurrently-writing WAL database and produces a compacted
-single file. Pruning (`--keep`) only ever touches the default directory and the
-default name pattern, so a custom `--to` target or any other file living there
-is never deleted.
+`backup.ts` uses `VACUUM INTO` because it snapshots consistently even against a
+concurrently-writing WAL database; pruning (`--keep`) only ever touches the
+default directory and the default name pattern, so a custom `--to` target is
+never deleted. The runbook is in [operations.md](operations.md).
 
-## Build stamp (`src/build-stamp.ts`)
-
-The automated paths run a compiled binary, not the source, so a code change
-does not reach them until `bun run deploy`; without a stamp that drift is
-invisible. The three identifiers are substituted by `bun build --define` and
-deliberately do not exist in a source run (`typeof` on an undeclared identifier
-is legal), so `bun run src/cli.ts` reports itself as unbuilt rather than
-claiming a commit it does not have.
-
-`digest/signature.ts` holds the digest prompt's opening sentence in a leaf
-module (no imports) so the indexer can recognize cerebro's own summarization
-transcripts without pulling in the digest layer. Rewording that opening stops
-digest transcripts already on disk from being detected on a `--full` re-read.
-
-The digest directory has no barrel: every consumer imports the digest module it
-actually uses. One re-export file kept claiming the internals were private while
-the digest command imported `config.ts` straight through it, and it was the only
-reason the signature had to sit outside the directory it belongs to.
+The automated paths run a compiled binary, not the source, so a code change does
+not reach them until `bun run deploy`; without a stamp that drift is invisible.
+The three identifiers in `build-stamp.ts` are substituted by `bun build --define`
+and deliberately do not exist in a source run (`typeof` on an undeclared
+identifier is legal), so `bun run src/cli.ts` reports itself as unbuilt rather
+than claiming a commit it does not have.

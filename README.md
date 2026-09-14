@@ -145,7 +145,7 @@ all, and the rules it takes, is in
   both ride along in every `--json` listing (`sessions`, `recent`, `relevant`,
   `search`, `digest search`), read from the thread rollup so the five agree.
   Adding a source (e.g. a Codex CLI adapter) is described in
-  [docs/source-adapters.md](docs/source-adapters.md).
+  [docs/architecture.md](docs/architecture.md#sources-srcsources).
 - **Tool output is capped.** Prose and reasoning are kept in full, but each
   tool call and tool result is truncated to its first 1 KB (plus a
   `[+N chars truncated]` marker). The first kilobyte holds the searchable part
@@ -253,8 +253,7 @@ files, handed to the code as an adapter list rather than steered through the
 environment, never the real archive. CI runs `biome ci`,
 typecheck, tests and a compile build on every PR.
 
-`CLAUDE.md` has the working rules and the archive invariants,
-[docs/layout.md](docs/layout.md) maps the source tree module by module, and
+`CLAUDE.md` has the working rules and the archive invariants, and
 [docs/architecture.md](docs/architecture.md) explains how the modules fit
 together and why. Built on Bun (`bun:sqlite`, synchronous) with two small
 pure-JS dependencies and no native or network ones.

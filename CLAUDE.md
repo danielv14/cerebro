@@ -95,38 +95,11 @@ code.
 
 ## How a command is shaped
 
-Every command is a `defineCommand({ options, run })` under `src/commands/`
-(`digest` is a `CommandGroup` of such commands, one per action). A command
-declares the flags it accepts as data (`src/commands/args.ts`) and its run step
-maps validated arguments to a `CommandOutput`. It never prints, never chooses
-between JSON and a listing, and cannot read a flag it did not declare.
-
-A command that answers before the archive is opened uses the other builder,
-`defineDbLessCommand`. Its run step takes a `CommandContext`, which has no `db`,
-so reaching for one is a compile error rather than a crash; `defineCommand`'s
-takes a `CommandInput`, the same context plus the open database. Each builder
-sets `needsDb` itself, so the run step's type and what the dispatcher hands it
-cannot disagree. `version` is the only db-less command, and `test/cli.test.ts`
-pins that list.
-
-`runCli` owns the rest: parsing, rejecting a flag the command did not declare
-(this is why `cerebro sessions --keep 3` errors instead of being ignored),
-coercing and validating the declared ones, opening and closing the database for
-the commands that declared they need it,
-supplying the ambient clock, working directory and git resolver
-(`now`/`cwd`/`resolveGit` on the command input, injectable so a test can pin an
-instant or a repo state), and rendering the result. A bad argument is a `CliError` thrown from wherever the rule
-lives; runCli turns it into one message plus exit 1.
-
-When adding a command: declare its options, return data, and add it to the
-`commands` map plus the pinned option table in `test/cli.test.ts`. When adding a
-flag to an existing command, declare it on that command only. Reach for a new
-option builder in `args.ts` rather than validating inside a run step.
-
-The parser needs the whole option vocabulary as one table, so a name means one
-kind everywhere. `buildParserOptions` throws at startup when two commands
-disagree, naming both sides. Pick a different name rather than reusing one with a
-different kind.
+`src/commands/command.ts` is the shape: `defineCommand` (or `defineDbLessCommand`
+for a command that answers before the archive is opened) declares options as data
+and returns a `CommandOutput`; `runCli` owns parsing, validation, the database
+lifetime and rendering. `test/cli.test.ts` pins the per-command option tables and
+the db-less list, so adding a command or a flag means updating that table too.
 
 The `digest run` / `digest drain` pipeline (`src/digest/run.ts`) is the one place
 cerebro spawns a model. It sits behind the `Summarizer` seam:
@@ -136,6 +109,14 @@ summarizes on its own initiative; the hooks decide when. The pipeline reads no
 environment: `src/digest/config.ts` resolves `CEREBRO_DIGEST_*` and
 `CEREBRO_CLAUDE_BIN` into a `DigestConfig` once at the CLI edge, and the tiering,
 timeout and binary path travel down as arguments.
+
+## What earns a new command, flag or doc page
+
+A new command, digest action or flag needs a concrete occasion where you or the
+user reached for it and it was not there: name that session, hook failure or
+question in the PR. A new `docs/` page needs a question the code could not answer
+in reasonable time. Without one, the answer is no. Every verb costs a help entry,
+a README row, a test table and a page that can drift.
 
 ## Invariants you must not break
 
@@ -188,7 +169,7 @@ These are load-bearing. Violating one silently corrupts the archive.
 ## Data sources
 
 Sessions enter the archive through source adapters (`src/sources/`, contract and
-how-to in `docs/source-adapters.md`). Each adapter owns its discovery and its
+how-to in `docs/architecture.md`). Each adapter owns its discovery and its
 log-format normalization; the indexer and everything downstream are
 source-agnostic, and every session row records its `provider` and `model`.
 Claude Code is the only registered adapter:
@@ -220,21 +201,18 @@ README is the user guide; the operational half lives in `docs/`, so a hook or
 scheduling change belongs there rather than on the front page:
 
 - `docs/architecture.md` - how the modules fit together and why they are shaped
-  the way they are: the module-level story that used to live in source comments.
-- `docs/layout.md` - the inventory architecture.md is not: the source tree, one
-  line per module, plus the dependency rationale.
+  the way they are, the source-adapter contract included: the module-level story
+  that used to live in source comments.
 - `docs/hooks.md` - the `SessionEnd` (index + summarize on `/clear`) wiring, the
   deployed-binary rationale, and why cerebro ships no per-prompt injection hook.
 - `docs/scheduling.md` - `digest-stale-batch.sh`, its env vars and lock, the launchd
   plist and the cron equivalent.
-- `docs/digest.md` - the digest workflows: the latency measurement, the
-  one-command route, driving the verbs by hand, keeping coverage up.
+- `docs/digest.md` - the digest workflows: the latency measurement, summarizing,
+  keeping coverage up.
 - `docs/digest-model-tiering.md` - the size-to-model tiering, its token budget, the
   `[1m]` suffix requirement and the `CEREBRO_DIGEST_*` overrides.
 - `docs/operations.md` - backups and restore, `maintain`, and the `doctor` health
   report as a runbook (architecture.md has the design behind it).
-- `docs/source-adapters.md` - the SourceAdapter contract, the guarantees an adapter
-  must give, and the step-by-step for adding a new source (e.g. a Codex adapter).
 
 README keeps the command table as the single canonical list next to `src/help.ts`;
 do not grow a competing one under `docs/`. It is the user guide and stays short:

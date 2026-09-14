@@ -2,7 +2,7 @@ import type { SessionFile, SourceAdapter } from "./adapter.ts";
 import { createClaudeCodeAdapter } from "./claude-code.ts";
 
 // The registered sources, built from the roots the CLI edge resolved. Adding a
-// source: docs/source-adapters.md.
+// source: docs/architecture.md ("Sources").
 export const sourceAdapters = (claudeCodeProjects: string): SourceAdapter[] => [
   createClaudeCodeAdapter(claudeCodeProjects),
 ];
