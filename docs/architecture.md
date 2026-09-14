@@ -27,9 +27,9 @@ messages and the summaries.
 ## Sources (`src/sources/`)
 
 The source-adapter seam decouples the archive from any one AI tool. Each adapter
-owns two things: discovering its session files on disk and normalizing raw lines
-into the `Classified` events the indexer stores. Everything downstream is
-source-agnostic, and every session row records its `provider` and `model`.
+owns discovering its session files on disk and normalizing raw lines into the
+`Classified` events the indexer stores. Everything downstream is source-agnostic,
+and every session row records its `provider` and `model`.
 
 An adapter is two functions and an id (`SourceAdapter` in `adapter.ts`:
 `discover` walks the on-disk layout, `classifyLines` normalizes). The indexer
@@ -55,28 +55,26 @@ keys are ignored. For the message variant only `type`, `uuid` and `message` are
 load-bearing; the optional scalars stay `unknown` and are coerced in the
 mapping, so a changed field type degrades that field instead of dropping the
 whole turn. `flattenContent` renders block arrays as greppable text: prose and
-thinking pass through, tool blocks get a compact tag and a size cap. Tool
-plumbing dominates transcript bytes and ages worst, the head of the payload
-carries the searchable identifiers, and errors are exempt because a truncated
-stack trace is useless. `toolUseTag` is exported so `skills` derives its marker
+thinking pass through, while tool blocks get a compact tag and a size cap, because
+tool plumbing dominates transcript bytes and ages worst and the head of the
+payload already carries the searchable identifiers. Errors are exempt, a truncated
+stack trace being useless. `toolUseTag` is exported so `skills` derives its marker
 from the flattener instead of duplicating the string.
 
 ### What a new adapter must guarantee
 
 These map onto the archive invariants in `CLAUDE.md`; breaking one silently
 corrupts the archive. `adapter.ts` states them next to the types that carry them,
-and `test/sources.test.ts` has a complete fake adapter driven end to end through
-`runIndex` as a template.
+and `test/sources.test.ts` has a fake adapter driven end to end as a template.
 
 1. **Append-only files.** The scan layer advances a byte cursor per file and
    never re-reads old bytes on an incremental run. A source that rewrites
    earlier bytes in place cannot be indexed this way.
-2. **A stable, globally unique message id** (`Classified.uuid`). This is the
-   dedup key: re-reads and rebuilds are idempotent only because the same message
-   always classifies to the same id. Without native per-message ids, synthesize
-   one that is stable across re-reads and collision-free against other sources
-   (prefix it with the provider id), and never derive it from anything that
-   changes when the file is appended to.
+2. **A stable, globally unique message id** (`Classified.uuid`). This is the dedup
+   key: re-reads and rebuilds are idempotent only because the same message always
+   classifies to the same id. Without native ids, synthesize one that is stable
+   across re-reads and collision-free against other sources (prefix it with the
+   provider id), never derived from anything that changes on append.
 3. **A provider id you never rename** (`SourceAdapter.id`). It is stamped on
    every session row the adapter discovers, and the schema migration's backfill
    only heals a NULL provider, not a stale one, so a rename orphans history
@@ -91,9 +89,8 @@ and `test/sources.test.ts` has a complete fake adapter driven end to end through
    returns null everywhere and its sessions are all thread roots. Never
    fabricate links.
 6. **Tolerant parsing.** The log format will evolve under you, and a parser that
-   throws loses whole files. Validate with Valibot the way
-   `claude-code-jsonl.ts` does, fold whatever is searchable into `text`, and
-   drop the rest.
+   throws loses whole files. Validate with Valibot the way `claude-code-jsonl.ts`
+   does, fold whatever is searchable into `text`, and drop the rest.
 
 Titles, `model`, `cwd` and `gitBranch` are optional and wired through when
 present; titles use the shared priority scale (user-set 3 > tool-generated 2 >
@@ -101,12 +98,15 @@ derived summary 1). `SessionFile.projectDir` is the source's own grouping
 directory if it has one; nothing downstream reads it, so a source that groups
 differently omits it rather than inventing a value.
 
-Answer four questions against real logs before coding an adapter, and write the
-answers into its header comment: what is the dedup key, how do resumes link (if at
-all), what is the owning session of each file, and are there title events. What
-you do not need to touch: the schema, the indexer, the scan layer, search, threads
-or digests. If a new source seems to need a change there, reconsider the adapter
-design first.
+Adding one: answer four questions against real logs first and write the answers
+into the adapter's header comment (what is the dedup key, how do resumes link if
+at all, what is the owning session of each file, are there title events). Then
+implement it, register it in `sourceAdapters()` in `registry.ts`, add its id to
+the pinned provider list in `test/sources.test.ts`, and index the same fixtures
+through both `runIndex` and `dryRunIndex` asserting the counts agree, so dry-run
+parity (invariant #2) holds for your source too. What you do not need to touch:
+the schema, the indexer, the scan layer, search, threads or digests. If a new
+source seems to need a change there, reconsider the adapter design first.
 
 ### What stays Claude-specific on purpose
 
@@ -115,8 +115,8 @@ existed were backfilled with `provider = 'claude-code'`; their `model` is NULL
 until an `index --full` re-harvests it for files still on disk.
 
 - The digest pipeline spawns the `claude` CLI to *write* summaries, behind the
-  `Summarizer` seam. A different summarizer backend is a new `Summarizer`, not a
-  source adapter.
+  `Summarizer` seam; a different backend is a new `Summarizer`, not a source
+  adapter.
 - The hooks ([hooks.md](hooks.md)) are Claude Code's hook system; a source without
   an equivalent trigger relies on the scheduled reconciler
   ([scheduling.md](scheduling.md)). cerebro's own home stays `~/.claude/cerebro`
@@ -262,12 +262,12 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 - **`attachThreadIdentity`** is the step every ranked-hit path runs after dedup:
   hydrate the rollup once for the whole batch and pair each hit with its thread's
   identity row, leaving the caller to map that into its own result shape. It reads
-  that identity from the rollup, not the root's own sessions row: for a thread
-  with resumes the root's row carries the first session's `last_ts` and often no
-  title, which made `relevant` and `digest search` disagree with `sessions` and
-  `recent` on the same thread. There is one policy, the rollup row or an all-null
-  display, and a root with no rollup row keeps its hit rather than being dropped,
-  which is what lets a summary survive its sessions rows being deleted.
+  that identity from the rollup, not the root's own sessions row: for a thread with
+  resumes the root's row carries the first session's `last_ts` and often no title,
+  which made `relevant` and `digest search` disagree with `sessions` and `recent`
+  on the same thread. There is one policy, the rollup row or an all-null display,
+  and a root with no rollup row keeps its hit, which is what lets a summary survive
+  its sessions rows being deleted.
   `threadIdentity` is the single construction site for the shape, id included. `id`
   means the thread on every hit shape and every listing row; the message's own
   rowid is `message_id`.
@@ -364,8 +364,8 @@ sorter sees.
 question rather than a lookup. Two FTS tiers, ranked within each tier because
 bm25 scores are not comparable across the two indexes:
 
-1. **Curated summaries first**: dense and topical, so a match there is far
-   higher-signal than raw-transcript bm25.
+1. **Curated summaries first**: dense and topical, so a match there beats
+   raw-transcript bm25.
 2. **Raw transcripts** top up threads with no summary yet, so the command keeps
    working during backfill and for un-summarized recent sessions.
 
@@ -507,9 +507,9 @@ are the two builders, and `test/cli.test.ts` pins the per-command option tables.
   `parseArgs` needs it before the command is known; a name declared with two
   different kinds throws at startup naming both sides, because resolving it
   silently would break the losing command for every user.
-- `progress` exists for `digest drain` alone: it makes up to N model calls over
-  minutes and its only witness is a log file someone tails; buffering the lines
-  would make a hung call indistinguishable from a slow one.
+- `progress` emits before the command returns, for the long-running commands whose
+  only witness is a log file someone tails (`digest drain` makes up to N model
+  calls over minutes); buffering would make a hung call look like a slow one.
 - `version` is db-less on purpose: doctor's drift check spawns the deployed
   binary's `version`, and that answer must not depend on whether its archive is
   readable.

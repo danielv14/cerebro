@@ -180,7 +180,7 @@ is pure bm25). Threads in the same repo as `--cwd` (the git root, otherwise the 
 project path) additionally get their score multiplied by 1.5 in both tiers, worth
 roughly two months of freshness. It is a boost, never a filter: a clearly stronger match
 in another repo still shows up, which is the point for shared infrastructure. Without
-`--cwd` (and without a cwd in the hook payload) everything is ranked globally. Each hit
+`--cwd` everything is ranked globally. Each hit
 has a title, an opening prompt and a matching snippet. Default 3. Good when you want to
 know whether something similar has been done before.
 
@@ -331,8 +331,7 @@ the same database with its own FTS index. The summaries are dense and topical, s
 searching them finds "what was I working on around X" far better than bm25 against raw
 transcripts. cerebro owns the prompt, the size tiering and the storage format, and never
 summarizes on its own initiative: `digest run`/`digest drain` spawn the model only when
-someone asks for it, and the composable verbs (`input`/`prompt`/`write`) are still there
-for when you want to be the model yourself.
+someone asks for it.
 
 **When asked to find patterns or related work:** start with `cerebro digest search <query>`
 (dense summaries) and then go deeper with `cerebro show <id>`. If that comes back too
@@ -406,7 +405,7 @@ the thread stale so the reconciler retries it.
 The transcript handed to the model is size-bounded so it fits in a single model context.
 Short threads go in verbatim; a giant thread is trimmed (water-fill: short messages are
 kept whole, the longest essays are trimmed first) so it cannot overflow even a 1M context.
-cerebro owns the model choice and tiers on the size it measured where it rendered.
+cerebro picks the model from the transcript size it measured when rendering.
 Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
 -> `claude-sonnet-4-6[1m]` in one shot (1M context, flat pricing, no long-context premium),
 so that a thread of 400-600k tokens is summarized whole instead of truncated. The `[1m]`

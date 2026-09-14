@@ -15,10 +15,8 @@ code.
   network runtime deps.
 - **Valibot validates the untrusted I/O boundaries only**: the session JSONL events
   and content blocks in `sources/claude-code-jsonl.ts` (`classify`,
-  `flattenContent`) and the two hook
-  stdin payloads (`parseHookPayload` in `src/commands/relevant.ts`,
-  `parseSessionEndPayload` in `src/commands/digest.ts`). Anything that comes out
-  of SQLite or is
+  `flattenContent`) and the hook stdin payload (`parseSessionEndPayload` in
+  `src/commands/digest.ts`). Anything that comes out of SQLite or is
   built internally (the `db.query(...).get/all(...) as X` rows, `FileMeta`,
   `ThreadRow`, and the other internal shapes) stays typed by interface
   plus a cast. Do not wrap queries or internal structures in schemas: the cast

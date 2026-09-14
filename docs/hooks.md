@@ -68,8 +68,8 @@ Recall is on demand. `cerebro relevant <prompt>` and `cerebro recent` are comman
 `cerebro` skill runs when a question is worth answering from past work; nothing injects
 past threads into a conversation on its own.
 
-cerebro used to ship a `UserPromptSubmit` hook that ran `relevant --stdin --context` on
-every prompt. It was removed because it did not pay for the context it cost. Three
+cerebro used to ship a `UserPromptSubmit` hook that ran `relevant` on every prompt and
+fed the block it printed into the model's context. It was removed because it did not pay for the context it cost. Three
 measurements, taken on a 540-thread archive:
 
 - **It never stayed quiet.** 119 real prompts replayed through it produced 119 blocks
@@ -89,6 +89,5 @@ relevance would come from cwd alone, which is `cerebro recent` under another nam
 standing context belongs in the system prompt rather than the first conversation turn,
 which no hook event can write to.
 
-The flags that fed that hook (`--context` on `recent` and `relevant`, `--stdin` on
-`relevant`) are gone with it. A hook that wants the block can parse the JSON from
-`cerebro relevant "<prompt>" --json` itself.
+The flags that fed it went with it. A hook that wants the block back can build it from
+`cerebro relevant "<prompt>" --json`.

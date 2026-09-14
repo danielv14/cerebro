@@ -32,7 +32,7 @@ export const rejectSummaryReason = (text: string): string | null => {
 
 // `coversLastTs` is the thread's last_ts when the transcript was rendered:
 // messages indexed during the model call must stay stale rather than be stamped
-// as covered. Omitted, the current last_ts is used (right for `digest write`).
+// as covered. Omitted, the current last_ts is used.
 export const writeSummary = (
   db: Database,
   sessionId: string,

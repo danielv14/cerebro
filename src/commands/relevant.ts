@@ -33,10 +33,10 @@ export const relevantCommand = defineCommand({
   options,
   run: ({ db, args, rest, now, resolveGit }) => {
     const prompt = rest.join(" ");
-    // Deliberately NOT defaulted to the input's cwd: a manual `relevant "..."`
-    // must rank globally.
-    const cwd = args.cwd || null;
     if (!prompt) throw new CliError("relevant: missing <prompt>");
+    // Deliberately NOT defaulted to the invoking directory the way `recent` is:
+    // a manual `relevant "..."` must rank globally.
+    const cwd = args.cwd || null;
     const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
       repoRoot: resolveGit(cwd).root,
       cwd,

@@ -3,9 +3,6 @@ import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
-const recentThreadLine = (thread: ThreadRow): string =>
-  `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`;
-
 export const recentBlock = (
   rows: { thread: ThreadRow; opening: string | null }[],
   opts: { repoPath: string; days: number },
@@ -14,7 +11,9 @@ export const recentBlock = (
     `Recent sessions in ${projectName(opts.repoPath)} (last ${opts.days} days):`,
   ];
   for (const { thread, opening } of rows) {
-    lines.push(recentThreadLine(thread));
+    lines.push(
+      `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
+    );
     if (opening) lines.push(openedLine(opening));
   }
   lines.push('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
