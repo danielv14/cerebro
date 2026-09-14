@@ -1,80 +1,49 @@
 import { describe, expect, test } from "bun:test";
-import {
-  relevantBlock,
-  relevantContextIntro,
-  relevantFooter,
-} from "../../src/commands/relevant.ts";
-
-// The bytes --context puts in the model's context, so the exact string (and
-// especially the load-bearing guardrail + recall clauses) is pinned.
-// relevantBlock composes these; they are also pinned directly here as the external
-// contract.
-
-describe("relevant context block", () => {
-  test("intro carries the ignore-if-unrelated guardrail", () => {
-    expect(relevantContextIntro()).toBe(
-      "Possibly relevant past Claude Code sessions (from the cerebro archive, matched " +
-        "against this prompt). Background only; ignore any that do not actually relate.",
-    );
-  });
-
-  test("footer carries the recall instructions (shared by both branches)", () => {
-    expect(relevantFooter()).toBe(
-      "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
-        'or cerebro search "<terms>".',
-    );
-  });
-});
+import { relevantBlock } from "../../src/commands/relevant.ts";
 
 describe("relevantBlock", () => {
-  test("context branch: agent intro, opened + summary snippet, shared footer", () => {
-    const lines = relevantBlock(
-      [
-        {
-          id: "0123456789abcdef",
-          last_ts: "2026-01-15T08:00:00Z",
-          project_path: "/Users/foo/cerebro",
-          provider: "claude-code",
-          model: null,
-          title: "Some thread",
-          snippet: "matched bit",
-          opening: "the opening",
-          fromSummary: true,
-        },
-      ],
-      { context: true },
-    );
+  test("opened + summary-tier snippet under the header, recall footer", () => {
+    const lines = relevantBlock([
+      {
+        id: "0123456789abcdef",
+        last_ts: "2026-01-15T08:00:00Z",
+        project_path: "/Users/foo/cerebro",
+        provider: "claude-code",
+        model: null,
+        title: "Some thread",
+        snippet: "matched bit",
+        opening: "the opening",
+        fromSummary: true,
+      },
+    ]);
     expect(lines).toEqual([
-      relevantContextIntro(),
+      "Related past sessions:",
       "  01234567  2026-01-15  cerebro  Some thread",
       "      opened: the opening",
       "      summary: matched bit",
-      relevantFooter(),
+      "\nTo recall one: cerebro show <id> (add --full for the transcript), " +
+        'or cerebro search "<terms>".',
     ]);
   });
 
-  test("plain branch: human intro, (unknown)/(untitled), match-tier snippet", () => {
-    const lines = relevantBlock(
-      [
-        {
-          id: "0123456789abcdef",
-          last_ts: "2026-01-15T08:00:00Z",
-          project_path: null,
-          provider: "claude-code",
-          model: null,
-          title: null,
-          snippet: "matched bit",
-          opening: null,
-          fromSummary: false,
-        },
-      ],
-      { context: false },
-    );
-    expect(lines).toEqual([
+  test("(unknown)/(untitled) fallbacks and the match tier", () => {
+    const lines = relevantBlock([
+      {
+        id: "0123456789abcdef",
+        last_ts: "2026-01-15T08:00:00Z",
+        project_path: null,
+        provider: "claude-code",
+        model: null,
+        title: null,
+        snippet: "matched bit",
+        opening: null,
+        fromSummary: false,
+      },
+    ]);
+    expect(lines.slice(0, 3)).toEqual([
       "Related past sessions:",
       "  01234567  2026-01-15  (unknown)  (untitled)",
       "      match:  matched bit",
-      relevantFooter(),
     ]);
   });
 });

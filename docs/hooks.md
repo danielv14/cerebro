@@ -89,5 +89,6 @@ relevance would come from cwd alone, which is `cerebro recent` under another nam
 standing context belongs in the system prompt rather than the first conversation turn,
 which no hook event can write to.
 
-`relevant` still accepts `--context` and `--stdin`, so the block can be wired into a
-hook by hand. Nothing in cerebro does it for you.
+The flags that fed that hook (`--context` on `recent` and `relevant`, `--stdin` on
+`relevant`) are gone with it. A hook that wants the block can parse the JSON from
+`cerebro relevant "<prompt>" --json` itself.

@@ -36,14 +36,12 @@ import { sourceAdapters } from "./sources/registry.ts";
 export interface CliIO {
   log: (line: string) => void;
   error: (line: string) => void;
-  write: (text: string) => void; // raw stdout, no trailing newline
   setExitCode: (code: number) => void;
 }
 
 const realIO: CliIO = {
   log: (line) => process.stdout.write(`${line}\n`),
   error: (line) => process.stderr.write(`${line}\n`),
-  write: (text) => process.stdout.write(text),
   setExitCode: (code) => {
     process.exitCode = code;
   },
@@ -222,10 +220,9 @@ export const runCli = (
   };
 
   const emit = (output: CommandOutput): void => {
-    if (output.raw !== undefined) io.write(output.raw);
-    else if (values.json === true && "json" in output) io.log(JSON.stringify(output.json, null, 2));
+    if (values.json === true && "json" in output) io.log(JSON.stringify(output.json, null, 2));
     else if (output.lines && output.lines.length > 0) for (const line of output.lines) io.log(line);
-    else if (!output.silentWhenEmpty && output.empty !== undefined) io.log(output.empty);
+    else if (output.empty !== undefined) io.log(output.empty);
     if (output.exitCode) io.setExitCode(output.exitCode);
   };
 

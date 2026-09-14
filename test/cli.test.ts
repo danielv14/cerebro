@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { buildParserOptions, type CliEnv, type CliIO, commands, runCli } from "../src/cli.ts";
 import { flag, positiveInt, text } from "../src/commands/args.ts";
 import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
-import { parseHookPayload } from "../src/commands/relevant.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
 import type { GitResolver } from "../src/git.ts";
@@ -25,14 +24,10 @@ import {
 const makeIO = () => {
   const logs: string[] = [];
   const errs: string[] = [];
-  let raw = "";
   let exitCode = 0;
   const io: CliIO = {
     log: (line) => logs.push(line),
     error: (line) => errs.push(line),
-    write: (text) => {
-      raw += text;
-    },
     setExitCode: (code) => {
       exitCode = code;
     },
@@ -41,44 +36,11 @@ const makeIO = () => {
     io,
     logs,
     errs,
-    get raw() {
-      return raw;
-    },
     get exitCode() {
       return exitCode;
     },
   };
 };
-
-describe("parseHookPayload (relevant --stdin)", () => {
-  test("reads the prompt and the cwd from a valid payload", () => {
-    expect(parseHookPayload('{"prompt":"how did the migration go","cwd":"/repo"}')).toEqual({
-      prompt: "how did the migration go",
-      cwd: "/repo",
-    });
-  });
-
-  test("degrades to an empty prompt when the field is missing", () => {
-    expect(parseHookPayload('{"cwd":"/repo"}')).toEqual({ prompt: "", cwd: "/repo" });
-  });
-
-  test("degrades to an empty prompt when the field is not a string", () => {
-    expect(parseHookPayload('{"prompt":42}')).toEqual({ prompt: "", cwd: null });
-  });
-
-  test("degrades to no cwd when it is missing, empty, or not a string (#88)", () => {
-    // No cwd means `relevant` ranks globally rather than boosting a repo.
-    expect(parseHookPayload('{"prompt":"p"}')).toEqual({ prompt: "p", cwd: null });
-    expect(parseHookPayload('{"prompt":"p","cwd":""}')).toEqual({ prompt: "p", cwd: null });
-    // A non-string cwd fails the whole schema, so the prompt degrades too.
-    expect(parseHookPayload('{"prompt":"p","cwd":42}')).toEqual({ prompt: "", cwd: null });
-  });
-
-  test("degrades to an empty prompt and no cwd on malformed JSON", () => {
-    expect(parseHookPayload("{not json")).toEqual({ prompt: "", cwd: null });
-    expect(parseHookPayload("")).toEqual({ prompt: "", cwd: null });
-  });
-});
 
 describe("option declarations", () => {
   // The accepted vocabulary of every command, pinned. The dispatcher derives what
@@ -88,8 +50,8 @@ describe("option declarations", () => {
     index: ["dry-run", "full", "rebuild"],
     search: ["all", "branch", "json", "limit", "project", "prose", "role", "since"],
     sessions: ["branch", "json", "limit", "project", "since"],
-    recent: ["context", "cwd", "days", "json", "limit"],
-    relevant: ["context", "cwd", "json", "limit", "stdin"],
+    recent: ["cwd", "days", "json", "limit"],
+    relevant: ["cwd", "json", "limit"],
     show: ["full", "json", "range"],
     stats: ["json"],
     skills: ["json", "limit", "since"],
@@ -100,10 +62,6 @@ describe("option declarations", () => {
     "digest stale": ["ids", "json", "limit"],
     "digest run": ["stdin"],
     "digest drain": ["limit"],
-    "digest prompt": [],
-    "digest input": [],
-    "digest model": ["bytes"],
-    "digest write": ["model"],
     "digest search": ["json", "limit"],
     "digest show": ["json"],
   };
@@ -269,12 +227,12 @@ describe("runCli", () => {
   });
 
   test("a flag another command owns is rejected, not swallowed (#105)", () => {
-    // --keep is backup's, --range is show's, --bytes is digest model's. Each used
-    // to parse fine for any command and then be ignored in silence.
+    // --keep is backup's, --range is show's, --days is recent's. Each used to
+    // parse fine for any command and then be ignored in silence.
     for (const args of [
       ["sessions", "--keep", "3"],
       ["sessions", "--range", "1..2"],
-      ["stats", "--bytes", "5"],
+      ["stats", "--days", "5"],
       ["maintain", "--json"],
     ]) {
       const cap = makeIO();
@@ -287,8 +245,8 @@ describe("runCli", () => {
 
   test("a flag another digest action owns is rejected per action", () => {
     const cap = makeIO();
-    cli(["digest", "search", "--bytes", "5"], cap.io, () => memDb());
-    expect(cap.errs.join("\n")).toContain("Unknown option --bytes for `cerebro digest search`");
+    cli(["digest", "search", "--ids"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain("Unknown option --ids for `cerebro digest search`");
     expect(cap.exitCode).toBe(1);
   });
 
@@ -310,13 +268,6 @@ describe("runCli", () => {
     const cap = makeIO();
     cli(["show"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("show: missing <session-id>");
-    expect(cap.exitCode).toBe(1);
-  });
-
-  test("digest input without an id fails with its own label via the same helper", () => {
-    const cap = makeIO();
-    cli(["digest", "input"], cap.io, () => memDb());
-    expect(cap.errs.join("\n")).toContain("digest input: missing <session-id>");
     expect(cap.exitCode).toBe(1);
   });
 
@@ -629,93 +580,6 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
-  test("digest input writes the raw transcript to io.write (not log)", () => {
-    writeSession(env.projects, "-repo", "SESS", [
-      userMsg("SESS", "u1", "the body text", { timestamp: ts(0) }),
-    ]);
-    const cap = makeIO();
-    cli(["digest", "input", "SESS"], cap.io, seeded());
-    expect(cap.raw).toContain("the body text");
-    expect(cap.logs).toEqual([]); // raw stdout, never a logged line
-    expect(cap.exitCode).toBe(0);
-  });
-
-  // `digest model` reports the tiering the CLI edge resolved, so these assert the
-  // shipped defaults and have to run with the digest overrides cleared: a
-  // developer or CI box that exports them would otherwise flip the expected model.
-  // Cleared once for the group rather than per test, so there is one place to get
-  // the restore right.
-  describe("digest model", () => {
-    const TIERING_KEYS = [
-      "CEREBRO_DIGEST_MODEL",
-      "CEREBRO_DIGEST_MODEL_LARGE",
-      "CEREBRO_DIGEST_HAIKU_MAX_CHARS",
-    ];
-    let savedTiering: (string | undefined)[];
-
-    beforeEach(() => {
-      savedTiering = TIERING_KEYS.map((key) => process.env[key]);
-      for (const key of TIERING_KEYS) delete process.env[key];
-    });
-    afterEach(() => {
-      TIERING_KEYS.forEach((key, i) => {
-        const value = savedTiering[i];
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      });
-    });
-
-    test("prints the tier-picked model for a small thread", () => {
-      writeSession(env.projects, "-repo", "SESS", [
-        userMsg("SESS", "u1", "short thread", { timestamp: ts(0) }),
-      ]);
-      const cap = makeIO();
-      cli(["digest", "model", "SESS"], cap.io, seeded());
-      expect(cap.logs.join("\n")).toBe("claude-haiku-4-5");
-      expect(cap.exitCode).toBe(0);
-    });
-
-    test("without an id fails via the shared helper", () => {
-      const cap = makeIO();
-      cli(["digest", "model"], cap.io, () => memDb());
-      expect(cap.errs.join("\n")).toContain("digest model: missing <session-id>");
-      expect(cap.exitCode).toBe(1);
-    });
-
-    test("--bytes tiers on the given size without a session id (#47)", () => {
-      const small = makeIO();
-      cli(["digest", "model", "--bytes", "100"], small.io, () => memDb());
-      expect(small.logs.join("\n")).toBe("claude-haiku-4-5");
-      expect(small.exitCode).toBe(0);
-
-      const large = makeIO();
-      cli(["digest", "model", "--bytes", "5000000"], large.io, () => memDb());
-      expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
-      expect(large.exitCode).toBe(0);
-    });
-
-    test("--bytes rejects a non-numeric size", () => {
-      const cap = makeIO();
-      cli(["digest", "model", "--bytes", "lots"], cap.io, () => memDb());
-      expect(cap.errs.join("\n")).toContain("--bytes must be a non-negative integer");
-      expect(cap.exitCode).toBe(1);
-    });
-
-    test("an override in the environment still reaches the tiering", () => {
-      // The other cases clear the env; this one proves the clearing is a test
-      // fixture and not the CLI ignoring the overrides.
-      process.env.CEREBRO_DIGEST_MODEL = "tiny-model";
-      process.env.CEREBRO_DIGEST_HAIKU_MAX_CHARS = "50";
-      const small = makeIO();
-      cli(["digest", "model", "--bytes", "10"], small.io, () => memDb());
-      expect(small.logs.join("\n")).toBe("tiny-model");
-
-      const large = makeIO();
-      cli(["digest", "model", "--bytes", "100"], large.io, () => memDb());
-      expect(large.logs.join("\n")).toBe("claude-sonnet-4-6[1m]");
-    });
-  });
-
   test("digest show prints a stored summary", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
@@ -757,31 +621,6 @@ describe("runCli", () => {
     // No "All threads are summarized" line in machine mode, so the hook's
     // `[ -n "$ids" ]` guard reads empty output as a clean backlog.
     expect(cap.logs).toEqual([]);
-    expect(cap.exitCode).toBe(0);
-  });
-
-  test("recent --context emits the agent-facing block with guardrail and recall clauses", () => {
-    writeSession(env.projects, "-repo", "SESS", [
-      userMsg("SESS", "u1", "some work", { timestamp: ts(0) }),
-    ]);
-    const cap = makeIO();
-    // /repo is not a real git repo, so recent falls back to project_path matching. The
-    // pinned instant is what makes the default 14-day window cover the fixture's
-    // fixed-base timestamps; no oversized --days needed.
-    cli(["recent", "--cwd", "/repo", "--context"], cap.io, seeded(), { now: NOW });
-    const out = cap.logs.join("\n");
-    expect(out).toContain("Recent Claude Code sessions in this repo");
-    expect(out).toContain("Background only; ignore if unrelated to the current task.");
-    expect(out).toContain("cerebro show <id>");
-    expect(out).toContain('cerebro search "<terms>"');
-    expect(cap.exitCode).toBe(0);
-  });
-
-  test("recent --context is silent when there are no matching sessions", () => {
-    const cap = makeIO();
-    cli(["recent", "--cwd", "/repo", "--context"], cap.io, () => memDb(), { now: NOW });
-    expect(cap.logs).toEqual([]);
-    expect(cap.errs).toEqual([]);
     expect(cap.exitCode).toBe(0);
   });
 
@@ -920,29 +759,6 @@ describe("runCli", () => {
     cli(["recent", "--cwd", "/repo", "--days", "0"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("--days must be a positive number");
     expect(cap.exitCode).toBe(1);
-  });
-
-  test("relevant --context emits the agent-facing block with guardrail and recall clauses", () => {
-    writeSession(env.projects, "-repo", "SESS", [
-      userMsg("SESS", "u1", "indexing sqlite performance tuning", { timestamp: ts(0) }),
-    ]);
-    const cap = makeIO();
-    cli(["relevant", "sqlite performance", "--context"], cap.io, seeded());
-    const out = cap.logs.join("\n");
-    expect(out).toContain("Possibly relevant past Claude Code sessions");
-    expect(out).toContain("ignore any that do not actually relate.");
-    expect(out).toContain("To recall one: cerebro show <id>");
-    expect(cap.exitCode).toBe(0);
-  });
-
-  test("relevant --context is silent when nothing matches", () => {
-    writeSession(env.projects, "-repo", "SESS", [
-      userMsg("SESS", "u1", "totally unrelated content", { timestamp: ts(0) }),
-    ]);
-    const cap = makeIO();
-    cli(["relevant", "zzzqqq nevermatches", "--context"], cap.io, seeded());
-    expect(cap.logs).toEqual([]);
-    expect(cap.exitCode).toBe(0);
   });
 
   test("relevant --cwd boosts threads from that repo (#88)", () => {

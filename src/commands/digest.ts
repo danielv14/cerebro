@@ -1,11 +1,6 @@
 import * as v from "valibot";
 import { type DigestConfig, digestConfigFromEnv } from "../digest/config.ts";
-import {
-  buildDigestInput,
-  DIGEST_PROMPT,
-  DIGEST_PROMPT_VERSION,
-  pickDigestModel,
-} from "../digest/prompt.ts";
+import { DIGEST_PROMPT_VERSION } from "../digest/prompt.ts";
 import {
   createClaudeSummarizer,
   type DigestOutcome,
@@ -16,15 +11,12 @@ import {
 import { type StaleThread, staleThreads } from "../digest/stale.ts";
 import {
   getSummary,
-  rejectSummaryReason,
   type StoredSummary,
   type SummaryHit,
   searchSummaries,
-  writeSummary,
 } from "../digest/store.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import { threadMessages } from "../thread.ts";
-import { CliError, flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
+import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
@@ -78,9 +70,6 @@ export const digestShow = (summary: StoredSummary): string[] => {
 
 export const noSummaryHint = (sessionId: string): string =>
   `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`;
-
-export const summarySaved = (root: string, chars: number): string =>
-  `Saved summary for thread ${shortId(root)} (${chars} chars).`;
 
 export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   const id = shortId(outcome.root);
@@ -140,8 +129,7 @@ const limitOption = positiveInt();
 export const digestCommand: CommandGroup = {
   unknownAction: (action) =>
     `digest: unknown action "${action ?? ""}". ` +
-    "Use: stale | run <id> | drain | prompt | input <id> | model <id> | write <id> | " +
-    "search <query> | show <id>",
+    "Use: stale | run <id> | drain | search <query> | show <id>",
 
   subcommands: {
     stale: defineCommand({
@@ -196,45 +184,6 @@ export const digestCommand: CommandGroup = {
           // that could not proceed at all is an error.
           exitCode: result.aborted ? 1 : 0,
         };
-      },
-    }),
-
-    prompt: defineCommand({
-      options: {} satisfies OptionTable,
-      run: () => ({ lines: [DIGEST_PROMPT] }),
-    }),
-
-    input: defineCommand({
-      options: {} satisfies OptionTable,
-      run: ({ db, rest }) => ({
-        raw: buildDigestInput(threadMessages(db, resolveOrThrow(db, rest[0], "digest input"))),
-      }),
-    }),
-
-    model: defineCommand({
-      options: {
-        bytes: numeric({ integer: true, min: 0, label: "a non-negative integer" }),
-      } satisfies OptionTable,
-      run: ({ db, args, rest }) => {
-        const { models } = digestConfigFromEnv();
-        if (args.bytes !== undefined) return { lines: [pickDigestModel(args.bytes, models)] };
-        const input = buildDigestInput(
-          threadMessages(db, resolveOrThrow(db, rest[0], "digest model")),
-        );
-        return { lines: [pickDigestModel(Buffer.byteLength(input, "utf8"), models)] };
-      },
-    }),
-
-    write: defineCommand({
-      options: { model: text() } satisfies OptionTable,
-      run: ({ db, args, rest }) => {
-        const sessionId = resolveOrThrow(db, rest[0], "digest write");
-        const summary = readStdin().trim();
-        if (!summary) throw new CliError("digest write: no summary text on stdin");
-        const rejected = rejectSummaryReason(summary);
-        if (rejected) throw new CliError(`digest write: rejected: ${rejected}`);
-        const root = writeSummary(db, sessionId, summary, args.model ?? null);
-        return { lines: [summarySaved(root, summary.length)] };
       },
     }),
 

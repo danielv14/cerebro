@@ -198,22 +198,13 @@ cerebro digest run <id>                     # summarize one thread: render, pick
                                             #   call it, check the output, store it
 cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
                                             #   (default 8); one failure never aborts the run
-cerebro digest prompt                       # print the canonical summarization prompt
-cerebro digest input <id>                   # print the size-bounded transcript to summarize
-cerebro digest model <id> | --bytes N       # print the model the size tiering would pick
-                                            #   (--bytes: tier an already-measured size
-                                            #    without re-rendering the transcript)
-cerebro digest write <id> [--model M]       # store a summary for a thread (read from stdin;
-                                            #   rejects error-looking or too-short input with
-                                            #   exit 1 so the thread stays stale and is retried)
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```
 
 `digest run` does the whole sequence in one command and is what the hooks call;
 `digest drain` does it for the stalest N. [docs/digest.md](docs/digest.md) covers
-the workflows: what summaries buy in lookup latency, how to drive the steps
-yourself or summarize inline as an agent, and how coverage is kept up.
+what summaries buy in lookup latency and how coverage is kept up.
 
 ## Automation
 
