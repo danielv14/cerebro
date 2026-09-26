@@ -36,16 +36,16 @@ export const showOutline = (sessionId: string, messages: ThreadMessage[]): strin
   return lines;
 };
 
-export const showFull = (sessionId: string, messages: ThreadMessage[]): string[] => {
-  const lines: string[] = [threadHeader(sessionId, messages.length)];
-  for (const message of messages) {
-    const tag = message.is_sidechain ? " · subagent" : "";
-    lines.push(`──── ${message.role}${tag} · ${shortTime(message.ts)} ────`);
-    lines.push(message.text);
-    lines.push("");
-  }
-  return lines;
+// `label` precedes the role in the block's rule line: empty, or "#N ".
+const messageBlock = (message: ThreadMessage, label = ""): string[] => {
+  const tag = message.is_sidechain ? " · subagent" : "";
+  return [`──── ${label}${message.role}${tag} · ${shortTime(message.ts)} ────`, message.text, ""];
 };
+
+export const showFull = (sessionId: string, messages: ThreadMessage[]): string[] => [
+  threadHeader(sessionId, messages.length),
+  ...messages.flatMap((message) => messageBlock(message)),
+];
 
 export const showRange = (
   sessionId: string,
@@ -53,16 +53,10 @@ export const showRange = (
   opts: { from: number; total: number },
 ): string[] => {
   const to = opts.from + slice.length - 1;
-  const lines: string[] = [
+  return [
     `Thread ${shortId(sessionId)}  showing ${opts.from}..${to} of ${opts.total} message(s)\n`,
+    ...slice.flatMap((message, i) => messageBlock(message, `#${opts.from + i} `)),
   ];
-  slice.forEach((message, i) => {
-    const tag = message.is_sidechain ? " · subagent" : "";
-    lines.push(`──── #${opts.from + i} ${message.role}${tag} · ${shortTime(message.ts)} ────`);
-    lines.push(message.text);
-    lines.push("");
-  });
-  return lines;
 };
 
 export interface GrepMatch extends ThreadMessage {

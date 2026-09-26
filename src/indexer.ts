@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
+import { count } from "./db.ts";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
 import { reattachSummaries } from "./digest/store.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
-import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
+import { eachIndexableFile, orphanedCursorPaths, type ScannedFile } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
 import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
@@ -242,12 +243,13 @@ export interface IndexResult {
 }
 
 // cerebro's own headless summarization run: its first turn is the digest prompt
-// as a user message. Callers gate on plan.start === 0, so this never inspects a
-// mid-file incremental read whose first line is an arbitrary turn.
+// as a user message. Only a read from byte 0 can tell: a mid-file incremental read
+// opens on an arbitrary turn.
 const isDigestRunTranscript = (
-  lines: string[],
+  { file, plan, lines }: ScannedFile,
   classify: SourceAdapter["classifyLines"],
 ): boolean => {
+  if (file.kind !== "session" || plan.start !== 0) return false;
   for (const classified of classify(lines)) {
     if (classified.kind !== "message") continue;
     return classified.role === "user" && classified.text.startsWith(DIGEST_PROMPT_SIGNATURE);
@@ -269,7 +271,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   const readAll = (opts.full ?? false) || rebuild;
   if (readAll) db.run("DELETE FROM index_state");
 
-  const before = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
+  const before = count(db, "SELECT COUNT(*) AS c FROM messages");
   const adapters = opts.adapters;
   const resolveGit = opts.resolveGit ?? createGitResolver();
   const files = discoverAllSessionFiles(adapters);
@@ -288,13 +290,14 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
     db,
     files,
     readAll,
-    ({ file, plan, lines, cursor }) => {
+    (scanned) => {
+      const { file, plan, lines, cursor } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
       // A mid-write file is still saved (unlike the dry run's skip): recording
       // the new mtime lets a touched-but-unchanged file settle to "unchanged".
       // The return value is whether the file contributed lines.
       const tx = db.transaction((): boolean => {
-        if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
+        if (isDigestRunTranscript(scanned, classify)) {
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
           return false;
         }
@@ -323,7 +326,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
     })();
   }
 
-  const after = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
+  const after = count(db, "SELECT COUNT(*) AS c FROM messages");
   return { newMessages: after - before, filesScanned: files.length, filesIndexed, relinked };
 };
 
@@ -377,14 +380,15 @@ export const dryRunIndex = (
     db,
     files,
     full,
-    ({ file, plan, lines, cursor }) => {
+    (scanned) => {
+      const { file, plan, lines, cursor } = scanned;
       if (cursor === plan.start) {
         result.skippedFiles++;
         return;
       }
       const classify = adapterFor(file.provider, adapters).classifyLines;
 
-      if (file.kind === "session" && plan.start === 0 && isDigestRunTranscript(lines, classify)) {
+      if (isDigestRunTranscript(scanned, classify)) {
         result.skippedFiles++;
         return;
       }

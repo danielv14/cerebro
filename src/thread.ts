@@ -70,6 +70,19 @@ export interface ThreadRow {
   body_available: number;
 }
 
+// `conditions` are codebase literals, each with its `?` bound in order from `params`.
+const latestThreads = (
+  db: Database,
+  conditions: string[],
+  params: (string | number)[],
+  limit: number,
+): ThreadRow[] => {
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  return db
+    .query(`SELECT ${THREAD_ROW_COLUMNS} FROM threads ${where} ORDER BY last_ts DESC LIMIT ?`)
+    .all(...params, limit) as ThreadRow[];
+};
+
 export const listThreads = (
   db: Database,
   opts: { project?: string; branch?: string; since?: string; limit?: number } = {},
@@ -88,46 +101,20 @@ export const listThreads = (
     conditions.push("last_ts >= ?");
     params.push(opts.since);
   }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(opts.limit ?? 30);
-
-  return db
-    .query(
-      `SELECT ${THREAD_ROW_COLUMNS}
-       FROM threads
-       ${where}
-       ORDER BY last_ts DESC
-       LIMIT ?`,
-    )
-    .all(...params) as ThreadRow[];
+  return latestThreads(db, conditions, params, opts.limit ?? 30);
 };
 
 export const recentThreads = (
   db: Database,
   opts: { repoRoot?: string | null; cwd?: string; since: string; limit?: number },
 ): ThreadRow[] => {
-  let repoFilter: string;
-  const params: (string | number)[] = [opts.since];
-  if (opts.repoRoot) {
-    repoFilter = "git_root = ?";
-    params.push(opts.repoRoot);
-  } else if (opts.cwd) {
-    repoFilter = "project_path = ?";
-    params.push(opts.cwd);
-  } else {
-    return [];
-  }
-  params.push(opts.limit ?? 5);
-
-  return db
-    .query(
-      `SELECT ${THREAD_ROW_COLUMNS}
-       FROM threads
-       WHERE last_ts >= ? AND ${repoFilter}
-       ORDER BY last_ts DESC
-       LIMIT ?`,
-    )
-    .all(...params) as ThreadRow[];
+  const repo = opts.repoRoot
+    ? { sql: "git_root = ?", param: opts.repoRoot }
+    : opts.cwd
+      ? { sql: "project_path = ?", param: opts.cwd }
+      : null;
+  if (!repo) return [];
+  return latestThreads(db, ["last_ts >= ?", repo.sql], [opts.since, repo.param], opts.limit ?? 5);
 };
 
 export interface ThreadIdentity {

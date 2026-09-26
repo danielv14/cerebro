@@ -7,13 +7,16 @@ import { eng, removeStopwords, swe } from "stopword";
 export const escapeLike = (fragment: string): string =>
   fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
+// A quoted FTS5 string is always valid syntax, whatever the token holds.
+export const quoteFtsToken = (token: string): string => `"${token.replace(/"/g, '""')}"`;
+
 // OR-of-tokens rather than FTS5's implicit AND, which returns nothing for prose.
 export const toMatchQuery = (text: string): string | null => {
   const tokens = text.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [];
   const meaningful = removeStopwords(tokens, [...swe, ...eng]);
   const unique = [...new Set(meaningful)].slice(0, 40);
   if (unique.length === 0) return null;
-  return unique.map((token) => `"${token.replace(/"/g, '""')}"`).join(" OR ");
+  return unique.map(quoteFtsToken).join(" OR ");
 };
 
 // Produced by two adapters (docs/architecture.md, "FTS layer"): the query below

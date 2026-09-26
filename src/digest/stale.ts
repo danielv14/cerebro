@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { count } from "../db.ts";
 import { countThreads } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
@@ -52,11 +53,7 @@ export const staleThreads = (db: Database, limit = 50, drainAt?: number): StaleT
     }) as StaleThread[];
 
 export const countStaleThreads = (db: Database): number =>
-  (
-    db.query(`SELECT COUNT(*) AS c ${STALE_FROM_WHERE}`).get({
-      $version: DIGEST_PROMPT_VERSION,
-    }) as { c: number }
-  ).c;
+  count(db, `SELECT COUNT(*) AS c ${STALE_FROM_WHERE}`, { $version: DIGEST_PROMPT_VERSION });
 
 export interface SummaryCoverage {
   threads: number;
@@ -69,15 +66,16 @@ export interface SummaryCoverage {
 
 export const summaryCoverage = (db: Database): SummaryCoverage => ({
   threads: countThreads(db),
-  summarized: (
-    db
-      .query(`SELECT COUNT(*) AS c FROM summaries su JOIN threads t ON t.id = su.root_session_id`)
-      .get() as { c: number }
-  ).c,
+  summarized: count(
+    db,
+    "SELECT COUNT(*) AS c FROM summaries su JOIN threads t ON t.id = su.root_session_id",
+  ),
   stale: countStaleThreads(db),
-  failing: (
-    db
-      .query(`SELECT COUNT(*) AS c ${STALE_FROM_WHERE} AND df.root_session_id IS NOT NULL`)
-      .get({ $version: DIGEST_PROMPT_VERSION }) as { c: number }
-  ).c,
+  failing: count(
+    db,
+    `SELECT COUNT(*) AS c ${STALE_FROM_WHERE} AND df.root_session_id IS NOT NULL`,
+    {
+      $version: DIGEST_PROMPT_VERSION,
+    },
+  ),
 });

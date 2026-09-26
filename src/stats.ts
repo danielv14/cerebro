@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { count } from "./db.ts";
 import { countThreads } from "./thread.ts";
 
 export interface Stats {
@@ -23,16 +24,16 @@ export const archiveSpan = (db: Database): { first: string | null; last: string 
 };
 
 export const stats = (db: Database): Stats => {
-  const one = (sql: string): number => (db.query(sql).get() as { c: number }).c;
   const span = archiveSpan(db);
   return {
     threads: countThreads(db),
-    sessions: one("SELECT COUNT(*) AS c FROM sessions"),
-    messages: one("SELECT COUNT(*) AS c FROM messages"),
+    sessions: count(db, "SELECT COUNT(*) AS c FROM sessions"),
+    messages: count(db, "SELECT COUNT(*) AS c FROM messages"),
     // A NULL source_file is a subagent-only parent stub whose top-level transcript
     // was never seen; it is body-unavailable but nothing was deleted, so it must
     // not inflate this count.
-    deletedSources: one(
+    deletedSources: count(
+      db,
       "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
     ),
     firstTs: span.first,

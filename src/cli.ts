@@ -180,11 +180,7 @@ export const runCli = (
     label = name;
   }
 
-  const accepted = new Set([
-    ...Object.keys(GLOBAL_OPTIONS),
-    "help",
-    ...Object.keys(command.options),
-  ]);
+  const accepted = new Set([...Object.keys(GLOBAL_OPTIONS), ...Object.keys(command.options)]);
   for (const token of tokens) {
     if (token.kind === "option" && !accepted.has(token.name)) {
       fail(`Unknown option --${token.name} for \`cerebro ${label}\`. See cerebro --help.`);

@@ -66,18 +66,21 @@ export const relevantThreads = (
   // Insertion order is the final order and a root is only added once, so the
   // summary tier always outranks the raw tier for the same thread.
   const chosen = new Map<string, { snippet: string; fromSummary: boolean }>();
+  const choose = (hits: RankedHit[], fromSummary: boolean): void => {
+    for (const hit of hits) {
+      if (chosen.size >= limit) return;
+      if (!chosen.has(hit.id)) chosen.set(hit.id, { snippet: hit.snippet, fromSummary });
+    }
+  };
+  const rankOf = (hit: RankedHit): number =>
+    decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope));
 
   try {
-    const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10)
-      .map((hit) => ({
-        ...hit,
-        rank: decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
-      }))
-      .sort((a, b) => a.rank - b.rank);
-    for (const hit of summaryHits) {
-      if (chosen.size >= limit) break;
-      if (!chosen.has(hit.id)) chosen.set(hit.id, { snippet: hit.snippet, fromSummary: true });
-    }
+    const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
+    choose(
+      summaryHits.sort((a, b) => rankOf(a) - rankOf(b)),
+      true,
+    );
   } catch {
     // A malformed MATCH falls through to the raw tier.
   }
@@ -101,14 +104,9 @@ export const relevantThreads = (
       minRows: RAW_WINDOW_MIN_ROWS,
       rowsPerThread: RAW_WINDOW_ROWS_PER_ROOT,
       grow: limit > DEFAULT_RELEVANT_LIMIT,
-      rank: (hit) => decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope)),
+      rank: rankOf,
     });
-    for (const hit of kept) {
-      if (chosen.size >= limit) break;
-      if (!chosen.has(hit.id)) {
-        chosen.set(hit.id, { snippet: hit.snippet, fromSummary: false });
-      }
-    }
+    choose(kept, false);
   }
 
   const hits = [...chosen.entries()].map(([id, info]) => ({ id, ...info }));

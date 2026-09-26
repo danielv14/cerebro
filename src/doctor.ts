@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
-import { SCHEMA_VERSION } from "./db.ts";
+import { count, SCHEMA_VERSION } from "./db.ts";
 import { summaryCoverage } from "./digest/stale.ts";
 import { orphanedCursorPaths } from "./scan.ts";
 import type { SourceAdapter } from "./sources/adapter.ts";
@@ -97,7 +97,7 @@ const schemaCheck = (db: Database): Check => {
 // disagree with what `cerebro index` would remove.
 const orphanedCursors = (db: Database, adapters: SourceAdapter[]): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
-  const cursors = (db.query("SELECT COUNT(*) AS c FROM index_state").get() as { c: number }).c;
+  const cursors = count(db, "SELECT COUNT(*) AS c FROM index_state");
   if (cursors === 0) return check.ok("0 rows");
   const orphans = orphanedCursorPaths(db, discoverAllSessionFiles(adapters));
   if (orphans === null) {
@@ -109,11 +109,9 @@ const orphanedCursors = (db: Database, adapters: SourceAdapter[]): Check => {
 };
 
 const emptySessions = (db: Database): Check => {
-  const count = (
-    db.query("SELECT COUNT(*) AS c FROM sessions WHERE msg_count = 0").get() as { c: number }
-  ).c;
+  const empty = count(db, "SELECT COUNT(*) AS c FROM sessions WHERE msg_count = 0");
   return defineCheck({ key: "empty-sessions", group: "Archive", label: "empty sessions" }).ok(
-    count === 0 ? "0" : `${count} (hidden from listings, rows kept on purpose)`,
+    empty === 0 ? "0" : `${empty} (hidden from listings, rows kept on purpose)`,
   );
 };
 

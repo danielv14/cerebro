@@ -152,6 +152,9 @@ const migrate = (db: Database): void => {
   db.run(`UPDATE sessions SET provider = 'claude-code' WHERE provider IS NULL`);
 };
 
+export const count = (db: Database, sql: string, params: Record<string, string | number> = {}) =>
+  (db.query(sql).get(params) as { c: number }).c;
+
 export const dbFileSize = (path: string): number | null => {
   try {
     return fs.statSync(path).size;
