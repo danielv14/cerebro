@@ -1,4 +1,4 @@
-# Hooks (auto-index on /clear)
+# Hooks (auto-index on session end)
 
 Wiring cerebro into Claude Code: the one hook it ships, what it does, and why it runs
 a compiled binary. Kept out of the README so a flag change does not mean editing
@@ -7,7 +7,7 @@ catch-up job and [digest-model-tiering.md](digest-model-tiering.md) for how the
 summary model is picked.
 
 cerebro only runs when asked, so one Claude Code hook keeps it current without a
-background process: it re-indexes when you clear a session. (Claude Code deletes
+background process: it re-indexes when a session ends. (Claude Code deletes
 session files after `cleanupPeriodDays`, default 30; raise it in
 `~/.claude/settings.json` and index before then.)
 
@@ -28,10 +28,14 @@ tracks the repo live, but the hook runs this compiled copy, so a code
 change (or a digest-prompt change) does not reach the automated path until you re-run
 `bun run deploy`.
 
-## Index + summarize on /clear
+## Index + summarize on session end
 
-A `SessionEnd` hook with `matcher: "clear"` runs `summarize-on-clear.sh` the moment you
-clear a session. It indexes first, while the hook waits, so it captures the just-finished
+A `SessionEnd` hook runs `summarize-on-clear.sh` the moment a session ends, whether by
+`/clear`, `/resume`, exit or logout. The matcher lists every reason: with `"clear"` alone,
+a session you exit sits unindexed (invisible to `recent` and `relevant`) until the
+reconciler's next run, up to 6 hours later. The script keeps its old name because
+existing `settings.json` wiring points at it; nothing in it is specific to `/clear`. It
+indexes first, while the hook waits, so it captures the just-finished
 session immediately, and then starts `cerebro digest run --stdin` in the background,
 so `/clear` is never blocked by the model call. The script pipes the SessionEnd payload
 straight through: cerebro pulls the session id out of it and runs the whole summarize
@@ -42,7 +46,7 @@ store it). In `~/.claude/settings.json`:
 {
   "hooks": {
     "SessionEnd": [
-      { "matcher": "clear", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/summarize-on-clear.sh", "timeout": 120 } ] }
+      { "matcher": "clear|resume|logout|prompt_input_exit|other", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/summarize-on-clear.sh", "timeout": 120 } ] }
     ]
   }
 }
@@ -52,7 +56,7 @@ store it). In `~/.claude/settings.json`:
 anything not yet written to disk. The background summary is best-effort: if it dies
 (no auth, rate limit, killed on teardown), nothing is stored and `cerebro digest drain`
 retries the thread on its next run. To index
-on /clear without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
+on session end without auto-summarizing, point the hook at `~/.claude/cerebro/cerebro index`
 instead.
 
 The background summary spawns `claude -p --no-session-persistence` (override the binary
