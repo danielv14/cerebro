@@ -70,10 +70,10 @@ Timestamps are stored in UTC and shown in local time, `Europe/Stockholm` by
 default, and a `--since 2026-01-31` date means midnight in that same zone (an
 age like `--since 7d` or `2w` works too). Set `$CEREBRO_TZ` to any IANA zone
 name to change that (`CEREBRO_TZ=UTC cerebro sessions`); an unknown zone falls
-back to the default
-rather than erroring. The plain `TZ` variable is deliberately ignored: the hooks
-and scheduled jobs inherit environments cerebro does not control, and letting
-that silently change how the archive is displayed would be surprising.
+back to the default rather than erroring. The plain `TZ` variable is deliberately
+ignored: the hooks and scheduled jobs inherit environments cerebro does not
+control, and letting that silently change how the archive is displayed would be
+surprising.
 
 The database lives outside this repo on purpose: it is generated, machine-local
 data that grows large (tens of MB) and holds your private conversations word for
