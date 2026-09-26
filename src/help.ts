@@ -12,9 +12,10 @@ Usage:
   cerebro relevant <prompt> [--limit N] [--cwd P]
                                          Past threads relevant to a prompt (threads in
                                          --cwd's repo rank higher)
-  cerebro show <session-id> [--full] [--range A..B]
-                                         Show a thread (outline, full transcript, or
-                                         a verbatim slice in outline numbering)
+  cerebro show <session-id> [--full] [--range A..B] [--grep T]
+                                         Show a thread (outline, full transcript, a
+                                         verbatim slice in outline numbering, or the
+                                         turns containing T)
   cerebro stats                          Archive counts
   cerebro skills [--since D] [--limit N] [--json]
                                          How often each skill was invoked (both the
@@ -69,6 +70,8 @@ Options:
                   (a message that opens with prose and then calls a tool is kept)
   --all           search: every matching message instead of the best hit per thread
   --range <a..b>  show: only messages a through b (the outline / search #N numbering)
+  --grep <text>   show: only the turns containing text (case-insensitive substring),
+                  with their outline numbers
   --to <path>     backup: explicit target file (default: timestamped in backups/)
   --keep <n>      backup: prune oldest default-named backups beyond n
   --cwd <path>    recent: directory to scope by (default: current dir); relevant:

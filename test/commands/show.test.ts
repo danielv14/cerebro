@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { showFull, showOutline, showRange } from "../../src/commands/show.ts";
+import {
+  grepMessages,
+  showFull,
+  showGrep,
+  showOutline,
+  showRange,
+} from "../../src/commands/show.ts";
 
 describe("showOutline", () => {
   test("header, numbered one-line-per-message digest with subagent marker, footer", () => {
@@ -125,6 +131,45 @@ describe("showRange", () => {
       "──── #3 assistant · subagent · 2026-01-15 09:01 ────",
       "third message",
       "",
+    ]);
+  });
+});
+
+describe("show --grep (#211)", () => {
+  const message = (text: string, is_sidechain = 0) => ({
+    role: "user",
+    ts: "2026-01-15T08:00:00Z",
+    text,
+    session_id: "S",
+    is_sidechain,
+  });
+  const thread = [
+    message("set up the Limiter"),
+    message("unrelated"),
+    message("limiter window raised", 1),
+  ];
+
+  test("keeps the matching turns, case-insensitively, with their thread ordinals", () => {
+    expect(grepMessages(thread, "LIMITER").map((match) => match.ordinal)).toEqual([1, 3]);
+  });
+
+  test("renders the matches as outline lines under a count header", () => {
+    expect(
+      showGrep("0123456789abcdef", grepMessages(thread, "limiter"), {
+        needle: "limiter",
+        total: 3,
+      }),
+    ).toEqual([
+      'Thread 01234567  2 of 3 message(s) contain "limiter"\n',
+      "  1. user      2026-01-15 09:00  set up the Limiter",
+      "  3. user      2026-01-15 09:00  [subagent] limiter window raised",
+      "\nOpen one: cerebro show <id> --range <n>",
+    ]);
+  });
+
+  test("says so when nothing matches", () => {
+    expect(showGrep("0123456789abcdef", [], { needle: "nope", total: 3 })).toEqual([
+      'No message in thread 01234567 contains "nope".',
     ]);
   });
 });

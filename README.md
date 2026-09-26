@@ -40,9 +40,11 @@ cerebro sessions [--project P] [--branch B] [--since D] [--limit N]
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a prompt
                                             #   (threads in --cwd's repo rank higher)
-cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
-                                            #   (a long outline shows the first and last 50
-                                            #    messages with an omitted marker in between)
+cerebro show <session-id> [--full] [--range A..B] [--grep T]
+                                            # outline (default), full transcript, a slice,
+                                            #   or the turns containing T (a long outline
+                                            #   shows the first and last 50 messages with an
+                                            #   omitted marker in between)
 cerebro stats                               # archive counts
 cerebro skills [--since D] [--limit N]      # how often each skill was invoked
 cerebro doctor [--full]                     # read-only health report (docs/operations.md)

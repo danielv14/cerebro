@@ -195,7 +195,7 @@ Related past sessions:
 To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
 ```
 
-### `cerebro show <session-id> [--full] [--range A..B]`
+### `cerebro show <session-id> [--full] [--range A..B] [--grep T]`
 Shows a whole logical thread (root + all resumes + subagent turns), ordered
 chronologically. Outline by default; past 100 messages it shows the first and last
 50 with a marker line in between (`… N message(s) omitted (#A..#B), open a slice
@@ -204,8 +204,21 @@ and the tail how it ended without paying for every line. `--full` gives the
 verbatim transcript.
 `--range 12..18` (or a single number) gives a verbatim slice with the same numbering as
 the outline and as the `#N` markers in `search` hits, so you can jump straight to a hit
-in a huge thread without pulling the whole transcript. Subagent turns are tagged
-`[subagent]`.
+in a huge thread without pulling the whole transcript. `--grep T` lists only the turns
+whose text contains `T` (case-insensitive, plain substring), numbered the same way, which
+is how you find every place a long thread touched something the outline omits. Subagent
+turns are tagged `[subagent]`.
+
+```
+$ cerebro show a1b2c3d4 --grep localStorage
+Thread a1b2c3d4  3 of 162 message(s) contain "localStorage"
+
+  1. user      2026-02-12 15:02  Add a dark mode toggle to the settings page, persisted in localStorage …
+ 87. assistant 2026-02-12 16:05  [tool_use:Edit] {"file_path":"src/theme/ThemeProvider.tsx", … localStorage …
+113. assistant 2026-02-12 16:31  The toggle now persists via localStorage; running the test suite.
+
+Open one: cerebro show <id> --range <n>
+```
 
 Outline:
 ```

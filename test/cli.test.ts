@@ -52,7 +52,7 @@ describe("option declarations", () => {
     sessions: ["branch", "json", "limit", "project", "since"],
     recent: ["cwd", "days", "json", "limit"],
     relevant: ["cwd", "json", "limit"],
-    show: ["full", "json", "range"],
+    show: ["full", "grep", "json", "range"],
     stats: ["json"],
     skills: ["json", "limit", "since"],
     doctor: ["full", "json"],
@@ -290,6 +290,28 @@ describe("runCli", () => {
     expect(out).toContain("hello there");
     expect(out).toContain("Full transcript: cerebro show <id> --full");
     expect(cap.exitCode).toBe(0);
+  });
+
+  test("show --grep lists the matching turns, and --json carries their ordinals", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "tune the limiter", { timestamp: ts(0) }),
+      assistantMsg("SESS", "a1", "sure", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("SESS", "u2", "limiter again", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    const cap = makeIO();
+    cli(["show", "SESS", "--grep", "limiter"], cap.io, seeded());
+    expect(cap.logs.join("\n")).toContain('2 of 3 message(s) contain "limiter"');
+
+    const json = makeIO();
+    cli(["show", "SESS", "--grep", "limiter", "--json"], json.io, seeded());
+    const payload = JSON.parse(json.logs.join("\n"));
+    expect(payload.total).toBe(3);
+    expect(payload.matches.map((m: { ordinal: number }) => m.ordinal)).toEqual([1, 3]);
+
+    const mixed = makeIO();
+    cli(["show", "SESS", "--grep", "limiter", "--full"], mixed.io, seeded());
+    expect(mixed.errs.join("\n")).toContain("--grep cannot be combined with --full or --range");
+    expect(mixed.exitCode).toBe(1);
   });
 
   test("show --range prints a numbered verbatim slice (#58)", () => {
