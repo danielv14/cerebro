@@ -83,7 +83,8 @@ shows the **best hit per thread** (so a chatty thread does not fill every slot);
 `--all` gives every matching message. `--project P` filters on a substring of the
 project path (the thread's, so a resume without its own cwd is not lost), `--branch B`
 on a substring of the recorded git branch (thread-level too: a thread matches when any
-of its sessions was on the branch), `--since 2026-01-31` on timestamp.
+of its sessions was on the branch), `--since 2026-01-31` on timestamp (midnight in the
+display zone; an age like `--since 7d` or `--since 2w` counts back from now).
 
 Tool calls are flattened into the message text (`[tool_use:Bash] …`, `[tool_result] …`),
 which is good for finding commands and filenames but drowns prose. Two filters against
@@ -114,7 +115,7 @@ Lists threads, most recently active first. `--project P` filters on a substring 
 project path, `--branch B` on a substring of the recorded git branch (a thread matches
 when **any** of its sessions was on the branch, so work that started on master and
 moved to a branch in a resume is still found), `--since 2026-01-31` on the thread's
-last activity (same date format as `search --since`). Each row shows the thread's
+last activity (same date or age format as `search --since`). Each row shows the thread's
 branch as an `@` suffix when one was recorded, `+N resume(s)` for threads that were
 resumed and `[body deleted]` when the source file is gone but the archive remains.
 Default limit 30. Threads with no indexed turns (a session opened and closed right
@@ -447,8 +448,8 @@ stale.
   `$CEREBRO_DB`). It deliberately lives outside the git repo: it holds private
   conversations verbatim and grows large (tens of MB+).
 - **Time zone:** timestamps are stored as verbatim UTC and displayed in
-  `Europe/Stockholm`. `$CEREBRO_TZ` takes any IANA zone; an unknown zone falls back to
-  the default rather than crashing.
+  `Europe/Stockholm`, and `--since` dates are midnights in that zone. `$CEREBRO_TZ`
+  takes any IANA zone; an unknown zone falls back to the default rather than crashing.
 - **tool_use / tool_result** are flattened to greppable text (`[tool_use:Bash] {...}`,
   `[tool_result] ...`), so you can search for commands and file contents that were
   actually run. Each such block is capped at the first 1 KB (with a

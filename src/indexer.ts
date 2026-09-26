@@ -71,7 +71,7 @@ const ingestLines = (
       if (!meta.gitBranch && classified.gitBranch) meta.gitBranch = classified.gitBranch;
       if (classified.model) meta.model = classified.model;
     } else if (classified.kind === "title") {
-      if (classified.priority > meta.titlePriority) {
+      if (classified.priority >= meta.titlePriority) {
         meta.title = classified.title;
         meta.titlePriority = classified.priority;
       }

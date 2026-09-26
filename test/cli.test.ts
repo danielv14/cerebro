@@ -469,9 +469,37 @@ describe("runCli", () => {
     for (const since of ["2026-31-01", "2026-01-31foo", "2026-02-30"]) {
       const cap = makeIO();
       cli(["search", "limiter", "--since", since], cap.io, seeded());
-      expect(cap.errs.join("\n")).toContain("--since must be a valid ISO date");
+      expect(cap.errs.join("\n")).toContain(
+        "--since must be an ISO date like 2026-01-31 or an age",
+      );
       expect(cap.exitCode).toBe(1);
     }
+  });
+
+  test("search --since takes an age against the dispatch's instant (#210)", () => {
+    writeSession(env.projects, "-repo", "OLD", [
+      userMsg("OLD", "o1", "limiter old", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "NEW", [
+      userMsg("NEW", "n1", "limiter new", { timestamp: ts(5 * 86_400) }),
+    ]);
+    const cap = makeIO();
+    cli(["search", "limiter", "--since", "2d", "--json"], cap.io, seeded(), {
+      now: Date.parse(ts(6 * 86_400)),
+    });
+    const hits = JSON.parse(cap.logs.join("\n")) as { session_id: string }[];
+    expect(hits.map((hit) => hit.session_id)).toEqual(["NEW"]);
+  });
+
+  test("sessions --since means the display zone's midnight, not UTC's (#208)", () => {
+    // 23:30 UTC on Jan 1 is 00:30 on Jan 2 in Stockholm, which is how it is listed.
+    writeSession(env.projects, "-repo", "LATE", [
+      userMsg("LATE", "l1", "hello", { timestamp: "2026-01-01T23:30:00.000Z" }),
+    ]);
+    const cap = makeIO();
+    cli(["sessions", "--since", "2026-01-02", "--json"], cap.io, seeded());
+    const threads = JSON.parse(cap.logs.join("\n")) as { id: string }[];
+    expect(threads.map((thread) => thread.id)).toEqual(["LATE"]);
   });
 
   test("version prints the unstamped identity and never opens a db", () => {
@@ -527,7 +555,7 @@ describe("runCli", () => {
     const cap = makeIO();
     cli(["sessions", "--since", "2026-02-30"], cap.io, seeded());
     expect(cap.errs.join("\n")).toContain(
-      '--since must be a valid ISO date like 2026-01-31 (got "2026-02-30")',
+      '--since must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "2026-02-30")',
     );
     expect(cap.exitCode).toBe(1);
   });

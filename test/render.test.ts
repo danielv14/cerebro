@@ -28,6 +28,16 @@ describe("oneLine", () => {
     // 11 chars at max 10 -> 9 chars + "…" = 10 visible columns.
     expect(oneLine("abcdefghijk", 10)).toBe("abcdefghi…");
   });
+
+  test("never cuts a surrogate pair in half (#207)", () => {
+    const cut = oneLine("abcdefgh😀😀😀", 10);
+    expect(cut).toBe("abcdefgh😀…");
+    expect(cut.isWellFormed()).toBe(true);
+  });
+
+  test("counts an emoji as one character, so fitting text is left whole", () => {
+    expect(oneLine("😀😀😀😀😀😀", 6)).toBe("😀😀😀😀😀😀");
+  });
 });
 
 describe("shortTime", () => {

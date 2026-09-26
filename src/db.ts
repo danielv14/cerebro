@@ -6,7 +6,7 @@ import { THREADS_VIEW_DDL, threadsViewIsCurrent } from "./thread.ts";
 // Design notes: docs/architecture.md ("Database").
 
 // Bump whenever SCHEMA or migrate() changes, the threads view DDL included.
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // Per-connection, outside the version gate: busy_timeout/foreign_keys do not
 // persist, and journal_mode cannot be changed inside a transaction.
@@ -66,7 +66,6 @@ CREATE TABLE IF NOT EXISTS messages (
   is_sidechain INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_parent  ON messages(parent_uuid);
 CREATE INDEX IF NOT EXISTS idx_sessions_root    ON sessions(root_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_lastts  ON sessions(last_ts);
@@ -130,6 +129,13 @@ const migrate = (db: Database): void => {
   addColumnIfMissing(db, "index_state", "is_digest", "is_digest INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "sessions", "provider", "provider TEXT");
   addColumnIfMissing(db, "sessions", "model", "model TEXT");
+  // Here rather than in SCHEMA: it names is_sidechain, which a pre-sidechain
+  // archive only has after the ALTER above. It serves every session_id lookup
+  // and covers relinkThreads' first-turn scan, so it supersedes the old index.
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_messages_session_chain ON messages(session_id, is_sidechain)",
+  );
+  db.run("DROP INDEX IF EXISTS idx_messages_session");
   // Safe: everything indexed before the adapter seam came from Claude Code, and
   // new-code rows always carry their adapter's id.
   db.run(`UPDATE sessions SET provider = 'claude-code' WHERE provider IS NULL`);
@@ -147,9 +153,14 @@ export const openDb = (path: string): Database => {
   fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
   db.exec(CONNECTION_PRAGMAS);
-  const upToDate = (): boolean =>
-    (db.query("PRAGMA user_version").get() as { user_version: number }).user_version ===
-      SCHEMA_VERSION && threadsViewIsCurrent(db);
+  // A newer stamp counts as up to date: migrations are additive, so an older
+  // build (the frozen hook binary) works against the newer schema, whereas
+  // migrating would stamp it down and swap in its old threads view.
+  const upToDate = (): boolean => {
+    const version = (db.query("PRAGMA user_version").get() as { user_version: number })
+      .user_version;
+    return version > SCHEMA_VERSION || (version === SCHEMA_VERSION && threadsViewIsCurrent(db));
+  };
 
   if (!upToDate()) {
     // DDL, migrations and the stamp commit as ONE transaction, and the state is

@@ -86,6 +86,25 @@ describe("runDoctor", () => {
     expect(report.ok).toBe(false);
   });
 
+  test("a newer schema is still reported after a reopen through openDb (#199)", () => {
+    const path = join(env.claudeRoot, "archive.sqlite");
+    const first = openDb(path);
+    first.run(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+    first.close();
+
+    const reopened = openDb(path);
+    const report = runDoctor(reopened, path, {
+      deployedBinary,
+      settingsFile,
+      adapters: env.adapters,
+    });
+    reopened.close();
+    expect(byKey(report, "schema")).toMatchObject({
+      status: "fail",
+      remedy: "the database was written by a newer build; update this one",
+    });
+  });
+
   test("orphaned index_state rows are reported with the command that prunes them", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db, { adapters: env.adapters });

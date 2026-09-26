@@ -525,7 +525,10 @@ exact bytes are load-bearing: spacing, widths, truncation lengths and labels are
 pinned by tests. Timestamps are stored verbatim UTC and displayed in wall-clock
 time (default zone Europe/Stockholm, `CEREBRO_TZ` overrides); the sv-SE locale is
 what produces the `YYYY-MM-DD HH:mm` shape the tests pin, so it stays fixed while
-the zone moves.
+the zone moves. `src/tz.ts` owns the zone, because `--since` resolves a date to
+midnight in it: a date copied from a listing then means the day the listing
+showed. The option resolves to a UTC instant, so every query keeps comparing ISO
+strings.
 
 ## Backup and build stamp
 

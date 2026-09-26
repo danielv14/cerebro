@@ -54,6 +54,20 @@ describe("openDb schema versioning", () => {
     reopened.close();
   });
 
+  test("a database stamped by a newer build is opened as-is, never stamped down (#199)", () => {
+    const db = openDb(path);
+    db.run(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+    db.run("CREATE TABLE from_the_future (x INTEGER)");
+    db.close();
+
+    const reopened = openDb(path);
+    const version = reopened.query("PRAGMA user_version").get() as { user_version: number };
+    expect(version.user_version).toBe(SCHEMA_VERSION + 1);
+    expect(reopened.query("SELECT COUNT(*) AS c FROM from_the_future").get()).toEqual({ c: 0 });
+    expect(reopened.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 0 });
+    reopened.close();
+  });
+
   test("migration backfills provider='claude-code' on pre-adapter rows", () => {
     // Simulate a database written before the source-adapter seam: no provider or
     // model column, an existing session row, and an old stamp. Reopening must add

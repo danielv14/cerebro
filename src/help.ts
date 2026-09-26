@@ -59,9 +59,10 @@ Options:
                   stores one branch (whichever its most recent indexing run saw
                   first), so a mid-session branch switch can move the session to
                   the new branch rather than matching both
-  --since <date>  search: only messages at or after this ISO date (e.g. 2026-01-31);
-                  sessions: only threads last active at or after it; skills: only
-                  calls at or after it
+  --since <when>  search: only messages at or after this point; sessions: only
+                  threads last active at or after it; skills: only calls at or after
+                  it. An ISO date (2026-01-31, midnight in the display zone) or an
+                  age (7d, 2w)
   --role <r>      search: only user or assistant turns. A tool_result is recorded as
                   a user turn, so --role user --prose is the "only my own prompts" query
   --prose         search: drop messages that are nothing but flattened tool plumbing
@@ -86,6 +87,6 @@ Env:
   CEREBRO_CLAUDE_DIR   Override the directory session transcripts are read from
   CLAUDE_CONFIG_DIR    Claude Code's own config dir; where deploy installs the
                        binary and where doctor looks for it and settings.json
-  CEREBRO_TZ           IANA zone for displayed timestamps (default Europe/Stockholm;
-                       stored timestamps are always verbatim UTC)
+  CEREBRO_TZ           IANA zone for displayed timestamps and --since dates (default
+                       Europe/Stockholm; stored timestamps are always verbatim UTC)
   CEREBRO_CLAUDE_BIN   The binary digest run/drain spawn (default: claude on PATH)`;

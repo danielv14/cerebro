@@ -1,6 +1,6 @@
 import { oneLine, shortDate } from "../render.ts";
 import { type SkillUsage, skillUsage } from "../skills.ts";
-import { flag, isoDate, type OptionTable, positiveInt } from "./args.ts";
+import { flag, type OptionTable, positiveInt, sinceBound } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 const NAME_WIDTH = 34;
@@ -30,7 +30,7 @@ export const skillsListing = (usage: SkillUsage): string[] => {
 // No default limit, unlike the listings: a trimmed tail silently turns
 // rarely-called skills into never-called ones.
 const options = {
-  since: isoDate(),
+  since: sinceBound(),
   limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;

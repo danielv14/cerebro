@@ -1,3 +1,5 @@
+import { displayTz, perZone } from "./tz.ts";
+
 // CLI output is consumed by hooks and agents, so the exact bytes are load-bearing:
 // do not change spacing, widths, truncation lengths, or labels without updating
 // the tests in lockstep.
@@ -6,20 +8,26 @@ export const shortId = (id: string): string => id.slice(0, 8);
 
 // The sv-SE locale is NOT a preference: it produces the "YYYY-MM-DD HH:mm" shape
 // the tests pin, so it stays fixed while the zone moves (CEREBRO_TZ).
-const DEFAULT_DISPLAY_TZ = "Europe/Stockholm";
-
-// An unknown zone makes toLocaleString throw a RangeError, so it is validated
-// once here and falls back rather than taking the listing down.
-const displayTz = (): string => {
-  const requested = process.env.CEREBRO_TZ;
-  if (!requested) return DEFAULT_DISPLAY_TZ;
-  try {
-    new Intl.DateTimeFormat("sv-SE", { timeZone: requested });
-    return requested;
-  } catch {
-    return DEFAULT_DISPLAY_TZ;
-  }
-};
+const timeFormat = perZone(
+  (zone) =>
+    new Intl.DateTimeFormat("sv-SE", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+);
+const dateFormat = perZone(
+  (zone) =>
+    new Intl.DateTimeFormat("sv-SE", {
+      timeZone: zone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    }),
+);
 
 const parseTs = (ts: string | null | undefined): Date | null => {
   if (!ts) return null;
@@ -30,28 +38,33 @@ const parseTs = (ts: string | null | undefined): Date | null => {
 export const shortTime = (ts: string | null | undefined): string => {
   const date = parseTs(ts);
   if (!date) return "????-??-?? ??:??";
-  return date.toLocaleString("sv-SE", {
-    timeZone: displayTz(),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return timeFormat(displayTz()).format(date);
 };
 
 export const shortDate = (ts: string | null | undefined): string => {
   const date = parseTs(ts);
   if (!date) return "??????????";
-  return date.toLocaleDateString("sv-SE", { timeZone: displayTz() });
+  return dateFormat(displayTz()).format(date);
 };
 
 export const projectName = (path: string | null): string =>
   path ? (path.split("/").filter(Boolean).pop() ?? path) : "(unknown)";
 
+// Counted in code points, so a cut never leaves half a surrogate pair behind.
+// The walk stops one past `max`, because callers hand in whole messages.
 export const oneLine = (text: string, max = 100): string => {
   const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+  if (collapsed.length <= max) return collapsed;
+  let points = 0;
+  let units = 0;
+  let cut = 0;
+  for (const char of collapsed) {
+    points++;
+    if (points === max) cut = units;
+    if (points > max) return `${collapsed.slice(0, cut)}…`;
+    units += char.length;
+  }
+  return collapsed;
 };
 
 export const humanBytes = (bytes: number): string => {

@@ -9,6 +9,7 @@ import {
   attachThreadIdentity,
   countThreads,
   messageOrdinal,
+  relinkThreads,
   rootOf,
   threadIdentity,
   threadLastTs,
@@ -77,6 +78,44 @@ describe("thread (identity + membership)", () => {
       // A row that exists but has not been relinked (NULL root) falls back to itself.
       db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
       expect(rootOf(db, "UNLINKED")).toBe("UNLINKED");
+    });
+  });
+
+  describe("relinkThreads", () => {
+    const totalChanges = (): number =>
+      (db.query("SELECT total_changes() AS c").get() as { c: number }).c;
+
+    test("a relink with nothing to change writes no rows (#202)", () => {
+      seedThread();
+      const before = totalChanges();
+      relinkThreads(db);
+      expect(totalChanges()).toBe(before);
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    });
+
+    test("only the row whose link moved is rewritten", () => {
+      seedThread();
+      db.run("UPDATE sessions SET root_session_id = NULL WHERE session_id = 'RESUME'");
+      const before = totalChanges();
+      relinkThreads(db);
+      expect(totalChanges() - before).toBe(1);
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    });
+
+    test("the link comes from the first main-chain turn, not a sidechain turn (#201)", () => {
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      ]);
+      writeSession(env.projects, "-repo", "OTHER", [
+        userMsg("OTHER", "o1", "unrelated", { timestamp: ts(1) }),
+      ]);
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "s1", "side", { parentUuid: "o1", isSidechain: true, timestamp: ts(2) }),
+        userMsg("RESUME", "u2", "main", { parentUuid: "u1", timestamp: ts(3) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+      expect(rootOf(db, "OTHER")).toBe("OTHER");
     });
   });
 

@@ -263,20 +263,20 @@ export const countThreads = (db: Database): number => {
 };
 
 export const relinkThreads = (db: Database): void => {
-  // Ordered by id, not ts: insertion order equals conversational order, and a
+  // First by id, not ts: insertion order equals conversational order, and a
   // tolerated NULL ts would shadow ts ordering. Sidechain rows are excluded
   // because the resume link lives on the first main-chain turn.
   const links = db
     .query(
       `SELECT f.session_id AS session, m.session_id AS parent
        FROM (
-         SELECT session_id, parent_uuid,
-                ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id) AS rn
-         FROM messages
+         SELECT MIN(id) AS first_id FROM messages
          WHERE is_sidechain = 0
-       ) f
+         GROUP BY session_id
+       ) firsts
+       JOIN messages f ON f.id = firsts.first_id
        JOIN messages m ON m.uuid = f.parent_uuid
-       WHERE f.rn = 1 AND m.session_id <> f.session_id`,
+       WHERE m.session_id <> f.session_id`,
     )
     .all() as { session: string; parent: string }[];
 
@@ -294,16 +294,23 @@ export const relinkThreads = (db: Database): void => {
     return cur;
   };
 
-  const allSessions = (
-    db.query("SELECT session_id FROM sessions").all() as { session_id: string }[]
-  ).map((r) => r.session_id);
+  const current = db
+    .query("SELECT session_id, parent_session_id, root_session_id FROM sessions")
+    .all() as {
+    session_id: string;
+    parent_session_id: string | null;
+    root_session_id: string | null;
+  }[];
 
   const update = db.query(
     `UPDATE sessions SET parent_session_id = ?, root_session_id = ? WHERE session_id = ?`,
   );
   const tx = db.transaction(() => {
-    for (const session of allSessions) {
-      update.run(parentSession.get(session) ?? null, rootOfSession(session), session);
+    for (const row of current) {
+      const parent = parentSession.get(row.session_id) ?? null;
+      const root = rootOfSession(row.session_id);
+      if (row.parent_session_id === parent && row.root_session_id === root) continue;
+      update.run(parent, root, row.session_id);
     }
   });
   tx();

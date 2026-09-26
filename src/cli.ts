@@ -192,17 +192,17 @@ export const runCli = (
     }
   }
 
+  // Read once per run, so every command in one dispatch sees the same instant.
+  const now = env.now ?? Date.now();
   let commandArgs: Record<string, unknown>;
   try {
-    commandArgs = readOptions(command.options, values);
+    commandArgs = readOptions(command.options, values, now);
   } catch (error) {
     fail((error as Error).message);
     return;
   }
 
   const dbPath = (typeof values.db === "string" && values.db) || defaultDbPath();
-  // Read once per run, so every command in one dispatch sees the same instant.
-  const now = env.now ?? Date.now();
   const cwd = env.cwd ?? process.cwd();
   // One resolver per dispatch, so its per-cwd cache lives exactly as long as the run.
   const resolveGit = env.resolveGit ?? createGitResolver();

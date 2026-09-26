@@ -1,6 +1,6 @@
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { SEARCH_ROLES, type SearchHit, search } from "../search.ts";
-import { CliError, choice, flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
+import { CliError, choice, flag, type OptionTable, positiveInt, sinceBound, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): string[] => {
@@ -24,7 +24,7 @@ export const searchListing = (hits: SearchHit[], opts: { all?: boolean } = {}): 
 const options = {
   project: text(),
   branch: text(),
-  since: isoDate(),
+  since: sinceBound(),
   role: choice(SEARCH_ROLES),
   prose: flag(),
   all: flag(),
