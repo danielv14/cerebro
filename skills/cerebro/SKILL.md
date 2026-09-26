@@ -285,7 +285,8 @@ changelog                              61      1     62      0  2026-08-18
 
 Names come out as they were seen, so Claude Code's built-ins (`/clear`, `/model`) are in
 the list and a renamed skill appears twice. `--json` returns an object, not a bare array:
-the rows plus `from`/`to`, the window the counts cover. Read a low number with that
+the rows plus `from`/`to`, the window the counts cover (ISO instants: `--since` resolves to
+one). Read a low number with that
 window in mind rather than as "unused": anything called before the archive begins is
 invisible, and a skill only used in one season looks dead the rest of the year.
 

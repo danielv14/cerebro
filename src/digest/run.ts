@@ -34,6 +34,11 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
+// The child's own SessionEnd would otherwise run cerebro's hook: a nested index
+// plus a digest of a session that was never persisted. hooks/summarize-on-clear.sh
+// exits at once when it sees this variable.
+export const DIGEST_CHILD_ENV = "CEREBRO_DIGEST_CHILD";
+
 // --no-session-persistence keeps Claude Code from writing this one-shot into
 // ~/.claude/projects, where the indexer would pick it up as a bogus session.
 export const createClaudeSummarizer =
@@ -44,6 +49,7 @@ export const createClaudeSummarizer =
         [bin, "-p", "--no-session-persistence", "--model", model, prompt],
         {
           stdin: Buffer.from(input, "utf8"),
+          env: { ...process.env, [DIGEST_CHILD_ENV]: "1" },
           stdout: "pipe",
           stderr: "pipe",
           timeout: timeoutMs,
@@ -95,8 +101,8 @@ export interface DigestOptions {
   // Called before the model call, so a wedged call still leaves a trace of which
   // thread, how big, and which model.
   onStart?: (about: { root: string; bytes: number; model: string }) => void;
-  // When a failure is recorded, for the drain's backoff.
-  now?: number;
+  // Read when a failure happens, not once up front: a drain runs for minutes.
+  clock?: () => number;
 }
 
 export const runDigest = (db: Database, sessionId: string, opts: DigestOptions): DigestOutcome => {
@@ -121,7 +127,7 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
   const rejected = result.ok ? rejectSummaryReason(result.text) : null;
   if (!result.ok || rejected) {
     const reason = result.ok ? `rejected, ${rejected}` : result.detail;
-    recordDigestFailure(db, root, reason, opts.now ?? Date.now());
+    recordDigestFailure(db, root, reason, (opts.clock ?? Date.now)());
     return { status: "failed", root, reason, model, bytes };
   }
 
@@ -146,11 +152,12 @@ export interface DrainOptions {
   onStart?: (count: number) => void;
   onThreadStart?: (about: { root: string; bytes: number; model: string }) => void;
   onOutcome?: (outcome: DigestOutcome) => void;
-  now?: number;
+  clock?: () => number;
 }
 
 export const runDrain = (db: Database, limit: number, opts: DrainOptions): DrainResult => {
-  const now = opts.now ?? Date.now();
+  const clock = opts.clock ?? Date.now;
+  const now = clock();
   const result: DrainResult = {
     outcomes: [],
     summarized: 0,
@@ -168,10 +175,15 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
         summarize: opts.summarize,
         models: opts.models,
         onStart: opts.onThreadStart,
-        now,
+        clock,
       });
     } catch (error) {
       outcome = { status: "failed", root: thread.id, reason: (error as Error).message };
+      // A throw that repeats would otherwise take this thread's slot on every drain;
+      // one from a locked or broken database fails the record too, and changes nothing.
+      try {
+        recordDigestFailure(db, thread.id, outcome.reason!, clock());
+      } catch {}
     }
     opts.onOutcome?.(outcome);
     result.outcomes.push(outcome);

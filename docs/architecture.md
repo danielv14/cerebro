@@ -421,7 +421,9 @@ never summarizes on its own initiative; the hooks decide when.
   the last 30 minutes is probably still being worked in, and summarizing it would
   buy a summary that is stale again within minutes while the older backlog waits;
   a thread whose recent attempts failed waits out its backoff. `digest stale`
-  still lists both, and `digest run` ignores both.
+  still lists both, and `digest run <id>` ignores both. The hook's
+  `digest run --stdin` fires on every session end, so it asks `hookSkipReason`
+  first and leaves an up-to-date or backing-off thread alone.
 - **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage
@@ -438,7 +440,7 @@ never summarizes on its own initiative; the hooks decide when.
   it records nothing. `reattachSummaries` runs after every relink: a moved root
   leaves its summary keyed on a session that is no longer a root, so the summary
   moves to the current root (stale, since it never covered the session that took
-  over) or is dropped when that root already has one.
+  over) or is dropped when that root already has a newer one.
 - **`config.ts`** resolves the digest environment into one `DigestConfig` at the
   CLI edge, so nothing in the pipeline reads `process.env` and a test supplies the
   tiering, timeout and binary path directly. It does not move onto the command

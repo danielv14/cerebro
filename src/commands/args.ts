@@ -78,7 +78,8 @@ export const sinceBound = (): OptionSpec<string | undefined> => ({
   kind: "string",
   coerce: (raw, name, now) => {
     if (isCalendarDate(raw)) return zonedMidnightIso(raw, displayTz());
-    const age = /^([1-9]\d*)([dw])$/.exec(raw);
+    // Five digits keeps the bound inside Date's range, so toISOString cannot throw.
+    const age = /^([1-9]\d{0,4})([dw])$/.exec(raw);
     if (age) return new Date(now - Number(age[1]) * RELATIVE_UNITS[age[2]!]!).toISOString();
     throw new CliError(
       `--${name} must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "${raw}")`,

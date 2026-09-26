@@ -98,28 +98,32 @@ export const clearDigestFailure = (db: Database, root: string): void => {
 
 // A relink that moves a thread's root leaves its summary keyed on a session that is
 // no longer a root. The summary moves to the current root, stale (it never covered
-// the session that took over), unless that root has one already; then the newest
-// is kept. Keys with no sessions row at all are left alone: a summary outlives the
+// the session that took over), unless that root has a newer one already. Keys with no sessions row at all are left alone: a summary outlives the
 // sessions it was written from.
 export const reattachSummaries = (db: Database): void => {
   const orphans = db
     .query(
-      `SELECT su.root_session_id AS old, s.root_session_id AS root
+      `SELECT su.root_session_id AS old, s.root_session_id AS root, su.summarized_at
        FROM summaries su
        JOIN sessions s ON s.session_id = su.root_session_id
        WHERE s.root_session_id IS NOT NULL AND s.root_session_id <> su.root_session_id
        ORDER BY su.summarized_at DESC`,
     )
-    .all() as { old: string; root: string }[];
+    .all() as { old: string; root: string; summarized_at: string }[];
   if (orphans.length > 0) {
-    const hasSummary = db.query("SELECT 1 FROM summaries WHERE root_session_id = ?");
+    const current = db.query("SELECT summarized_at FROM summaries WHERE root_session_id = ?");
     const move = db.query(
       "UPDATE summaries SET root_session_id = ?, source_last_ts = NULL WHERE root_session_id = ?",
     );
     const drop = db.query("DELETE FROM summaries WHERE root_session_id = ?");
-    for (const { old, root } of orphans) {
-      if (hasSummary.get(root)) drop.run(old);
-      else move.run(root, old);
+    for (const orphan of orphans) {
+      const existing = current.get(orphan.root) as { summarized_at: string } | null;
+      if (existing && existing.summarized_at >= orphan.summarized_at) {
+        drop.run(orphan.old);
+        continue;
+      }
+      if (existing) drop.run(orphan.root);
+      move.run(orphan.root, orphan.old);
     }
   }
   db.run(

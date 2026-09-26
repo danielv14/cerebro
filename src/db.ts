@@ -140,12 +140,13 @@ const migrate = (db: Database): void => {
   addColumnIfMissing(db, "sessions", "provider", "provider TEXT");
   addColumnIfMissing(db, "sessions", "model", "model TEXT");
   // Here rather than in SCHEMA: it names is_sidechain, which a pre-sidechain
-  // archive only has after the ALTER above. It serves every session_id lookup
-  // and covers relinkThreads' first-turn scan, so it supersedes the old index.
+  // archive only has after the ALTER above. It covers relinkThreads' first-turn
+  // scan. idx_messages_session is redundant next to it but stays: a pre-v7 hook
+  // binary re-runs its SCHEMA on this archive, and would rebuild a dropped index
+  // over every message on each open until it is redeployed.
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_messages_session_chain ON messages(session_id, is_sidechain)",
   );
-  db.run("DROP INDEX IF EXISTS idx_messages_session");
   // Safe: everything indexed before the adapter seam came from Claude Code, and
   // new-code rows always carry their adapter's id.
   db.run(`UPDATE sessions SET provider = 'claude-code' WHERE provider IS NULL`);

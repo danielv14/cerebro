@@ -54,10 +54,17 @@ const wallClock = perZone(
     }),
 );
 
+// Date.UTC reads years 0-99 as 1900-1999; setUTCFullYear takes the year literally.
+const utcMs = (year: number, month: number, day: number, hour = 0, minute = 0, second = 0) => {
+  const date = new Date(Date.UTC(2000, 0, 1, hour, minute, second));
+  date.setUTCFullYear(year, month, day);
+  return date.getTime();
+};
+
 const zoneOffsetMs = (zone: string, instant: number): number => {
   const parts: Record<string, number> = {};
   for (const part of wallClock(zone).formatToParts(instant)) parts[part.type] = Number(part.value);
-  const asUtc = Date.UTC(
+  const asUtc = utcMs(
     parts.year!,
     parts.month! - 1,
     parts.day!,
@@ -71,7 +78,7 @@ const zoneOffsetMs = (zone: string, instant: number): number => {
 // The second pass corrects for a DST change between the guess and the answer.
 export const zonedMidnightIso = (isoDate: string, zone: string): string => {
   const [year, month, day] = isoDate.split("-").map(Number);
-  const utcMidnight = Date.UTC(year!, month! - 1, day!);
+  const utcMidnight = utcMs(year!, month! - 1, day!);
   const first = utcMidnight - zoneOffsetMs(zone, utcMidnight);
   return new Date(utcMidnight - zoneOffsetMs(zone, first)).toISOString();
 };

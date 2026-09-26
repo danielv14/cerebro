@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# cerebro's Claude Code SessionEnd hook (every end reason). Indexes synchronously,
+# cerebro's Claude Code SessionEnd hook (any end reason). Indexes synchronously,
 # then hands the payload to `cerebro digest run --stdin` detached. Wiring and
 # rationale: docs/hooks.md.
 set -uo pipefail
+
+# cerebro's own summarization child (`claude -p`, see DIGEST_CHILD_ENV) ending: not a
+# session to index or summarize.
+[ -n "${CEREBRO_DIGEST_CHILD:-}" ] && exit 0
 
 CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"

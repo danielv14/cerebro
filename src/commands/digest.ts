@@ -8,7 +8,7 @@ import {
   runDigest,
   runDrain,
 } from "../digest/run.ts";
-import { type StaleThread, staleThreads } from "../digest/stale.ts";
+import { hookSkipReason, type StaleThread, staleThreads } from "../digest/stale.ts";
 import {
   getSummary,
   type StoredSummary,
@@ -16,11 +16,15 @@ import {
   searchSummaries,
 } from "../digest/store.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
+import { rootOf } from "../thread.ts";
 import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
-export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
+export const staleListing = (
+  rows: StaleThread[],
+  opts: { promptVersion: number; now: number },
+): string[] => {
   const lines: string[] = [];
   for (const row of rows) {
     const reason =
@@ -29,9 +33,11 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
         : row.summary_version < opts.promptVersion
           ? `prompt v${row.summary_version} < v${opts.promptVersion}`
           : "new activity since summary";
-    const failures = row.failed_attempts
-      ? `; failed ${row.failed_attempts}x, drain retries after ${shortTime(row.retry_after)}`
-      : "";
+    const retry =
+      row.retry_after && Date.parse(row.retry_after) > opts.now
+        ? `drain retries after ${shortTime(row.retry_after)}`
+        : "next drain retries it";
+    const failures = row.failed_attempts ? `; failed ${row.failed_attempts}x, ${retry}` : "";
     lines.push(
       `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}${failures}]`,
     );
@@ -144,14 +150,14 @@ export const digestCommand: CommandGroup = {
   subcommands: {
     stale: defineCommand({
       options: { limit: limitOption, ids: flag(), json: flag() } satisfies OptionTable,
-      run: ({ db, args }) => {
+      run: ({ db, args, now }) => {
         const rows = staleThreads(db, args.limit ?? 50);
         return {
           json: rows,
           lines: args.ids
             ? staleIds(rows)
             : rows.length > 0
-              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })
+              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION, now })
               : [],
           empty: args.ids ? undefined : "All threads are summarized and up to date.",
         };
@@ -165,15 +171,21 @@ export const digestCommand: CommandGroup = {
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
-        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+        const sessionId = resolveOrThrow(db, idArg ?? undefined, "digest run");
+        // Only the hook path is gated: `digest run <id>` is an explicit request.
+        if (args.stdin) {
+          const root = rootOf(db, sessionId);
+          const skip = hookSkipReason(db, root, now);
+          if (skip) return { lines: [`Skipped ${shortId(root)}: ${skip}.`] };
+        }
+        const outcome = runDigest(db, sessionId, {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
-          now,
         });
         return {
           lines: [digestOutcomeLine(outcome)],
-          // Exit 1 whenever no summary was stored, so a manual invocation is
-          // scriptable; the detached clear hook ignores it.
+          // Exit 1 whenever a summary was attempted and not stored, so a manual
+          // invocation is scriptable; the detached hook ignores it.
           exitCode: outcome.status === "summarized" ? 0 : 1,
         };
       },
@@ -181,14 +193,13 @@ export const digestCommand: CommandGroup = {
 
     drain: defineCommand({
       options: { limit: limitOption } satisfies OptionTable,
-      run: ({ db, args, progress, now }) => {
+      run: ({ db, args, progress }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
         const result = runDrain(db, cap, {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
           onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
-          now,
         });
         return {
           lines: drainSummary(result),

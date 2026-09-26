@@ -164,6 +164,28 @@ describe("thread (identity + membership)", () => {
       expect(searchSummaries(db, "original").map((hit) => hit.id)).toEqual(["ORIG"]);
     });
 
+    test("an orphan newer than the root's own summary replaces it", () => {
+      writeSummary(db, "ORIG", "Older original summary. Keywords: original");
+      db.run("UPDATE summaries SET summarized_at = '2026-01-01T00:00:00.000Z'");
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "carry on with the limiter", {
+          parentUuid: "a1",
+          timestamp: ts(2),
+        }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      writeSummary(db, "RESUME", "Newer resume summary about the limiter. Keywords: limiter");
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+        assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "limiter").map((hit) => hit.id)).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "original")).toEqual([]);
+    });
+
     test("a summary whose sessions rows are gone is left alone", () => {
       writeSummary(db, "GONE", "Summary of a thread whose sessions were never indexed.");
       seedThread();

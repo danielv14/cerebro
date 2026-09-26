@@ -14,8 +14,8 @@ import {
   type SummarizeRequest,
   type Summarizer,
 } from "../src/digest/run.ts";
-import { DRAIN_SETTLE_MS, staleThreads } from "../src/digest/stale.ts";
-import { getSummary, retryDelayMs } from "../src/digest/store.ts";
+import { DRAIN_SETTLE_MS, hookSkipReason, staleThreads } from "../src/digest/stale.ts";
+import { getSummary, retryDelayMs, writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
@@ -224,6 +224,35 @@ describe("createClaudeSummarizer", () => {
     expect(result.text).toBe("stdin:TRANSCRIPT args:PROMPT model:some-model");
   });
 
+  test("marks the child so the SessionEnd hook it fires on exit stands down", () => {
+    fakeClaude('printf "child marker:%s, long enough to count" "$CEREBRO_DIGEST_CHILD"');
+    const result = createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" });
+    expect(result.text).toBe("child marker:1, long enough to count");
+  });
+
+  test("the hook script exits at once for that child, before indexing anything", () => {
+    const marker = join(dir, "cerebro-was-called");
+    const fakeCerebro = join(dir, "cerebro");
+    fs.writeFileSync(
+      fakeCerebro,
+      `#!/usr/bin/env bash
+touch "${marker}"
+`,
+    );
+    fs.chmodSync(fakeCerebro, 0o755);
+    const hook = join(import.meta.dir, "..", "hooks", "summarize-on-clear.sh");
+    const run = (child: Record<string, string>) =>
+      Bun.spawnSync(["bash", hook], {
+        stdin: Buffer.from('{"session_id":"S"}'),
+        env: { ...process.env, CEREBRO_BIN: fakeCerebro, ...child },
+      });
+
+    expect(run({ CEREBRO_DIGEST_CHILD: "1" }).exitCode).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+    run({});
+    expect(fs.existsSync(marker)).toBe(true);
+  });
+
   test("reports a non-zero exit as a failure and keeps the stderr reason", () => {
     fakeClaude('echo "Prompt is too long" >&2; exit 1');
     const result = createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" });
@@ -424,8 +453,8 @@ describe("digest failure backoff (#205)", () => {
   });
 
   test("a failed attempt is recorded with its reason and next retry", () => {
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
     expect(failure("ONE")).toMatchObject({
       attempts: 2,
       last_error: "claude exited 1",
@@ -435,47 +464,79 @@ describe("digest failure backoff (#205)", () => {
 
   test("a rejected output counts as a failure too", () => {
     const rejecting = fakeSummarizer({ text: "Prompt is too long" });
-    runDigest(db, "ONE", { summarize: rejecting.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: rejecting.summarize, models, clock: () => NOW });
     expect(failure("ONE")?.attempts).toBe(1);
   });
 
   test("a fatal outcome is the runner's problem and backs no thread off", () => {
     const fatal = fakeSummarizer({ ok: false, text: "", detail: "not found", fatal: true });
-    runDigest(db, "ONE", { summarize: fatal.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: fatal.summarize, models, clock: () => NOW });
     expect(failure("ONE")).toBeNull();
   });
 
   test("a stored summary clears the record", () => {
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
-    runDigest(db, "ONE", { summarize: fakeSummarizer().summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    runDigest(db, "ONE", { summarize: fakeSummarizer().summarize, models, clock: () => NOW });
     expect(failure("ONE")).toBeNull();
   });
 
   test("a drain skips a thread in backoff until its retry time, then takes it", () => {
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
 
     const { summarize, calls } = fakeSummarizer();
-    const early = runDrain(db, 8, { summarize, models, now: NOW + HOUR });
+    const early = runDrain(db, 8, { summarize, models, clock: () => NOW + HOUR });
     expect(early.outcomes.map((o) => o.root)).toEqual(["TWO"]);
     expect(early.heldBack).toBe(1);
 
-    const later = runDrain(db, 8, { summarize, models, now: NOW + 6 * HOUR });
+    const later = runDrain(db, 8, { summarize, models, clock: () => NOW + 6 * HOUR });
     expect(later.outcomes.map((o) => o.root)).toEqual(["ONE"]);
     expect(calls.length).toBe(2);
   });
 
   test("an explicit digest run ignores the backoff", () => {
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
     const outcome = runDigest(db, "ONE", {
       summarize: fakeSummarizer().summarize,
       models,
-      now: NOW + HOUR,
+      clock: () => NOW + HOUR,
     });
     expect(outcome.status).toBe("summarized");
   });
 
+  test("a failure late in a drain is dated when it happened, not when the drain began", () => {
+    let tick = NOW;
+    const clock = () => {
+      tick += HOUR;
+      return tick;
+    };
+    runDrain(db, 8, { summarize: failing.summarize, models, clock });
+    // The drain read the clock once to select, then once per recorded failure.
+    expect(failure("ONE")?.retry_after).toBe(new Date(NOW + 2 * HOUR + 6 * HOUR).toISOString());
+    expect(failure("TWO")?.retry_after).toBe(new Date(NOW + 3 * HOUR + 6 * HOUR).toISOString());
+  });
+
+  test("a thread whose digest throws is backed off too, so it cannot loop", () => {
+    const throwing: Summarizer = () => {
+      throw new Error("something unexpected");
+    };
+    runDrain(db, 8, { summarize: throwing, models, clock: () => NOW });
+    expect(failure("ONE")).toMatchObject({ attempts: 1, last_error: "something unexpected" });
+  });
+
+  test("the hook path skips a fresh or backing-off thread and takes a stale one (#205)", () => {
+    expect(hookSkipReason(db, "ONE", NOW)).toBeNull();
+    writeSummary(db, "ONE", GOOD_SUMMARY);
+    expect(hookSkipReason(db, "ONE", NOW)).toBe("its summary is up to date");
+
+    runDigest(db, "TWO", { summarize: failing.summarize, models, clock: () => NOW });
+    expect(hookSkipReason(db, "TWO", NOW + HOUR)).toBe(
+      `backing off after 1 failed attempt(s), until ${new Date(NOW + 6 * HOUR).toISOString()}`,
+    );
+    expect(hookSkipReason(db, "TWO", NOW + 6 * HOUR)).toBeNull();
+  });
+
   test("the backoff still lists the thread as stale, with its failures (#204)", () => {
-    runDigest(db, "ONE", { summarize: failing.summarize, models, now: NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
     const row = staleThreads(db).find((thread) => thread.id === "ONE");
     expect(row).toMatchObject({ failed_attempts: 1 });
   });
@@ -505,7 +566,7 @@ describe("digest drain settle window (#204)", () => {
 
   test("a thread active within the settle window waits; the older backlog goes first", () => {
     const { summarize } = fakeSummarizer();
-    const result = runDrain(db, 8, { summarize, models, now: NOW });
+    const result = runDrain(db, 8, { summarize, models, clock: () => NOW });
     expect(result.outcomes.map((o) => o.root)).toEqual(["SETTLED"]);
     expect(result.heldBack).toBe(1);
     expect(staleThreads(db).map((t) => t.id)).toEqual(["ACTIVE"]);
@@ -513,7 +574,7 @@ describe("digest drain settle window (#204)", () => {
 
   test("once settled, the thread is drained", () => {
     const { summarize } = fakeSummarizer();
-    const result = runDrain(db, 8, { summarize, models, now: NOW + DRAIN_SETTLE_MS });
+    const result = runDrain(db, 8, { summarize, models, clock: () => NOW + DRAIN_SETTLE_MS });
     expect(result.outcomes.map((o) => o.root).sort()).toEqual(["ACTIVE", "SETTLED"]);
     expect(result.heldBack).toBe(0);
   });

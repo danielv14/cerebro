@@ -49,7 +49,7 @@ describe("staleListing", () => {
           retry_after: null,
         },
       ],
-      { promptVersion: 2 },
+      { promptVersion: 2, now: 0 },
     );
     expect(lines).toEqual([
       "01234567  2026-07-15 10:00     5 msgs  cerebro  [never summarized]",
@@ -81,12 +81,33 @@ describe("staleListing failures (#205)", () => {
           retry_after: "2026-07-16T08:00:00Z",
         },
       ],
-      { promptVersion: 1 },
+      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
     );
     expect(line).toBe(
       "01234567  2026-07-15 10:00     5 msgs  cerebro  " +
         "[never summarized; failed 2x, drain retries after 2026-07-16 10:00]",
     );
+  });
+
+  test("a retry time already past reads as due, not as a wait", () => {
+    const [line] = staleListing(
+      [
+        {
+          id: "0123456789abcdef",
+          last_ts: "2026-07-15T08:00:00Z",
+          first_ts: null,
+          msgs: 5,
+          project_path: "/Users/foo/cerebro",
+          title: "First",
+          summary_version: null,
+          summarized_at: null,
+          failed_attempts: 1,
+          retry_after: "2026-07-15T09:00:00Z",
+        },
+      ],
+      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
+    );
+    expect(line).toContain("[never summarized; failed 1x, next drain retries it]");
   });
 });
 

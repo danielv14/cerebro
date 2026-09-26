@@ -31,9 +31,14 @@ change (or a digest-prompt change) does not reach the automated path until you r
 ## Index + summarize on session end
 
 A `SessionEnd` hook runs `summarize-on-clear.sh` the moment a session ends, whether by
-`/clear`, `/resume`, exit or logout. The matcher lists every reason: with `"clear"` alone,
-a session you exit sits unindexed (invisible to `recent` and `relevant`) until the
-reconciler's next run, up to 6 hours later. The script keeps its old name because
+`/clear`, `/resume`, exit or logout. With `"clear"` alone, a session you exit sits
+unindexed (invisible to `recent` and `relevant`) until the reconciler's next run, up to
+6 hours later. The matcher leaves out `other`, the reason a headless `claude -p` ends
+with: cerebro's own summarization runs are such calls, and each one would otherwise run
+the hook again. They also carry `CEREBRO_DIGEST_CHILD=1`, which makes the script exit at
+once, so wiring that does match `other` stays safe. On this path `digest run --stdin`
+skips a thread whose summary is up to date or that is backing off after failed attempts,
+since a resume that only read would otherwise buy a fresh summary on every exit. The script keeps its old name because
 existing `settings.json` wiring points at it; nothing in it is specific to `/clear`. It
 indexes first, while the hook waits, so it captures the just-finished
 session immediately, and then starts `cerebro digest run --stdin` in the background,
@@ -46,7 +51,7 @@ store it). In `~/.claude/settings.json`:
 {
   "hooks": {
     "SessionEnd": [
-      { "matcher": "clear|resume|logout|prompt_input_exit|other", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/summarize-on-clear.sh", "timeout": 120 } ] }
+      { "matcher": "clear|resume|logout|prompt_input_exit", "hooks": [ { "type": "command", "command": "~/.claude/cerebro/summarize-on-clear.sh", "timeout": 120 } ] }
     ]
   }
 }

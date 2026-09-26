@@ -5,8 +5,8 @@ macOS (launchd) or Linux (cron). See [hooks.md](hooks.md) for the per-event hook
 and [digest-model-tiering.md](digest-model-tiering.md) for the model each run picks.
 
 The `SessionEnd` hook only summarizes the one session that just ended, so every session
-that never fires it (headless `claude -p`, a killed terminal, still open) never gets a
-summary on its own. `digest-stale-batch.sh` is the catch-up job that closes that gap: it indexes,
+it does not see (headless `claude -p`, whose end reason the matcher leaves out, a killed
+terminal, still open) never gets a summary on its own. `digest-stale-batch.sh` is the catch-up job that closes that gap: it indexes,
 then runs `cerebro digest drain --limit $CEREBRO_DIGEST_BATCH_CAP` (default 8), which
 summarizes that many stale threads newest first through the same pipeline and model
 choice the `SessionEnd` hook uses. The script itself owns only the scheduling concerns: a
