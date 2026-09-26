@@ -50,21 +50,14 @@ export const shortDate = (ts: string | null | undefined): string => {
 export const projectName = (path: string | null): string =>
   path ? (path.split("/").filter(Boolean).pop() ?? path) : "(unknown)";
 
-// Counted in code points, so a cut never leaves half a surrogate pair behind.
-// The walk stops one past `max`, because callers hand in whole messages.
+// Counted in code points, so a cut never leaves half a surrogate pair behind. The
+// first 2*max code units hold at least max code points, so only that head is split.
 export const oneLine = (text: string, max = 100): string => {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (collapsed.length <= max) return collapsed;
-  let points = 0;
-  let units = 0;
-  let cut = 0;
-  for (const char of collapsed) {
-    points++;
-    if (points === max) cut = units;
-    if (points > max) return `${collapsed.slice(0, cut)}…`;
-    units += char.length;
-  }
-  return collapsed;
+  const head = Array.from(collapsed.slice(0, 2 * max));
+  if (head.length <= max && collapsed.length <= 2 * max) return collapsed;
+  return `${head.slice(0, max - 1).join("")}…`;
 };
 
 export const humanBytes = (bytes: number): string => {

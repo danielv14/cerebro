@@ -53,6 +53,7 @@ export const writeSummary = (
        summarized_at  = excluded.summarized_at,
        source_last_ts = excluded.source_last_ts`,
   ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), sourceLastTs);
+  db.query("DELETE FROM digest_failures WHERE root_session_id = ?").run(root);
 
   return root;
 };
@@ -92,14 +93,10 @@ export const recordDigestFailure = (
   );
 };
 
-export const clearDigestFailure = (db: Database, root: string): void => {
-  db.query("DELETE FROM digest_failures WHERE root_session_id = ?").run(root);
-};
-
 // A relink that moves a thread's root leaves its summary keyed on a session that is
 // no longer a root. The summary moves to the current root, stale (it never covered
-// the session that took over), unless that root has a newer one already. Keys with no sessions row at all are left alone: a summary outlives the
-// sessions it was written from.
+// the session that took over), unless that root has a newer one already. Keys
+// with no sessions row are left alone: a summary outlives its sessions.
 export const reattachSummaries = (db: Database): void => {
   const orphans = db
     .query(
@@ -110,21 +107,19 @@ export const reattachSummaries = (db: Database): void => {
        ORDER BY su.summarized_at DESC`,
     )
     .all() as { old: string; root: string; summarized_at: string }[];
-  if (orphans.length > 0) {
-    const current = db.query("SELECT summarized_at FROM summaries WHERE root_session_id = ?");
-    const move = db.query(
-      "UPDATE summaries SET root_session_id = ?, source_last_ts = NULL WHERE root_session_id = ?",
-    );
-    const drop = db.query("DELETE FROM summaries WHERE root_session_id = ?");
-    for (const orphan of orphans) {
-      const existing = current.get(orphan.root) as { summarized_at: string } | null;
-      if (existing && existing.summarized_at >= orphan.summarized_at) {
-        drop.run(orphan.old);
-        continue;
-      }
-      if (existing) drop.run(orphan.root);
-      move.run(orphan.root, orphan.old);
+  const current = db.query("SELECT summarized_at FROM summaries WHERE root_session_id = ?");
+  const move = db.query(
+    "UPDATE summaries SET root_session_id = ?, source_last_ts = NULL WHERE root_session_id = ?",
+  );
+  const drop = db.query("DELETE FROM summaries WHERE root_session_id = ?");
+  for (const orphan of orphans) {
+    const existing = current.get(orphan.root) as { summarized_at: string } | null;
+    if (existing && existing.summarized_at >= orphan.summarized_at) {
+      drop.run(orphan.old);
+      continue;
     }
+    if (existing) drop.run(orphan.root);
+    move.run(orphan.root, orphan.old);
   }
   db.run(
     `DELETE FROM digest_failures WHERE root_session_id IN (

@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 
 -- A thread whose last digest attempts failed; a drain skips it until retry_after.
--- Cleared by the next stored summary.
+-- writeSummary clears it.
 CREATE TABLE IF NOT EXISTS digest_failures (
   root_session_id TEXT PRIMARY KEY,
   attempts        INTEGER NOT NULL,

@@ -29,52 +29,27 @@ const STALE_FROM_WHERE = `
 // now buys a summary that is stale again within minutes, so a drain waits.
 export const DRAIN_SETTLE_MS = 30 * 60 * 1000;
 
-// Bound by `$settled` and `$now`, both ISO instants.
-const DRAINABLE = `(t.last_ts IS NULL OR t.last_ts < $settled)
-      AND (df.retry_after IS NULL OR df.retry_after <= $now)`;
-
-const drainWindow = (now: number) => ({
-  $settled: new Date(now - DRAIN_SETTLE_MS).toISOString(),
-  $now: new Date(now).toISOString(),
-});
-
 const STALE_COLUMNS = `t.id, t.last_ts, t.first_ts, t.msgs, t.project_path, t.title,
        su.prompt_version AS summary_version, su.summarized_at AS summarized_at,
        df.attempts AS failed_attempts, df.retry_after AS retry_after`;
 
-export const staleThreads = (db: Database, limit = 50): StaleThread[] =>
+// With `drainAt`, only what a drain may take then: settled, and not backing off.
+export const staleThreads = (db: Database, limit = 50, drainAt?: number): StaleThread[] =>
   db
     .query(
       `SELECT ${STALE_COLUMNS}
        ${STALE_FROM_WHERE}
+         AND ($now IS NULL OR ((t.last_ts IS NULL OR t.last_ts < $settled)
+                           AND (df.retry_after IS NULL OR df.retry_after <= $now)))
        ORDER BY t.last_ts DESC
        LIMIT $limit`,
     )
-    .all({ $version: DIGEST_PROMPT_VERSION, $limit: limit }) as StaleThread[];
-
-// What a drain takes: the stale threads that have settled and are not backing off
-// after a failure.
-export const drainableThreads = (db: Database, limit: number, now: number): StaleThread[] =>
-  db
-    .query(
-      `SELECT ${STALE_COLUMNS}
-       ${STALE_FROM_WHERE}
-         AND ${DRAINABLE}
-       ORDER BY t.last_ts DESC
-       LIMIT $limit`,
-    )
-    .all({ $version: DIGEST_PROMPT_VERSION, $limit: limit, ...drainWindow(now) }) as StaleThread[];
-
-// Stale but left for later by a drain, so an empty drain can say why.
-export const countHeldBackThreads = (db: Database, now: number): number =>
-  (
-    db
-      .query(
-        `SELECT COUNT(*) AS c ${STALE_FROM_WHERE}
-           AND NOT (${DRAINABLE})`,
-      )
-      .get({ $version: DIGEST_PROMPT_VERSION, ...drainWindow(now) }) as { c: number }
-  ).c;
+    .all({
+      $version: DIGEST_PROMPT_VERSION,
+      $limit: limit,
+      $now: drainAt === undefined ? null : new Date(drainAt).toISOString(),
+      $settled: drainAt === undefined ? null : new Date(drainAt - DRAIN_SETTLE_MS).toISOString(),
+    }) as StaleThread[];
 
 export const countStaleThreads = (db: Database): number =>
   (

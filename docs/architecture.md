@@ -417,7 +417,7 @@ never summarizes on its own initiative; the hooks decide when.
 - **`stale.ts`** owns the staleness predicate (never summarized, summarized
   before the thread's latest activity, or summarized by an older prompt version),
   defined once for the listing, the count and the coverage reading so they cannot
-  drift. A drain takes a narrower set, `drainableThreads`: a thread active within
+  drift. A drain passes `drainAt` for a narrower set: a thread active within
   the last 30 minutes is probably still being worked in, and summarizing it would
   buy a summary that is stale again within minutes while the older backlog waits;
   a thread whose recent attempts failed waits out its backoff. `digest stale`

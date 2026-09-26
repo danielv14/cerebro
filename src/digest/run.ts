@@ -7,13 +7,8 @@ import {
   type DigestModelConfig,
   pickDigestModel,
 } from "./prompt.ts";
-import { countHeldBackThreads, drainableThreads } from "./stale.ts";
-import {
-  clearDigestFailure,
-  recordDigestFailure,
-  rejectSummaryReason,
-  writeSummary,
-} from "./store.ts";
+import { countStaleThreads, staleThreads } from "./stale.ts";
+import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
 
 // Design notes: docs/architecture.md ("Digest").
 
@@ -126,7 +121,6 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
   }
 
   writeSummary(db, sessionId, result.text, model, coversLastTs);
-  clearDigestFailure(db, root);
   return { status: "summarized", root, model, bytes, chars: result.text.length };
 };
 
@@ -136,7 +130,8 @@ export interface DrainResult {
   failed: number;
   skipped: number;
   aborted?: string;
-  // Stale threads the drain left for later: still active, or backing off.
+  // Stale threads left for later (still active, or backing off). Only counted when
+  // the drain took none: the empty-drain line is its one reader.
   heldBack: number;
 }
 
@@ -151,15 +146,14 @@ export interface DrainOptions {
 
 export const runDrain = (db: Database, limit: number, opts: DrainOptions): DrainResult => {
   const clock = opts.clock ?? Date.now;
-  const now = clock();
+  const threads = staleThreads(db, limit, clock());
   const result: DrainResult = {
     outcomes: [],
     summarized: 0,
     failed: 0,
     skipped: 0,
-    heldBack: countHeldBackThreads(db, now),
+    heldBack: threads.length === 0 ? countStaleThreads(db) : 0,
   };
-  const threads = drainableThreads(db, limit, now);
   if (threads.length > 0) opts.onStart?.(threads.length);
   for (const thread of threads) {
     // One thread must never take the run down with it.

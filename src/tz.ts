@@ -3,40 +3,30 @@
 
 const DEFAULT_DISPLAY_TZ = "Europe/Stockholm";
 
-// An unknown zone makes Intl throw a RangeError, so each requested zone is
-// validated once and an invalid one falls back rather than taking a listing down.
-const validZones = new Map<string, boolean>();
-const isValidZone = (zone: string): boolean => {
-  let valid = validZones.get(zone);
-  if (valid === undefined) {
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone: zone });
-      valid = true;
-    } catch {
-      valid = false;
-    }
-    validZones.set(zone, valid);
-  }
-  return valid;
+// Building an Intl.DateTimeFormat is the expensive part of formatting a date.
+export const perZone = <T>(build: (zone: string) => T): ((zone: string) => T) => {
+  const cache = new Map<string, T>();
+  return (zone) => {
+    if (!cache.has(zone)) cache.set(zone, build(zone));
+    return cache.get(zone)!;
+  };
 };
+
+// An unknown zone makes Intl throw a RangeError, so it falls back rather than
+// taking a listing down.
+const isValidZone = perZone((zone) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+});
 
 // Read on every call, not cached: tests move CEREBRO_TZ between cases.
 export const displayTz = (): string => {
   const requested = process.env.CEREBRO_TZ;
   return requested && isValidZone(requested) ? requested : DEFAULT_DISPLAY_TZ;
-};
-
-// Building an Intl.DateTimeFormat is the expensive part of formatting a date.
-export const perZone = <T>(build: (zone: string) => T): ((zone: string) => T) => {
-  const cache = new Map<string, T>();
-  return (zone) => {
-    let value = cache.get(zone);
-    if (value === undefined) {
-      value = build(zone);
-      cache.set(zone, value);
-    }
-    return value;
-  };
 };
 
 // h23, not hour12: false, which some engines render as "24" at midnight.
@@ -54,17 +44,10 @@ const wallClock = perZone(
     }),
 );
 
-// Date.UTC reads years 0-99 as 1900-1999; setUTCFullYear takes the year literally.
-const utcMs = (year: number, month: number, day: number, hour = 0, minute = 0, second = 0) => {
-  const date = new Date(Date.UTC(2000, 0, 1, hour, minute, second));
-  date.setUTCFullYear(year, month, day);
-  return date.getTime();
-};
-
 const zoneOffsetMs = (zone: string, instant: number): number => {
   const parts: Record<string, number> = {};
   for (const part of wallClock(zone).formatToParts(instant)) parts[part.type] = Number(part.value);
-  const asUtc = utcMs(
+  const asUtc = Date.UTC(
     parts.year!,
     parts.month! - 1,
     parts.day!,
@@ -78,7 +61,7 @@ const zoneOffsetMs = (zone: string, instant: number): number => {
 // The second pass corrects for a DST change between the guess and the answer.
 export const zonedMidnightIso = (isoDate: string, zone: string): string => {
   const [year, month, day] = isoDate.split("-").map(Number);
-  const utcMidnight = utcMs(year!, month! - 1, day!);
+  const utcMidnight = Date.UTC(year!, month! - 1, day!);
   const first = utcMidnight - zoneOffsetMs(zone, utcMidnight);
   return new Date(utcMidnight - zoneOffsetMs(zone, first)).toISOString();
 };

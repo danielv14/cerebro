@@ -457,7 +457,6 @@ describe("digest failure backoff (#205)", () => {
     const { summarize, calls } = fakeSummarizer();
     const early = runDrain(db, 8, { summarize, models, clock: () => NOW + HOUR });
     expect(early.outcomes.map((o) => o.root)).toEqual(["TWO"]);
-    expect(early.heldBack).toBe(1);
 
     const later = runDrain(db, 8, { summarize, models, clock: () => NOW + 6 * HOUR });
     expect(later.outcomes.map((o) => o.root)).toEqual(["ONE"]);
@@ -527,8 +526,15 @@ describe("digest drain settle window (#204)", () => {
     const { summarize } = fakeSummarizer();
     const result = runDrain(db, 8, { summarize, models, clock: () => NOW });
     expect(result.outcomes.map((o) => o.root)).toEqual(["SETTLED"]);
-    expect(result.heldBack).toBe(1);
     expect(staleThreads(db).map((t) => t.id)).toEqual(["ACTIVE"]);
+  });
+
+  test("a drain that can take nothing counts what it held back", () => {
+    const { summarize } = fakeSummarizer();
+    runDrain(db, 8, { summarize, models, clock: () => NOW });
+    const again = runDrain(db, 8, { summarize, models, clock: () => NOW });
+    expect(again.outcomes).toEqual([]);
+    expect(again.heldBack).toBe(1);
   });
 
   test("once settled, the thread is drained", () => {

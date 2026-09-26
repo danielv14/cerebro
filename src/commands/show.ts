@@ -109,7 +109,6 @@ export const showCommand = defineCommand({
     if (args.grep !== undefined) {
       if (args.full || args.range)
         throw new CliError("show: --grep cannot be combined with --full or --range");
-      if (!args.grep) throw new CliError("show: --grep needs the text to look for");
       const matches = grepMessages(messages, args.grep);
       return {
         json: { id: sessionId, total: messages.length, matches },

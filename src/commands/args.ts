@@ -56,17 +56,15 @@ export const numeric = (opts: {
 export const positiveInt = (): OptionSpec<number | undefined> =>
   numeric({ integer: true, min: 1, label: "a positive integer" });
 
+// Years from 1000 only: Date.UTC reads 0-99 as 19xx, and no archive predates 1000.
 const isCalendarDate = (raw: string): boolean => {
   const parsed = Date.parse(`${raw}T00:00:00Z`);
   return (
-    /^\d{4}-\d{2}-\d{2}$/.test(raw) &&
+    /^[1-9]\d{3}-\d{2}-\d{2}$/.test(raw) &&
     !Number.isNaN(parsed) &&
     new Date(parsed).toISOString().slice(0, 10) === raw
   );
 };
-
-const DAY_MS = 86_400_000;
-const RELATIVE_UNITS: Record<string, number> = { d: DAY_MS, w: 7 * DAY_MS };
 
 // Resolves to an ISO instant, compared as a string against the stored UTC ts. A
 // date is midnight in the display zone, so it means the day a listing shows; an
@@ -80,7 +78,10 @@ export const sinceBound = (): OptionSpec<string | undefined> => ({
     if (isCalendarDate(raw)) return zonedMidnightIso(raw, displayTz());
     // Five digits keeps the bound inside Date's range, so toISOString cannot throw.
     const age = /^([1-9]\d{0,4})([dw])$/.exec(raw);
-    if (age) return new Date(now - Number(age[1]) * RELATIVE_UNITS[age[2]!]!).toISOString();
+    if (age) {
+      const days = Number(age[1]) * (age[2] === "w" ? 7 : 1);
+      return new Date(now - days * 86_400_000).toISOString();
+    }
     throw new CliError(
       `--${name} must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "${raw}")`,
     );

@@ -107,18 +107,23 @@ describe("sinceBound", () => {
     expect(coerce(sinceBound(), "2026-03-08", "since")).toBe("2026-03-08T05:00:00.000Z");
   });
 
-  test("a year below 100 is taken literally, not as 19xx", () => {
-    process.env.CEREBRO_TZ = "UTC";
-    expect(coerce(sinceBound(), "0050-06-01", "since")).toBe("0050-06-01T00:00:00.000Z");
-  });
-
   test("an age counts back from the dispatch's instant (#210)", () => {
     expect(coerce(sinceBound(), "7d", "since")).toBe("2026-03-03T12:00:00.000Z");
     expect(coerce(sinceBound(), "2w", "since")).toBe("2026-02-24T12:00:00.000Z");
   });
 
   test("rejects a transposed month, trailing garbage, a missing day, and a bad age", () => {
-    const bad = ["2026-31-01", "2026-01-31foo", "2026-02-30", "0d", "7", "3m", "-2d", "100000d"];
+    const bad = [
+      "2026-31-01",
+      "2026-01-31foo",
+      "2026-02-30",
+      "0d",
+      "7",
+      "3m",
+      "-2d",
+      "100000d",
+      "0050-06-01",
+    ];
     for (const raw of bad) {
       expect(message(() => coerce(sinceBound(), raw, "since"))).toBe(
         `--since must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "${raw}")`,
