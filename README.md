@@ -219,7 +219,7 @@ and a scheduled job are what keep it current. Those are operational details
 rather than everyday usage, so they live in `docs/`:
 
 - [docs/hooks.md](docs/hooks.md) covers the `SessionEnd` hook that indexes and
-  summarizes when a session ends, and why it runs a deployed binary rather than the source.
+  summarizes on `/clear`, and why it runs a deployed binary rather than the source.
 - [docs/scheduling.md](docs/scheduling.md) covers `digest-stale-batch.sh`, the
   catch-up script that works through the summary backlog, with a launchd plist
   and the cron equivalent.

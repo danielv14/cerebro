@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-# cerebro's Claude Code SessionEnd hook (any end reason). Indexes synchronously,
+# cerebro's Claude Code SessionEnd hook (matcher "clear"). Indexes synchronously,
 # then hands the payload to `cerebro digest run --stdin` detached. Wiring and
 # rationale: docs/hooks.md.
 set -uo pipefail
-
-# cerebro's own summarization child (`claude -p`, see DIGEST_CHILD_ENV) ending: not a
-# session to index or summarize.
-[ -n "${CEREBRO_DIGEST_CHILD:-}" ] && exit 0
 
 CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"
@@ -18,7 +14,7 @@ payload="$(cat)"
 sleep 0.5
 { date "+[clear-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 
-# nohup so the summary outlives the session teardown. The payload travels as an
+# nohup so the summary outlives the /clear teardown. The payload travels as an
 # argument and is piped in *inside* the detached child, so no foreground process
 # has to survive teardown for the session id to arrive.
 nohup bash -c '

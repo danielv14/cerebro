@@ -8,7 +8,7 @@ import {
   runDigest,
   runDrain,
 } from "../digest/run.ts";
-import { hookSkipReason, type StaleThread, staleThreads } from "../digest/stale.ts";
+import { type StaleThread, staleThreads } from "../digest/stale.ts";
 import {
   getSummary,
   type StoredSummary,
@@ -16,7 +16,6 @@ import {
   searchSummaries,
 } from "../digest/store.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
-import { rootOf } from "../thread.ts";
 import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
@@ -166,26 +165,19 @@ export const digestCommand: CommandGroup = {
 
     run: defineCommand({
       options: { stdin: flag() } satisfies OptionTable,
-      run: ({ db, args, rest, progress, now }) => {
+      run: ({ db, args, rest, progress }) => {
         const idArg = args.stdin ? parseSessionEndPayload(readStdin()) : rest[0];
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
-        const sessionId = resolveOrThrow(db, idArg ?? undefined, "digest run");
-        // Only the hook path is gated: `digest run <id>` is an explicit request.
-        if (args.stdin) {
-          const root = rootOf(db, sessionId);
-          const skip = hookSkipReason(db, root, now);
-          if (skip) return { lines: [`Skipped ${shortId(root)}: ${skip}.`] };
-        }
-        const outcome = runDigest(db, sessionId, {
+        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
         });
         return {
           lines: [digestOutcomeLine(outcome)],
-          // Exit 1 whenever a summary was attempted and not stored, so a manual
-          // invocation is scriptable; the detached hook ignores it.
+          // Exit 1 whenever no summary was stored, so a manual invocation is
+          // scriptable; the detached clear hook ignores it.
           exitCode: outcome.status === "summarized" ? 0 : 1,
         };
       },

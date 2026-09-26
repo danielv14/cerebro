@@ -52,6 +52,6 @@ or the prompt version (`DIGEST_PROMPT_VERSION`) is bumped.
 ## Keeping coverage up
 
 `digest drain` is the catch-up command, run now and then or on a schedule. The
-summary fired on session end is an optional fast path on top of it, never the
-source of truth: sessions the hook does not see (headless `claude -p`, a killed
-terminal, still open) only ever get a summary from a drain.
+summary fired on `/clear` is an optional fast path on top of it, never the
+source of truth: sessions that end another way (headless `claude -p`, abandoned,
+still open) only ever get a summary from a drain.

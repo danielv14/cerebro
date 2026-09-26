@@ -186,7 +186,7 @@ const hookWiring = (path: string): Check => {
   // Code's, not cerebro's, and it can change.
   const entry = JSON.stringify(hooks.SessionEnd ?? null);
   return entry.includes("cerebro")
-    ? check.ok("index + summarize on session end")
+    ? check.ok("index + summarize on /clear")
     : check.warn("not wired to cerebro", "add a SessionEnd hook (see README, Automation)");
 };
 

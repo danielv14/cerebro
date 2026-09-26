@@ -76,23 +76,6 @@ export const countHeldBackThreads = (db: Database, now: number): number =>
       .get({ $version: DIGEST_PROMPT_VERSION, ...drainWindow(now) }) as { c: number }
   ).c;
 
-// Why the hook should leave a thread alone, or null to summarize it. The hook fires
-// on every session end, including a resume that only read, so an up-to-date or
-// backing-off thread must not cost a model call each time.
-export const hookSkipReason = (db: Database, root: string, now: number): string | null => {
-  const row = db
-    .query(`SELECT df.attempts, df.retry_after ${STALE_FROM_WHERE} AND t.id = $root`)
-    .get({ $version: DIGEST_PROMPT_VERSION, $root: root }) as {
-    attempts: number | null;
-    retry_after: string | null;
-  } | null;
-  if (!row) return "its summary is up to date";
-  if (row.retry_after && row.retry_after > new Date(now).toISOString()) {
-    return `backing off after ${row.attempts} failed attempt(s), until ${row.retry_after}`;
-  }
-  return null;
-};
-
 export const countStaleThreads = (db: Database): number =>
   (
     db.query(`SELECT COUNT(*) AS c ${STALE_FROM_WHERE}`).get({

@@ -14,8 +14,8 @@ import {
   type SummarizeRequest,
   type Summarizer,
 } from "../src/digest/run.ts";
-import { DRAIN_SETTLE_MS, hookSkipReason, staleThreads } from "../src/digest/stale.ts";
-import { getSummary, retryDelayMs, writeSummary } from "../src/digest/store.ts";
+import { DRAIN_SETTLE_MS, staleThreads } from "../src/digest/stale.ts";
+import { getSummary, retryDelayMs } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
@@ -222,35 +222,6 @@ describe("createClaudeSummarizer", () => {
 
     expect(result.ok).toBe(true);
     expect(result.text).toBe("stdin:TRANSCRIPT args:PROMPT model:some-model");
-  });
-
-  test("marks the child so the SessionEnd hook it fires on exit stands down", () => {
-    fakeClaude('printf "child marker:%s, long enough to count" "$CEREBRO_DIGEST_CHILD"');
-    const result = createClaudeSummarizer(config())({ input: "T", model: "m", prompt: "P" });
-    expect(result.text).toBe("child marker:1, long enough to count");
-  });
-
-  test("the hook script exits at once for that child, before indexing anything", () => {
-    const marker = join(dir, "cerebro-was-called");
-    const fakeCerebro = join(dir, "cerebro");
-    fs.writeFileSync(
-      fakeCerebro,
-      `#!/usr/bin/env bash
-touch "${marker}"
-`,
-    );
-    fs.chmodSync(fakeCerebro, 0o755);
-    const hook = join(import.meta.dir, "..", "hooks", "summarize-on-clear.sh");
-    const run = (child: Record<string, string>) =>
-      Bun.spawnSync(["bash", hook], {
-        stdin: Buffer.from('{"session_id":"S"}'),
-        env: { ...process.env, CEREBRO_BIN: fakeCerebro, ...child },
-      });
-
-    expect(run({ CEREBRO_DIGEST_CHILD: "1" }).exitCode).toBe(0);
-    expect(fs.existsSync(marker)).toBe(false);
-    run({});
-    expect(fs.existsSync(marker)).toBe(true);
   });
 
   test("reports a non-zero exit as a failure and keeps the stderr reason", () => {
@@ -521,18 +492,6 @@ describe("digest failure backoff (#205)", () => {
     };
     runDrain(db, 8, { summarize: throwing, models, clock: () => NOW });
     expect(failure("ONE")).toMatchObject({ attempts: 1, last_error: "something unexpected" });
-  });
-
-  test("the hook path skips a fresh or backing-off thread and takes a stale one (#205)", () => {
-    expect(hookSkipReason(db, "ONE", NOW)).toBeNull();
-    writeSummary(db, "ONE", GOOD_SUMMARY);
-    expect(hookSkipReason(db, "ONE", NOW)).toBe("its summary is up to date");
-
-    runDigest(db, "TWO", { summarize: failing.summarize, models, clock: () => NOW });
-    expect(hookSkipReason(db, "TWO", NOW + HOUR)).toBe(
-      `backing off after 1 failed attempt(s), until ${new Date(NOW + 6 * HOUR).toISOString()}`,
-    );
-    expect(hookSkipReason(db, "TWO", NOW + 6 * HOUR)).toBeNull();
   });
 
   test("the backoff still lists the thread as stale, with its failures (#204)", () => {

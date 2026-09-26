@@ -421,9 +421,7 @@ never summarizes on its own initiative; the hooks decide when.
   the last 30 minutes is probably still being worked in, and summarizing it would
   buy a summary that is stale again within minutes while the older backlog waits;
   a thread whose recent attempts failed waits out its backoff. `digest stale`
-  still lists both, and `digest run <id>` ignores both. The hook's
-  `digest run --stdin` fires on every session end, so it asks `hookSkipReason`
-  first and leaves an up-to-date or backing-off thread alone.
+  still lists both, and `digest run` ignores both.
 - **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage

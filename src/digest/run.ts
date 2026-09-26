@@ -34,11 +34,6 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
-// The child's own SessionEnd would otherwise run cerebro's hook: a nested index
-// plus a digest of a session that was never persisted. hooks/summarize-on-clear.sh
-// exits at once when it sees this variable.
-export const DIGEST_CHILD_ENV = "CEREBRO_DIGEST_CHILD";
-
 // --no-session-persistence keeps Claude Code from writing this one-shot into
 // ~/.claude/projects, where the indexer would pick it up as a bogus session.
 export const createClaudeSummarizer =
@@ -49,7 +44,6 @@ export const createClaudeSummarizer =
         [bin, "-p", "--no-session-persistence", "--model", model, prompt],
         {
           stdin: Buffer.from(input, "utf8"),
-          env: { ...process.env, [DIGEST_CHILD_ENV]: "1" },
           stdout: "pipe",
           stderr: "pipe",
           timeout: timeoutMs,

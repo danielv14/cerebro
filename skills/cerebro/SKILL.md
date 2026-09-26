@@ -321,7 +321,7 @@ Archive
   warn  digest coverage   184/196 threads summarized, 12 stale  -> run the reconciler (hooks/digest-stale-batch.sh)
 
 Hooks
-  ok    SessionEnd        index + summarize on session end
+  ok    SessionEnd        index + summarize on /clear
 
 All checks passed, 1 warning(s).
 ```
@@ -480,7 +480,6 @@ stale.
   signal) and falls back on raw-data bm25 for threads not yet summarized; a hit marked
   `summary:` comes from the summary, `match:` from the raw data. Pass `--cwd` to boost
   threads from that repo.
-- **One automated hook:** `SessionEnd` (every end reason: `/clear`, exit, logout) indexes
-  synchronously and then runs `cerebro digest run --stdin` detached for the session that
-  just ended (best-effort;
+- **One automated hook:** `SessionEnd` on `/clear` indexes synchronously and then runs
+  `cerebro digest run --stdin` detached for the session just cleared (best-effort;
   `cerebro digest drain` is the reconciler that catches what is missed).
