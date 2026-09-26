@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
+import { reattachSummaries } from "./digest/store.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
 import { eachIndexableFile, orphanedCursorPaths } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
@@ -315,7 +316,12 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   // Gated on filesIndexed, not the message delta: a file can contribute only
   // title events, and a no-op run must stay O(files discovered).
   const relinked = filesIndexed > 0;
-  if (relinked) relinkThreads(db);
+  if (relinked) {
+    db.transaction(() => {
+      relinkThreads(db);
+      reattachSummaries(db);
+    })();
+  }
 
   const after = (db.query("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c;
   return { newMessages: after - before, filesScanned: files.length, filesIndexed, relinked };

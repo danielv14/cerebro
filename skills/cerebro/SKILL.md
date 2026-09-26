@@ -396,7 +396,9 @@ renders the transcript, picks the model by size, spawns `claude -p
 --no-session-persistence`, refuses to store output that cannot be a summary, and writes
 it in. Exit 0 only when something was actually stored. `cerebro digest drain --limit N`
 does the same for the N stalest threads, newest first, and does not let one broken thread
-stop the rest. This is what the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is
+stop the rest. It leaves a thread active in the last 30 minutes for later, and a thread
+whose attempts keep failing waits out a backoff (6 h, doubling up to a week); `digest
+stale` shows it as `[...; failed 2x, drain retries after <time>]`. This is what the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is
 spawned.
 
 The storage guard refuses text that cannot be a summary (too short, or something that

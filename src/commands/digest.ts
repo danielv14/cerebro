@@ -29,8 +29,11 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
         : row.summary_version < opts.promptVersion
           ? `prompt v${row.summary_version} < v${opts.promptVersion}`
           : "new activity since summary";
+    const failures = row.failed_attempts
+      ? `; failed ${row.failed_attempts}x, drain retries after ${shortTime(row.retry_after)}`
+      : "";
     lines.push(
-      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
+      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}${failures}]`,
     );
     lines.push(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
   }
@@ -90,7 +93,14 @@ export const digestStartLine = (about: { root: string; bytes: number; model: str
   `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
 
 export const drainSummary = (result: DrainResult): string[] => {
-  if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
+  if (result.outcomes.length === 0) {
+    return result.heldBack > 0
+      ? [
+          `Nothing to drain now: ${result.heldBack} stale thread(s) still active or backing off ` +
+            "after a failure (see cerebro digest stale).",
+        ]
+      : ["Nothing stale, the backlog is clean."];
+  }
   const lines: string[] = [];
   // Its own line: "0 summarized" alone reads like a clean backlog.
   if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
@@ -150,7 +160,7 @@ export const digestCommand: CommandGroup = {
 
     run: defineCommand({
       options: { stdin: flag() } satisfies OptionTable,
-      run: ({ db, args, rest, progress }) => {
+      run: ({ db, args, rest, progress, now }) => {
         const idArg = args.stdin ? parseSessionEndPayload(readStdin()) : rest[0];
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
@@ -158,6 +168,7 @@ export const digestCommand: CommandGroup = {
         const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
+          now,
         });
         return {
           lines: [digestOutcomeLine(outcome)],
@@ -170,13 +181,14 @@ export const digestCommand: CommandGroup = {
 
     drain: defineCommand({
       options: { limit: limitOption } satisfies OptionTable,
-      run: ({ db, args, progress }) => {
+      run: ({ db, args, progress, now }) => {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
         const result = runDrain(db, cap, {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
           onThreadStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
+          now,
         });
         return {
           lines: drainSummary(result),

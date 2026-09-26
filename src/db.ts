@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS summaries (
   source_last_ts  TEXT
 );
 
+-- A thread whose last digest attempts failed; a drain skips it until retry_after.
+-- Cleared by the next stored summary.
+CREATE TABLE IF NOT EXISTS digest_failures (
+  root_session_id TEXT PRIMARY KEY,
+  attempts        INTEGER NOT NULL,
+  last_error      TEXT,
+  failed_at       TEXT NOT NULL,
+  retry_after     TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS summaries_fts
   USING fts5(summary, content='summaries', content_rowid='rowid');
 

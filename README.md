@@ -199,7 +199,9 @@ cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (nev
 cerebro digest run <id>                     # summarize one thread: render, pick the model,
                                             #   call it, check the output, store it
 cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
-                                            #   (default 8); one failure never aborts the run
+                                            #   (default 8); one failure never aborts the run,
+                                            #   and threads active in the last 30 min or
+                                            #   backing off after a failure wait
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```

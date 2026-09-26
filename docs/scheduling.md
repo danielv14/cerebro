@@ -11,7 +11,8 @@ then runs `cerebro digest drain --limit $CEREBRO_DIGEST_BATCH_CAP` (default 8), 
 summarizes that many stale threads newest first through the same pipeline and model
 choice the `/clear` hook uses. The script itself owns only the scheduling concerns: a
 `mkdir` lock so two runs never overlap, a pinned PATH for launchd, and the log. A thread
-that fails is left for the next run and never aborts the current one.
+that fails is retried after a backoff (see [digest.md](digest.md)) and never aborts the
+current run.
 
 Working through the backlog buys speed as much as tidiness: every thread that
 gains a summary is one more prompt that `relevant` can answer from the cheap

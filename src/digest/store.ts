@@ -57,6 +57,78 @@ export const writeSummary = (
   return root;
 };
 
+// The first retry lands on the reconciler's next 6-hourly run; each further
+// failure doubles the wait, up to a week.
+const RETRY_BASE_MS = 6 * 60 * 60 * 1000;
+const RETRY_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const retryDelayMs = (attempts: number): number =>
+  Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_MAX_MS);
+
+export const recordDigestFailure = (
+  db: Database,
+  root: string,
+  error: string,
+  now: number,
+): void => {
+  const previous = db
+    .query("SELECT attempts FROM digest_failures WHERE root_session_id = ?")
+    .get(root) as { attempts: number } | null;
+  const attempts = (previous?.attempts ?? 0) + 1;
+  db.query(
+    `INSERT INTO digest_failures (root_session_id, attempts, last_error, failed_at, retry_after)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(root_session_id) DO UPDATE SET
+       attempts    = excluded.attempts,
+       last_error  = excluded.last_error,
+       failed_at   = excluded.failed_at,
+       retry_after = excluded.retry_after`,
+  ).run(
+    root,
+    attempts,
+    error,
+    new Date(now).toISOString(),
+    new Date(now + retryDelayMs(attempts)).toISOString(),
+  );
+};
+
+export const clearDigestFailure = (db: Database, root: string): void => {
+  db.query("DELETE FROM digest_failures WHERE root_session_id = ?").run(root);
+};
+
+// A relink that moves a thread's root leaves its summary keyed on a session that is
+// no longer a root. The summary moves to the current root, stale (it never covered
+// the session that took over), unless that root has one already; then the newest
+// is kept. Keys with no sessions row at all are left alone: a summary outlives the
+// sessions it was written from.
+export const reattachSummaries = (db: Database): void => {
+  const orphans = db
+    .query(
+      `SELECT su.root_session_id AS old, s.root_session_id AS root
+       FROM summaries su
+       JOIN sessions s ON s.session_id = su.root_session_id
+       WHERE s.root_session_id IS NOT NULL AND s.root_session_id <> su.root_session_id
+       ORDER BY su.summarized_at DESC`,
+    )
+    .all() as { old: string; root: string }[];
+  if (orphans.length > 0) {
+    const hasSummary = db.query("SELECT 1 FROM summaries WHERE root_session_id = ?");
+    const move = db.query(
+      "UPDATE summaries SET root_session_id = ?, source_last_ts = NULL WHERE root_session_id = ?",
+    );
+    const drop = db.query("DELETE FROM summaries WHERE root_session_id = ?");
+    for (const { old, root } of orphans) {
+      if (hasSummary.get(root)) drop.run(old);
+      else move.run(root, old);
+    }
+  }
+  db.run(
+    `DELETE FROM digest_failures WHERE root_session_id IN (
+       SELECT session_id FROM sessions
+       WHERE root_session_id IS NOT NULL AND root_session_id <> session_id)`,
+  );
+};
+
 export interface StoredSummary {
   root_session_id: string;
   summary: string;

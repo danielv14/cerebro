@@ -216,6 +216,12 @@ trust forever. The view-shape re-check heals databases an old unwrapped binary
 already wedged, and the check-then-ALTER migrations need the same write lock to
 keep the loser from throwing on the winner's column.
 
+A stamp newer than the build is left alone: no DDL, no migration, no re-stamp.
+Migrations are additive, so an older build (the frozen hook binary after a source
+upgrade) works against the newer schema, while migrating would stamp the archive
+down and swap in its old threads view, and the two builds would keep flipping it.
+`doctor` reports the mismatch.
+
 Connection pragmas (busy_timeout, foreign_keys, WAL) run on every open, outside
 the version gate: cerebro is opened concurrently by short-lived processes against
 one WAL file, and the 5s busy_timeout rides out checkpoint and WAL-recovery
@@ -280,8 +286,11 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
   resume link lives on the first main-chain turn). Ordering is by id, not ts: for
   a session's main-chain messages, insertion order equals file order equals
   conversational order on every path, so the lowest id is the true first turn even
-  with missing or unordered timestamps. The walk guards against cycles. Cost is
-  linear in archive size, which is why `runIndex` gates it on having read a file.
+  with missing or unordered timestamps. The walk guards against cycles. The first
+  turns come from `MIN(id)` per session over `idx_messages_session_chain`
+  (`session_id, is_sidechain`), and only rows whose link moved are written. Cost is
+  still linear in archive size, which is why `runIndex` gates it on having read a
+  file.
 
 ## FTS layer (`src/fts.ts`)
 
@@ -408,7 +417,11 @@ never summarizes on its own initiative; the hooks decide when.
 - **`stale.ts`** owns the staleness predicate (never summarized, summarized
   before the thread's latest activity, or summarized by an older prompt version),
   defined once for the listing, the count and the coverage reading so they cannot
-  drift.
+  drift. A drain takes a narrower set, `drainableThreads`: a thread active within
+  the last 30 minutes is probably still being worked in, and summarizing it would
+  buy a summary that is stale again within minutes while the older backlog waits;
+  a thread whose recent attempts failed waits out its backoff. `digest stale`
+  still lists both, and `digest run` ignores both.
 - **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage
@@ -417,7 +430,15 @@ never summarizes on its own initiative; the hooks decide when.
   model returned: a call takes minutes, and messages indexed in between must stay
   stale rather than be marked covered by a summary that never saw them.
   `searchSummaryRoots` owns the summaries_fts query shape, shared by `relevant`'s
-  summary tier and `digest search`.
+  summary tier and `digest search`. `digest_failures` records a thread's failed
+  attempts: a deterministic failure (a rejected output, an overflow) used to be
+  retried by every drain, costing tokens and a slot each time. The wait starts at
+  the reconciler's 6-hour cadence and doubles per attempt up to a week; a stored
+  summary clears it. A fatal result is the runner's problem, not the thread's, so
+  it records nothing. `reattachSummaries` runs after every relink: a moved root
+  leaves its summary keyed on a session that is no longer a root, so the summary
+  moves to the current root (stale, since it never covered the session that took
+  over) or is dropped when that root already has one.
 - **`config.ts`** resolves the digest environment into one `DigestConfig` at the
   CLI edge, so nothing in the pipeline reads `process.env` and a test supplies the
   tiering, timeout and binary path directly. It does not move onto the command

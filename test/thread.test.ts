@@ -119,6 +119,58 @@ describe("thread (identity + membership)", () => {
     });
   });
 
+  describe("summaries across a reroot (#206)", () => {
+    const summaryKeys = (): string[] =>
+      (
+        db.query("SELECT root_session_id FROM summaries ORDER BY 1").all() as {
+          root_session_id: string;
+        }[]
+      ).map((row) => row.root_session_id);
+
+    const indexResumeThenOriginal = (summarizeOriginalFirst: boolean): void => {
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "carry on with the limiter", {
+          parentUuid: "a1",
+          timestamp: ts(2),
+        }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      writeSummary(db, "RESUME", "Resume summary about the limiter. Keywords: limiter");
+      // An id with no sessions row is its own root, so this keys the summary on ORIG.
+      if (summarizeOriginalFirst) writeSummary(db, "ORIG", "Original summary. Keywords: original");
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+        assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    };
+
+    test("the summary moves to the new root, marked stale", () => {
+      indexResumeThenOriginal(false);
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      const row = db
+        .query("SELECT source_last_ts FROM summaries WHERE root_session_id = 'ORIG'")
+        .get() as { source_last_ts: string | null };
+      expect(row.source_last_ts).toBeNull();
+      // Still found, under the thread it belongs to.
+      expect(searchSummaries(db, "limiter").map((hit) => hit.id)).toEqual(["ORIG"]);
+    });
+
+    test("a root that already has a summary keeps it and the orphan is dropped", () => {
+      indexResumeThenOriginal(true);
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "limiter")).toEqual([]);
+      expect(searchSummaries(db, "original").map((hit) => hit.id)).toEqual(["ORIG"]);
+    });
+
+    test("a summary whose sessions rows are gone is left alone", () => {
+      writeSummary(db, "GONE", "Summary of a thread whose sessions were never indexed.");
+      seedThread();
+      expect(summaryKeys()).toEqual(["GONE"]);
+    });
+  });
+
   describe("threadMessages", () => {
     test("returns the whole thread (root + resume + folded subagent turns), ordered by ts then id", () => {
       seedThread();

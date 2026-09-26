@@ -119,8 +119,9 @@ const emptySessions = (db: Database): Check => {
 
 const digestCoverage = (db: Database): Check => {
   const check = defineCheck({ key: "digest", group: "Archive", label: "digest coverage" });
-  const { threads, summarized, stale } = summaryCoverage(db);
-  const detail = `${summarized}/${threads} threads summarized, ${stale} stale`;
+  const { threads, summarized, stale, failing } = summaryCoverage(db);
+  const failed = failing > 0 ? ` (${failing} failing, see cerebro digest stale)` : "";
+  const detail = `${summarized}/${threads} threads summarized, ${stale} stale${failed}`;
   return stale === 0
     ? check.ok(detail)
     : check.warn(detail, "run the reconciler (hooks/digest-stale-batch.sh)");
