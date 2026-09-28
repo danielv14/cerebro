@@ -51,8 +51,7 @@ describe("staleListing, through the stale query", () => {
     );
   };
 
-  const listing = (): string[] =>
-    staleListing(staleThreads(db, { now: NOW }), { promptVersion: DIGEST_PROMPT_VERSION });
+  const listing = (): string[] => staleListing(staleThreads(db, { now: NOW }));
 
   test("each stale reason gets its own label, then the how-to footer", () => {
     thread("aaaaaaaa00000000", "2026-07-15T08:00:00Z", "Never");
@@ -92,11 +91,12 @@ describe("staleListing, through the stale query", () => {
     thread("due00000aaaaaaaa", "2026-07-15T07:00:00Z");
     failure("due00000aaaaaaaa", "2026-07-15T09:00:00Z");
     thread("active00aaaaaaaa", "2026-07-15T11:50:00Z");
+    failure("active00aaaaaaaa", "2026-07-15T11:55:00Z");
 
     const lines = listing();
     expect(lines[0]).toBe(
       "active00  2026-07-15 13:50     5 msgs  cerebro  " +
-        "[never summarized; settling, drain waits until 2026-07-15 14:20]",
+        "[never summarized; failed 2x; settling, drain waits until 2026-07-15 14:20]",
     );
     expect(lines[2]).toBe(
       "backoff0  2026-07-15 10:00     5 msgs  cerebro  " +

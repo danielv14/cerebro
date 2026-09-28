@@ -24,21 +24,19 @@ export interface StaleThread {
   hold: DrainHold | null;
 }
 
-const STALE_FROM_WHERE = `
-  FROM threads t
-  LEFT JOIN summaries su ON su.root_session_id = t.id
-  LEFT JOIN digest_failures df ON df.root_session_id = t.id
-  WHERE (su.root_session_id IS NULL
-      OR su.source_last_ts IS NULL
-      OR su.source_last_ts < t.last_ts
-      OR su.prompt_version < $version)`;
-
-// Keep in step with the WHERE above: each branch there needs its own label here.
+// NULL for a thread whose summary is current: the reason is the stale predicate.
 const STALE_REASON = `CASE
          WHEN su.root_session_id IS NULL THEN 'never'
          WHEN su.prompt_version < $version THEN 'old-prompt'
          WHEN su.source_last_ts IS NULL THEN 'no-coverage'
-         ELSE 'new-activity' END`;
+         WHEN su.source_last_ts < t.last_ts THEN 'new-activity'
+         END`;
+
+const STALE_FROM_WHERE = `
+  FROM threads t
+  LEFT JOIN summaries su ON su.root_session_id = t.id
+  LEFT JOIN digest_failures df ON df.root_session_id = t.id
+  WHERE ${STALE_REASON} IS NOT NULL`;
 
 // Backing off first: its wait is at least 6 hours, so it outlasts any settle.
 const DRAIN_HOLD = `CASE
@@ -58,7 +56,6 @@ const STALE_COLUMNS = `t.id, t.last_ts, t.first_ts, t.msgs, t.project_path, t.ti
 export interface StaleQuery {
   limit?: number;
   now?: number;
-  // Only what a drain may take at `now`: rows with no hold.
   drain?: boolean;
 }
 

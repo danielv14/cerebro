@@ -20,12 +20,12 @@ import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
-const reasonLabel = (row: StaleThread, promptVersion: number): string => {
+const reasonLabel = (row: StaleThread): string => {
   switch (row.reason) {
     case "never":
       return "never summarized";
     case "old-prompt":
-      return `prompt v${row.summary_version} < v${promptVersion}`;
+      return `prompt v${row.summary_version} < v${DIGEST_PROMPT_VERSION}`;
     case "no-coverage":
       return "summary moved from an earlier root";
     case "new-activity":
@@ -34,13 +34,13 @@ const reasonLabel = (row: StaleThread, promptVersion: number): string => {
 };
 
 const holdLabel = (row: StaleThread): string => {
-  const failures = row.failed_attempts
-    ? `; failed ${row.failed_attempts}x, ${
-        row.hold === "backing-off"
-          ? `drain retries after ${shortTime(row.retry_after)}`
-          : "next drain retries it"
-      }`
-    : "";
+  const retry =
+    row.hold === "backing-off"
+      ? `, drain retries after ${shortTime(row.retry_after)}`
+      : row.hold === null
+        ? ", next drain retries it"
+        : "";
+  const failures = row.failed_attempts ? `; failed ${row.failed_attempts}x${retry}` : "";
   const settling =
     row.hold === "settling" && row.last_ts
       ? `; settling, drain waits until ${shortTime(
@@ -50,11 +50,11 @@ const holdLabel = (row: StaleThread): string => {
   return failures + settling;
 };
 
-export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
+export const staleListing = (rows: StaleThread[]): string[] => {
   const lines: string[] = [];
   for (const row of rows) {
     lines.push(
-      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reasonLabel(row, opts.promptVersion)}${holdLabel(row)}]`,
+      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reasonLabel(row)}${holdLabel(row)}]`,
     );
     lines.push(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
   }
@@ -160,11 +160,7 @@ export const digestCommand: CommandGroup = {
         const rows = staleThreads(db, { limit: args.limit ?? 50, now });
         return {
           json: rows,
-          lines: args.ids
-            ? staleIds(rows)
-            : rows.length > 0
-              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })
-              : [],
+          lines: args.ids ? staleIds(rows) : rows.length > 0 ? staleListing(rows) : [],
           empty: args.ids ? undefined : "All threads are summarized and up to date.",
         };
       },
