@@ -5,7 +5,6 @@ on:
   push:
     branches: [main]
 
-# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR branch).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
