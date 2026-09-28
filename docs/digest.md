@@ -38,8 +38,12 @@ It spawns `claude -p --no-session-persistence` with the model the size tiering
 picked, hands it the transcript on stdin, and stores the result only if the call
 succeeded and the output looks like an actual summary rather than an error
 message or a fragment. Nothing is stored on failure, so the thread stays stale
-and the next `drain` retries it. `CEREBRO_CLAUDE_BIN` overrides which binary is
-spawned.
+and a later `drain` retries it: 6 hours after the first failure, doubling per
+attempt up to a week, so a thread that fails every time does not cost tokens on
+every run. `digest stale` shows the failure count, and an explicit `digest run`
+ignores the wait. A drain also leaves threads active in the last 30 minutes for
+later, since their summary would be stale again at once. `CEREBRO_CLAUDE_BIN`
+overrides which binary is spawned.
 
 The contract lives in one place: the prompt asks for exactly what the storage
 guard accepts, and `digest stale` re-surfaces a thread whenever it gains messages

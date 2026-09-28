@@ -20,7 +20,10 @@ import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
-export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
+export const staleListing = (
+  rows: StaleThread[],
+  opts: { promptVersion: number; now: number },
+): string[] => {
   const lines: string[] = [];
   for (const row of rows) {
     const reason =
@@ -29,8 +32,13 @@ export const staleListing = (rows: StaleThread[], opts: { promptVersion: number 
         : row.summary_version < opts.promptVersion
           ? `prompt v${row.summary_version} < v${opts.promptVersion}`
           : "new activity since summary";
+    const retry =
+      row.retry_after && Date.parse(row.retry_after) > opts.now
+        ? `drain retries after ${shortTime(row.retry_after)}`
+        : "next drain retries it";
+    const failures = row.failed_attempts ? `; failed ${row.failed_attempts}x, ${retry}` : "";
     lines.push(
-      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}]`,
+      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}${failures}]`,
     );
     lines.push(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
   }
@@ -90,7 +98,14 @@ export const digestStartLine = (about: { root: string; bytes: number; model: str
   `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
 
 export const drainSummary = (result: DrainResult): string[] => {
-  if (result.outcomes.length === 0) return ["Nothing stale, the backlog is clean."];
+  if (result.outcomes.length === 0) {
+    return result.heldBack > 0
+      ? [
+          `Nothing to drain now: ${result.heldBack} stale thread(s) still active or backing off ` +
+            "after a failure (see cerebro digest stale).",
+        ]
+      : ["Nothing stale, the backlog is clean."];
+  }
   const lines: string[] = [];
   // Its own line: "0 summarized" alone reads like a clean backlog.
   if (result.aborted) lines.push(`Drain aborted: ${result.aborted}`);
@@ -134,14 +149,14 @@ export const digestCommand: CommandGroup = {
   subcommands: {
     stale: defineCommand({
       options: { limit: limitOption, ids: flag(), json: flag() } satisfies OptionTable,
-      run: ({ db, args }) => {
+      run: ({ db, args, now }) => {
         const rows = staleThreads(db, args.limit ?? 50);
         return {
           json: rows,
           lines: args.ids
             ? staleIds(rows)
             : rows.length > 0
-              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })
+              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION, now })
               : [],
           empty: args.ids ? undefined : "All threads are summarized and up to date.",
         };

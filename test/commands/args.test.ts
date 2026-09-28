@@ -1,23 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   CliError,
   choice,
   flag,
-  isoDate,
   messageRange,
   numeric,
   type OptionTable,
   readOptions,
+  sinceBound,
   text,
 } from "../../src/commands/args.ts";
 
 // The coercions throw CliError with the exact wording the CLI prints, so each case
 // asserts the message and not just the failure.
+const NOW = Date.parse("2026-03-10T12:00:00.000Z");
 const coerce = (
-  spec: { coerce: (raw: string, name: string) => unknown },
+  spec: { coerce: (raw: string, name: string, now: number) => unknown },
   raw: string,
   name: string,
-) => spec.coerce(raw, name);
+) => spec.coerce(raw, name, NOW);
 
 const message = (fn: () => unknown): string => {
   try {
@@ -83,15 +84,49 @@ describe("numeric", () => {
   });
 });
 
-describe("isoDate", () => {
-  test("accepts a real calendar date", () => {
-    expect(coerce(isoDate(), "2026-01-31", "since")).toBe("2026-01-31");
+describe("sinceBound", () => {
+  const saved = process.env.CEREBRO_TZ;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.CEREBRO_TZ;
+    else process.env.CEREBRO_TZ = saved;
   });
 
-  test("rejects a transposed month, trailing garbage, and a date that does not exist", () => {
-    for (const raw of ["2026-31-01", "2026-01-31foo", "2026-02-30"]) {
-      expect(message(() => coerce(isoDate(), raw, "since"))).toBe(
-        `--since must be a valid ISO date like 2026-01-31 (got "${raw}")`,
+  test("a date is midnight in the display zone, as a UTC instant (#208)", () => {
+    delete process.env.CEREBRO_TZ;
+    expect(coerce(sinceBound(), "2026-01-31", "since")).toBe("2026-01-30T23:00:00.000Z");
+    expect(coerce(sinceBound(), "2026-07-15", "since")).toBe("2026-07-14T22:00:00.000Z");
+    process.env.CEREBRO_TZ = "UTC";
+    expect(coerce(sinceBound(), "2026-01-31", "since")).toBe("2026-01-31T00:00:00.000Z");
+  });
+
+  test("a day that starts or ends a DST switch still resolves to its own midnight", () => {
+    delete process.env.CEREBRO_TZ;
+    expect(coerce(sinceBound(), "2026-03-29", "since")).toBe("2026-03-28T23:00:00.000Z");
+    expect(coerce(sinceBound(), "2026-10-25", "since")).toBe("2026-10-24T22:00:00.000Z");
+    process.env.CEREBRO_TZ = "America/New_York";
+    expect(coerce(sinceBound(), "2026-03-08", "since")).toBe("2026-03-08T05:00:00.000Z");
+  });
+
+  test("an age counts back from the dispatch's instant (#210)", () => {
+    expect(coerce(sinceBound(), "7d", "since")).toBe("2026-03-03T12:00:00.000Z");
+    expect(coerce(sinceBound(), "2w", "since")).toBe("2026-02-24T12:00:00.000Z");
+  });
+
+  test("rejects a transposed month, trailing garbage, a missing day, and a bad age", () => {
+    const bad = [
+      "2026-31-01",
+      "2026-01-31foo",
+      "2026-02-30",
+      "0d",
+      "7",
+      "3m",
+      "-2d",
+      "100000d",
+      "0050-06-01",
+    ];
+    for (const raw of bad) {
+      expect(message(() => coerce(sinceBound(), raw, "since"))).toBe(
+        `--since must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "${raw}")`,
       );
     }
   });
@@ -133,11 +168,15 @@ describe("readOptions", () => {
   } satisfies OptionTable;
 
   test("absent options take their declared absent values, so a flag is false not undefined", () => {
-    expect(readOptions(table, {})).toEqual({ limit: undefined, project: undefined, json: false });
+    expect(readOptions(table, {}, NOW)).toEqual({
+      limit: undefined,
+      project: undefined,
+      json: false,
+    });
   });
 
   test("supplied options are coerced to their declared types", () => {
-    expect(readOptions(table, { limit: "5", project: "cerebro", json: true })).toEqual({
+    expect(readOptions(table, { limit: "5", project: "cerebro", json: true }, NOW)).toEqual({
       limit: 5,
       project: "cerebro",
       json: true,
@@ -145,13 +184,13 @@ describe("readOptions", () => {
   });
 
   test("a bad value throws CliError from the option that owns the rule", () => {
-    expect(() => readOptions(table, { limit: "0" })).toThrow(CliError);
+    expect(() => readOptions(table, { limit: "0" }, NOW)).toThrow(CliError);
   });
 
   test("a value for an option the table does not declare is ignored", () => {
     // The dispatcher rejects those before this point; readOptions only ever reads
     // the names its own table declares.
-    expect(readOptions(table, { keep: "3" })).toEqual({
+    expect(readOptions(table, { keep: "3" }, NOW)).toEqual({
       limit: undefined,
       project: undefined,
       json: false,

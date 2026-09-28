@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import {
   dedupedHitWindow,
   type HitFilters,
+  quoteFtsToken,
   type RankedMessageHit,
   rankedMessageHits,
 } from "./fts.ts";
@@ -64,11 +65,7 @@ export const search = (
   try {
     kept = collect(query);
   } catch {
-    const sanitized = query
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((token) => `"${token.replace(/"/g, '""')}"`)
-      .join(" ");
+    const sanitized = query.split(/\s+/).filter(Boolean).map(quoteFtsToken).join(" ");
     if (!sanitized) return [];
     kept = collect(sanitized);
   }

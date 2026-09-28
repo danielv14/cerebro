@@ -83,7 +83,8 @@ shows the **best hit per thread** (so a chatty thread does not fill every slot);
 `--all` gives every matching message. `--project P` filters on a substring of the
 project path (the thread's, so a resume without its own cwd is not lost), `--branch B`
 on a substring of the recorded git branch (thread-level too: a thread matches when any
-of its sessions was on the branch), `--since 2026-01-31` on timestamp.
+of its sessions was on the branch), `--since 2026-01-31` on timestamp (midnight in the
+display zone; an age like `--since 7d` or `--since 2w` counts back from now).
 
 Tool calls are flattened into the message text (`[tool_use:Bash] …`, `[tool_result] …`),
 which is good for finding commands and filenames but drowns prose. Two filters against
@@ -114,7 +115,7 @@ Lists threads, most recently active first. `--project P` filters on a substring 
 project path, `--branch B` on a substring of the recorded git branch (a thread matches
 when **any** of its sessions was on the branch, so work that started on master and
 moved to a branch in a resume is still found), `--since 2026-01-31` on the thread's
-last activity (same date format as `search --since`). Each row shows the thread's
+last activity (same date or age format as `search --since`). Each row shows the thread's
 branch as an `@` suffix when one was recorded, `+N resume(s)` for threads that were
 resumed and `[body deleted]` when the source file is gone but the archive remains.
 Default limit 30. Threads with no indexed turns (a session opened and closed right
@@ -194,7 +195,7 @@ Related past sessions:
 To recall one: cerebro show <id> (add --full for the transcript), or cerebro search "<terms>".
 ```
 
-### `cerebro show <session-id> [--full] [--range A..B]`
+### `cerebro show <session-id> [--full] [--range A..B] [--grep T]`
 Shows a whole logical thread (root + all resumes + subagent turns), ordered
 chronologically. Outline by default; past 100 messages it shows the first and last
 50 with a marker line in between (`… N message(s) omitted (#A..#B), open a slice
@@ -203,8 +204,21 @@ and the tail how it ended without paying for every line. `--full` gives the
 verbatim transcript.
 `--range 12..18` (or a single number) gives a verbatim slice with the same numbering as
 the outline and as the `#N` markers in `search` hits, so you can jump straight to a hit
-in a huge thread without pulling the whole transcript. Subagent turns are tagged
-`[subagent]`.
+in a huge thread without pulling the whole transcript. `--grep T` lists only the turns
+whose text contains `T` (case-insensitive, plain substring), numbered the same way, which
+is how you find every place a long thread touched something the outline omits. Subagent
+turns are tagged `[subagent]`.
+
+```
+$ cerebro show a1b2c3d4 --grep localStorage
+Thread a1b2c3d4  3 of 162 message(s) contain "localStorage"
+
+  1. user      2026-02-12 15:02  Add a dark mode toggle to the settings page, persisted in localStorage …
+ 87. assistant 2026-02-12 16:05  [tool_use:Edit] {"file_path":"src/theme/ThemeProvider.tsx", … localStorage …
+113. assistant 2026-02-12 16:31  The toggle now persists via localStorage; running the test suite.
+
+Open one: cerebro show <id> --range <n>
+```
 
 Outline:
 ```
@@ -271,7 +285,8 @@ changelog                              61      1     62      0  2026-08-18
 
 Names come out as they were seen, so Claude Code's built-ins (`/clear`, `/model`) are in
 the list and a renamed skill appears twice. `--json` returns an object, not a bare array:
-the rows plus `from`/`to`, the window the counts cover. Read a low number with that
+the rows plus `from`/`to`, the window the counts cover (ISO instants: `--since` resolves to
+one). Read a low number with that
 window in mind rather than as "unused": anything called before the archive begins is
 invisible, and a skill only used in one season looks dead the rest of the year.
 
@@ -395,7 +410,9 @@ renders the transcript, picks the model by size, spawns `claude -p
 --no-session-persistence`, refuses to store output that cannot be a summary, and writes
 it in. Exit 0 only when something was actually stored. `cerebro digest drain --limit N`
 does the same for the N stalest threads, newest first, and does not let one broken thread
-stop the rest. This is what the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is
+stop the rest. It leaves a thread active in the last 30 minutes for later, and a thread
+whose attempts keep failing waits out a backoff (6 h, doubling up to a week); `digest
+stale` shows it as `[...; failed 2x, drain retries after <time>]`. This is what the hooks run. `CEREBRO_CLAUDE_BIN` controls which binary is
 spawned.
 
 The storage guard refuses text that cannot be a summary (too short, or something that
@@ -447,8 +464,8 @@ stale.
   `$CEREBRO_DB`). It deliberately lives outside the git repo: it holds private
   conversations verbatim and grows large (tens of MB+).
 - **Time zone:** timestamps are stored as verbatim UTC and displayed in
-  `Europe/Stockholm`. `$CEREBRO_TZ` takes any IANA zone; an unknown zone falls back to
-  the default rather than crashing.
+  `Europe/Stockholm`, and `--since` dates are midnights in that zone. `$CEREBRO_TZ`
+  takes any IANA zone; an unknown zone falls back to the default rather than crashing.
 - **tool_use / tool_result** are flattened to greppable text (`[tool_use:Bash] {...}`,
   `[tool_result] ...`), so you can search for commands and file contents that were
   actually run. Each such block is capped at the first 1 KB (with a

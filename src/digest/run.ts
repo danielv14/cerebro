@@ -7,8 +7,8 @@ import {
   type DigestModelConfig,
   pickDigestModel,
 } from "./prompt.ts";
-import { staleThreads } from "./stale.ts";
-import { rejectSummaryReason, writeSummary } from "./store.ts";
+import { countStaleThreads, staleThreads } from "./stale.ts";
+import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
 
 // Design notes: docs/architecture.md ("Digest").
 
@@ -90,6 +90,8 @@ export interface DigestOptions {
   // Called before the model call, so a wedged call still leaves a trace of which
   // thread, how big, and which model.
   onStart?: (about: { root: string; bytes: number; model: string }) => void;
+  // Read when a failure happens, not once up front: a drain runs for minutes.
+  clock?: () => number;
 }
 
 export const runDigest = (db: Database, sessionId: string, opts: DigestOptions): DigestOutcome => {
@@ -107,12 +109,15 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
   opts.onStart?.({ root, bytes, model });
 
   const result = opts.summarize({ input, model, prompt: DIGEST_PROMPT });
-  if (!result.ok) {
-    return { status: "failed", root, reason: result.detail, model, bytes, fatal: result.fatal };
+  // A fatal outcome is the runner's, not the thread's, so it never backs one off.
+  if (!result.ok && result.fatal) {
+    return { status: "failed", root, reason: result.detail, model, bytes, fatal: true };
   }
-  const rejected = rejectSummaryReason(result.text);
-  if (rejected) {
-    return { status: "failed", root, reason: `rejected, ${rejected}`, model, bytes };
+  const rejected = result.ok ? rejectSummaryReason(result.text) : null;
+  if (!result.ok || rejected) {
+    const reason = result.ok ? `rejected, ${rejected}` : result.detail;
+    recordDigestFailure(db, root, reason, (opts.clock ?? Date.now)());
+    return { status: "failed", root, reason, model, bytes };
   }
 
   writeSummary(db, sessionId, result.text, model, coversLastTs);
@@ -125,6 +130,9 @@ export interface DrainResult {
   failed: number;
   skipped: number;
   aborted?: string;
+  // Stale threads left for later (still active, or backing off). Only counted when
+  // the drain took none: the empty-drain line is its one reader.
+  heldBack: number;
 }
 
 export interface DrainOptions {
@@ -133,11 +141,19 @@ export interface DrainOptions {
   onStart?: (count: number) => void;
   onThreadStart?: (about: { root: string; bytes: number; model: string }) => void;
   onOutcome?: (outcome: DigestOutcome) => void;
+  clock?: () => number;
 }
 
 export const runDrain = (db: Database, limit: number, opts: DrainOptions): DrainResult => {
-  const result: DrainResult = { outcomes: [], summarized: 0, failed: 0, skipped: 0 };
-  const threads = staleThreads(db, limit);
+  const clock = opts.clock ?? Date.now;
+  const threads = staleThreads(db, limit, clock());
+  const result: DrainResult = {
+    outcomes: [],
+    summarized: 0,
+    failed: 0,
+    skipped: 0,
+    heldBack: threads.length === 0 ? countStaleThreads(db) : 0,
+  };
   if (threads.length > 0) opts.onStart?.(threads.length);
   for (const thread of threads) {
     // One thread must never take the run down with it.
@@ -147,9 +163,15 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
         summarize: opts.summarize,
         models: opts.models,
         onStart: opts.onThreadStart,
+        clock,
       });
     } catch (error) {
       outcome = { status: "failed", root: thread.id, reason: (error as Error).message };
+      // A throw that repeats would otherwise take this thread's slot on every drain;
+      // one from a locked or broken database fails the record too, and changes nothing.
+      try {
+        recordDigestFailure(db, thread.id, outcome.reason!, clock());
+      } catch {}
     }
     opts.onOutcome?.(outcome);
     result.outcomes.push(outcome);

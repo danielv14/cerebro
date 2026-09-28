@@ -40,9 +40,11 @@ cerebro sessions [--project P] [--branch B] [--since D] [--limit N]
 cerebro recent [--cwd P] [--days D]         # recent threads for one repo
 cerebro relevant <prompt> [--limit N] [--cwd P]   # past threads relevant to a prompt
                                             #   (threads in --cwd's repo rank higher)
-cerebro show <session-id> [--full] [--range A..B]  # outline (default), full transcript, or a slice
-                                            #   (a long outline shows the first and last 50
-                                            #    messages with an omitted marker in between)
+cerebro show <session-id> [--full] [--range A..B] [--grep T]
+                                            # outline (default), full transcript, a slice,
+                                            #   or the turns containing T (a long outline
+                                            #   shows the first and last 50 messages with an
+                                            #   omitted marker in between)
 cerebro stats                               # archive counts
 cerebro skills [--since D] [--limit N]      # how often each skill was invoked
 cerebro doctor [--full]                     # read-only health report (docs/operations.md)
@@ -67,11 +69,13 @@ everything follows it: the transcripts cerebro reads, the archive, the binary
 `bun run deploy` installs, and the paths the hooks and `doctor` look at.
 
 Timestamps are stored in UTC and shown in local time, `Europe/Stockholm` by
-default. Set `$CEREBRO_TZ` to any IANA zone name to change that
-(`CEREBRO_TZ=UTC cerebro sessions`); an unknown zone falls back to the default
-rather than erroring. The plain `TZ` variable is deliberately ignored: the hooks
-and scheduled jobs inherit environments cerebro does not control, and letting
-that silently change how the archive is displayed would be surprising.
+default, and a `--since 2026-01-31` date means midnight in that same zone (an
+age like `--since 7d` or `2w` works too). Set `$CEREBRO_TZ` to any IANA zone
+name to change that (`CEREBRO_TZ=UTC cerebro sessions`); an unknown zone falls
+back to the default rather than erroring. The plain `TZ` variable is deliberately
+ignored: the hooks and scheduled jobs inherit environments cerebro does not
+control, and letting that silently change how the archive is displayed would be
+surprising.
 
 The database lives outside this repo on purpose: it is generated, machine-local
 data that grows large (tens of MB) and holds your private conversations word for
@@ -197,7 +201,9 @@ cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (nev
 cerebro digest run <id>                     # summarize one thread: render, pick the model,
                                             #   call it, check the output, store it
 cerebro digest drain [--limit N]            # do that for the N stalest threads, newest first
-                                            #   (default 8); one failure never aborts the run
+                                            #   (default 8); one failure never aborts the run,
+                                            #   and threads active in the last 30 min or
+                                            #   backing off after a failure wait
 cerebro digest search <query> [--limit N]   # full-text search the summaries
 cerebro digest show <id>                    # print a thread's stored summary
 ```

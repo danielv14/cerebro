@@ -1,3 +1,5 @@
+import { displayTz, zonedMidnightIso } from "../tz.ts";
+
 // CLI options as data. See CLAUDE.md ("How a command is shaped").
 
 // runCli turns this into a clean message plus exit 1, never a stack trace.
@@ -6,7 +8,8 @@ export class CliError extends Error {}
 export interface OptionSpec<T> {
   kind: "string" | "boolean";
   // Throws CliError on bad input. Never called for a boolean or an absent option.
-  coerce: (raw: string, name: string) => T;
+  // `now` is the dispatch's instant, for values relative to it.
+  coerce: (raw: string, name: string, now: number) => T;
   absent: T;
 }
 
@@ -53,21 +56,35 @@ export const numeric = (opts: {
 export const positiveInt = (): OptionSpec<number | undefined> =>
   numeric({ integer: true, min: 1, label: "a positive integer" });
 
-// Anchored shape check plus a round-trip calendar check: an unanchored regex lets
-// "2026-31-01" through, and Date.parse alone is engine-dependent (JSC rolls
-// "2026-02-30" over to March 2). A bad date would silently exclude everything.
-export const isoDate = (): OptionSpec<string | undefined> => ({
+// Years from 1000 only: Date.UTC reads 0-99 as 19xx, and no archive predates 1000.
+const isCalendarDate = (raw: string): boolean => {
+  const parsed = Date.parse(`${raw}T00:00:00Z`);
+  return (
+    /^[1-9]\d{3}-\d{2}-\d{2}$/.test(raw) &&
+    !Number.isNaN(parsed) &&
+    new Date(parsed).toISOString().slice(0, 10) === raw
+  );
+};
+
+// Resolves to an ISO instant, compared as a string against the stored UTC ts. A
+// date is midnight in the display zone, so it means the day a listing shows; an
+// age (7d, 2w) counts back from the dispatch's instant. The date is checked by
+// shape and by a calendar round-trip: an unanchored regex lets "2026-31-01"
+// through, and Date.parse alone rolls "2026-02-30" over to March 2. A bad date
+// would silently exclude everything.
+export const sinceBound = (): OptionSpec<string | undefined> => ({
   kind: "string",
-  coerce: (raw, name) => {
-    const parsed = Date.parse(`${raw}T00:00:00Z`);
-    const roundTrips =
-      /^\d{4}-\d{2}-\d{2}$/.test(raw) &&
-      !Number.isNaN(parsed) &&
-      new Date(parsed).toISOString().slice(0, 10) === raw;
-    if (!roundTrips) {
-      throw new CliError(`--${name} must be a valid ISO date like 2026-01-31 (got "${raw}")`);
+  coerce: (raw, name, now) => {
+    if (isCalendarDate(raw)) return zonedMidnightIso(raw, displayTz());
+    // Five digits keeps the bound inside Date's range, so toISOString cannot throw.
+    const age = /^([1-9]\d{0,4})([dw])$/.exec(raw);
+    if (age) {
+      const days = Number(age[1]) * (age[2] === "w" ? 7 : 1);
+      return new Date(now - days * 86_400_000).toISOString();
     }
-    return raw;
+    throw new CliError(
+      `--${name} must be an ISO date like 2026-01-31 or an age like 7d or 2w (got "${raw}")`,
+    );
   },
   absent: undefined,
 });
@@ -106,13 +123,14 @@ export const messageRange = (): OptionSpec<MessageRange | undefined> => ({
 export const readOptions = <T extends OptionTable>(
   table: T,
   parsed: Record<string, string | boolean | undefined>,
+  now: number,
 ): OptionValues<T> => {
   const values: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(table)) {
     const raw = parsed[name];
     if (raw === undefined) values[name] = spec.absent;
     else if (spec.kind === "boolean") values[name] = raw === true;
-    else values[name] = spec.coerce(String(raw), name);
+    else values[name] = spec.coerce(String(raw), name, now);
   }
   return values as OptionValues<T>;
 };

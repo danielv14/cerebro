@@ -14,8 +14,8 @@ import {
   type SummarizeRequest,
   type Summarizer,
 } from "../src/digest/run.ts";
-import { staleThreads } from "../src/digest/stale.ts";
-import { getSummary } from "../src/digest/store.ts";
+import { DRAIN_SETTLE_MS, staleThreads } from "../src/digest/stale.ts";
+import { getSummary, retryDelayMs } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
@@ -384,6 +384,164 @@ describe("runDrain", () => {
     expect(result.aborted).toContain("could not run claude");
     expect(calls.length).toBe(1); // no point trying the other two
     expect(result.outcomes.length).toBe(1);
+  });
+});
+
+describe("digest failure backoff (#205)", () => {
+  let env: TempClaude;
+  let db: Database;
+  const NOW = Date.parse(ts(0)) + 24 * 60 * 60 * 1000;
+  const HOUR = 60 * 60 * 1000;
+  const failing = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
+
+  const failure = (root: string) =>
+    db.query("SELECT * FROM digest_failures WHERE root_session_id = ?").get(root) as {
+      attempts: number;
+      last_error: string;
+      retry_after: string;
+    } | null;
+
+  beforeEach(() => {
+    env = makeClaudeDir();
+    for (const id of ["ONE", "TWO"]) {
+      writeSession(env.projects, "-repo", id, [
+        userMsg(id, `${id}-u1`, `work on ${id}`, { timestamp: ts(0) }),
+      ]);
+    }
+    db = openDb(":memory:");
+    runIndex(db, { adapters: env.adapters });
+  });
+  afterEach(() => {
+    db.close();
+    env.cleanup();
+  });
+
+  test("the wait doubles per attempt and is capped at a week", () => {
+    expect(retryDelayMs(1)).toBe(6 * HOUR);
+    expect(retryDelayMs(2)).toBe(12 * HOUR);
+    expect(retryDelayMs(3)).toBe(24 * HOUR);
+    expect(retryDelayMs(20)).toBe(7 * 24 * HOUR);
+  });
+
+  test("a failed attempt is recorded with its reason and next retry", () => {
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    expect(failure("ONE")).toMatchObject({
+      attempts: 2,
+      last_error: "claude exited 1",
+      retry_after: new Date(NOW + 12 * HOUR).toISOString(),
+    });
+  });
+
+  test("a rejected output counts as a failure too", () => {
+    const rejecting = fakeSummarizer({ text: "Prompt is too long" });
+    runDigest(db, "ONE", { summarize: rejecting.summarize, models, clock: () => NOW });
+    expect(failure("ONE")?.attempts).toBe(1);
+  });
+
+  test("a fatal outcome is the runner's problem and backs no thread off", () => {
+    const fatal = fakeSummarizer({ ok: false, text: "", detail: "not found", fatal: true });
+    runDigest(db, "ONE", { summarize: fatal.summarize, models, clock: () => NOW });
+    expect(failure("ONE")).toBeNull();
+  });
+
+  test("a stored summary clears the record", () => {
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    runDigest(db, "ONE", { summarize: fakeSummarizer().summarize, models, clock: () => NOW });
+    expect(failure("ONE")).toBeNull();
+  });
+
+  test("a drain skips a thread in backoff until its retry time, then takes it", () => {
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+
+    const { summarize, calls } = fakeSummarizer();
+    const early = runDrain(db, 8, { summarize, models, clock: () => NOW + HOUR });
+    expect(early.outcomes.map((o) => o.root)).toEqual(["TWO"]);
+
+    const later = runDrain(db, 8, { summarize, models, clock: () => NOW + 6 * HOUR });
+    expect(later.outcomes.map((o) => o.root)).toEqual(["ONE"]);
+    expect(calls.length).toBe(2);
+  });
+
+  test("an explicit digest run ignores the backoff", () => {
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    const outcome = runDigest(db, "ONE", {
+      summarize: fakeSummarizer().summarize,
+      models,
+      clock: () => NOW + HOUR,
+    });
+    expect(outcome.status).toBe("summarized");
+  });
+
+  test("a failure late in a drain is dated when it happened, not when the drain began", () => {
+    let tick = NOW;
+    const clock = () => {
+      tick += HOUR;
+      return tick;
+    };
+    runDrain(db, 8, { summarize: failing.summarize, models, clock });
+    // The drain read the clock once to select, then once per recorded failure.
+    expect(failure("ONE")?.retry_after).toBe(new Date(NOW + 2 * HOUR + 6 * HOUR).toISOString());
+    expect(failure("TWO")?.retry_after).toBe(new Date(NOW + 3 * HOUR + 6 * HOUR).toISOString());
+  });
+
+  test("a thread whose digest throws is backed off too, so it cannot loop", () => {
+    const throwing: Summarizer = () => {
+      throw new Error("something unexpected");
+    };
+    runDrain(db, 8, { summarize: throwing, models, clock: () => NOW });
+    expect(failure("ONE")).toMatchObject({ attempts: 1, last_error: "something unexpected" });
+  });
+
+  test("the backoff still lists the thread as stale, with its failures (#204)", () => {
+    runDigest(db, "ONE", { summarize: failing.summarize, models, clock: () => NOW });
+    const row = staleThreads(db).find((thread) => thread.id === "ONE");
+    expect(row).toMatchObject({ failed_attempts: 1 });
+  });
+});
+
+describe("digest drain settle window (#204)", () => {
+  let env: TempClaude;
+  let db: Database;
+  // Exactly at ts(0) is "just now", so ACTIVE (last active at ts(0)) has not settled.
+  const NOW = Date.parse(ts(0)) + 60_000;
+
+  beforeEach(() => {
+    env = makeClaudeDir();
+    writeSession(env.projects, "-repo", "ACTIVE", [
+      userMsg("ACTIVE", "a-u1", "still working", { timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-repo", "SETTLED", [
+      userMsg("SETTLED", "s-u1", "done earlier", { timestamp: ts(-2 * 60 * 60) }),
+    ]);
+    db = openDb(":memory:");
+    runIndex(db, { adapters: env.adapters });
+  });
+  afterEach(() => {
+    db.close();
+    env.cleanup();
+  });
+
+  test("a thread active within the settle window waits; the older backlog goes first", () => {
+    const { summarize } = fakeSummarizer();
+    const result = runDrain(db, 8, { summarize, models, clock: () => NOW });
+    expect(result.outcomes.map((o) => o.root)).toEqual(["SETTLED"]);
+    expect(staleThreads(db).map((t) => t.id)).toEqual(["ACTIVE"]);
+  });
+
+  test("a drain that can take nothing counts what it held back", () => {
+    const { summarize } = fakeSummarizer();
+    runDrain(db, 8, { summarize, models, clock: () => NOW });
+    const again = runDrain(db, 8, { summarize, models, clock: () => NOW });
+    expect(again.outcomes).toEqual([]);
+    expect(again.heldBack).toBe(1);
+  });
+
+  test("once settled, the thread is drained", () => {
+    const { summarize } = fakeSummarizer();
+    const result = runDrain(db, 8, { summarize, models, clock: () => NOW + DRAIN_SETTLE_MS });
+    expect(result.outcomes.map((o) => o.root).sort()).toEqual(["ACTIVE", "SETTLED"]);
+    expect(result.heldBack).toBe(0);
   });
 });
 

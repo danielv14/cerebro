@@ -1,6 +1,6 @@
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { listThreads, type ThreadRow } from "../thread.ts";
-import { flag, isoDate, type OptionTable, positiveInt, text } from "./args.ts";
+import { flag, type OptionTable, positiveInt, sinceBound, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
 
 const sessionThreadLine = (thread: ThreadRow): string => {
@@ -23,7 +23,7 @@ export const sessionsListing = (threads: ThreadRow[]): string[] => {
 const options = {
   project: text(),
   branch: text(),
-  since: isoDate(),
+  since: sinceBound(),
   limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   digestShow,
+  drainSummary,
   noSummaryHint,
   staleIds,
   staleListing,
@@ -20,6 +21,8 @@ describe("staleListing", () => {
           title: "First",
           summary_version: null,
           summarized_at: null,
+          failed_attempts: null,
+          retry_after: null,
         },
         {
           id: "abcdef0123456789",
@@ -30,6 +33,8 @@ describe("staleListing", () => {
           title: null,
           summary_version: 1,
           summarized_at: "2026-07-01T08:00:00Z",
+          failed_attempts: null,
+          retry_after: null,
         },
         {
           id: "deadbeefdeadbeef",
@@ -40,9 +45,11 @@ describe("staleListing", () => {
           title: "Third",
           summary_version: 2,
           summarized_at: "2026-07-01T08:00:00Z",
+          failed_attempts: null,
+          retry_after: null,
         },
       ],
-      { promptVersion: 2 },
+      { promptVersion: 2, now: 0 },
     );
     expect(lines).toEqual([
       "01234567  2026-07-15 10:00     5 msgs  cerebro  [never summarized]",
@@ -53,6 +60,70 @@ describe("staleListing", () => {
       "    Third",
       "\n3 thread(s) need a summary. Summarize one:\n" +
         "  cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)",
+    ]);
+  });
+});
+
+describe("staleListing failures (#205)", () => {
+  test("a thread with failed attempts carries the count and the next drain retry", () => {
+    const [line] = staleListing(
+      [
+        {
+          id: "0123456789abcdef",
+          last_ts: "2026-07-15T08:00:00Z",
+          first_ts: null,
+          msgs: 5,
+          project_path: "/Users/foo/cerebro",
+          title: "First",
+          summary_version: null,
+          summarized_at: null,
+          failed_attempts: 2,
+          retry_after: "2026-07-16T08:00:00Z",
+        },
+      ],
+      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
+    );
+    expect(line).toBe(
+      "01234567  2026-07-15 10:00     5 msgs  cerebro  " +
+        "[never summarized; failed 2x, drain retries after 2026-07-16 10:00]",
+    );
+  });
+
+  test("a retry time already past reads as due, not as a wait", () => {
+    const [line] = staleListing(
+      [
+        {
+          id: "0123456789abcdef",
+          last_ts: "2026-07-15T08:00:00Z",
+          first_ts: null,
+          msgs: 5,
+          project_path: "/Users/foo/cerebro",
+          title: "First",
+          summary_version: null,
+          summarized_at: null,
+          failed_attempts: 1,
+          retry_after: "2026-07-15T09:00:00Z",
+        },
+      ],
+      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
+    );
+    expect(line).toContain("[never summarized; failed 1x, next drain retries it]");
+  });
+});
+
+describe("drainSummary", () => {
+  const empty = { outcomes: [], summarized: 0, failed: 0, skipped: 0 };
+
+  test("an empty drain with nothing held back reports a clean backlog", () => {
+    expect(drainSummary({ ...empty, heldBack: 0 })).toEqual([
+      "Nothing stale, the backlog is clean.",
+    ]);
+  });
+
+  test("an empty drain that left threads for later says so rather than claiming clean", () => {
+    expect(drainSummary({ ...empty, heldBack: 3 })).toEqual([
+      "Nothing to drain now: 3 stale thread(s) still active or backing off after a failure " +
+        "(see cerebro digest stale).",
     ]);
   });
 });
@@ -70,6 +141,8 @@ describe("staleIds", () => {
           title: null,
           summary_version: null,
           summarized_at: null,
+          failed_attempts: null,
+          retry_after: null,
         },
         {
           id: "abcdef0123456789",
@@ -80,6 +153,8 @@ describe("staleIds", () => {
           title: null,
           summary_version: null,
           summarized_at: null,
+          failed_attempts: null,
+          retry_after: null,
         },
       ]),
     ).toEqual(["0123456789abcdef", "abcdef0123456789"]);

@@ -16,7 +16,7 @@ describe("statsReport", () => {
   };
 
   test("renders counts, coverage, span, size, and top projects", () => {
-    const coverage = { threads: 4, summarized: 3, stale: 2 };
+    const coverage = { threads: 4, summarized: 3, stale: 2, failing: 0 };
     expect(statsReport(base, { dbBytes: 5 * 1024 * 1024, coverage })).toEqual([
       "Threads:          4 (3 summarized, 2 stale)",
       "Sessions:         6",
@@ -31,7 +31,7 @@ describe("statsReport", () => {
   test("omits the size line without a measurable file and projects when empty", () => {
     const lines = statsReport(
       { ...base, topProjects: [] },
-      { dbBytes: null, coverage: { threads: 4, summarized: 4, stale: 0 } },
+      { dbBytes: null, coverage: { threads: 4, summarized: 4, stale: 0, failing: 0 } },
     );
     expect(lines.some((l) => l.startsWith("Database size"))).toBe(false);
     expect(lines.some((l) => l.startsWith("Top projects"))).toBe(false);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { doctorReport } from "../../src/commands/doctor.ts";
 import { statsCommand } from "../../src/commands/stats.ts";
 import { openDb, SCHEMA_VERSION } from "../../src/db.ts";
-import { writeSummary } from "../../src/digest/store.ts";
+import { recordDigestFailure, writeSummary } from "../../src/digest/store.ts";
 import { type Check, type DoctorReport, runDoctor } from "../../src/doctor.ts";
 import { runIndex } from "../../src/indexer.ts";
 import { rootOf } from "../../src/thread.ts";
@@ -84,6 +84,25 @@ describe("runDoctor", () => {
     const report = doctor();
     expect(byKey(report, "schema").status).toBe("fail");
     expect(report.ok).toBe(false);
+  });
+
+  test("a newer schema is still reported after a reopen through openDb (#199)", () => {
+    const path = join(env.claudeRoot, "archive.sqlite");
+    const first = openDb(path);
+    first.run(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+    first.close();
+
+    const reopened = openDb(path);
+    const report = runDoctor(reopened, path, {
+      deployedBinary,
+      settingsFile,
+      adapters: env.adapters,
+    });
+    reopened.close();
+    expect(byKey(report, "schema")).toMatchObject({
+      status: "fail",
+      remedy: "the database was written by a newer build; update this one",
+    });
   });
 
   test("orphaned index_state rows are reported with the command that prunes them", () => {
@@ -182,11 +201,20 @@ describe("runDoctor", () => {
     expect(stale.detail).toBe("0/1 threads summarized, 1 stale");
   });
 
+  test("digest coverage names the stale threads that keep failing (#205)", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
+    runIndex(db, { adapters: env.adapters });
+    recordDigestFailure(db, "S", "claude exited 1", Date.parse(ts(0)));
+    expect(byKey(doctor(), "digest").detail).toBe(
+      "0/1 threads summarized, 1 stale (1 failing, see cerebro digest stale)",
+    );
+  });
+
   test("stats and doctor agree once a relink moves a summarized root (#121)", () => {
     // RESUME is indexed and summarized while it is its own thread root, then the
     // original transcript arrives and relinkThreads reroots it under ORIG. The
-    // summary is left keyed on an id no thread is rooted at. Both commands must count
-    // it the same way: only summaries that join the threads view are coverage.
+    // summary moves to ORIG, stale because it never covered ORIG's turns (#206).
+    // Both commands must count it the same way.
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
@@ -213,8 +241,8 @@ describe("runDoctor", () => {
         progress: () => {},
       })
       .lines!.find((line) => line.startsWith("Threads:"));
-    expect(threadsLine).toBe("Threads:          1 (0 summarized, 1 stale)");
-    expect(byKey(doctor(), "digest").detail).toBe("0/1 threads summarized, 1 stale");
+    expect(threadsLine).toBe("Threads:          1 (1 summarized, 1 stale)");
+    expect(byKey(doctor(), "digest").detail).toBe("1/1 threads summarized, 1 stale");
   });
 });
 

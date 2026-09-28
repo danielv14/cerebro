@@ -157,6 +157,21 @@ describe("runIndex", () => {
     expect(row.title).toBe("Mine"); // higher priority wins
   });
 
+  test("a full re-read keeps the newest same-priority title (#198)", () => {
+    const path = writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hi"),
+      { type: "ai-title", aiTitle: "AI v1", sessionId: "S" },
+    ]);
+    runIndex(db, { adapters: env.adapters });
+    appendRaw(path, `${JSON.stringify({ type: "ai-title", aiTitle: "AI v2", sessionId: "S" })}\n`);
+    runIndex(db, { adapters: env.adapters });
+    runIndex(db, { adapters: env.adapters, full: true });
+    const row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
+      title: string;
+    };
+    expect(row.title).toBe("AI v2");
+  });
+
   test("a standalone session is its own root", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db, { adapters: env.adapters });
@@ -636,10 +651,20 @@ describe("runIndex", () => {
   test("one unreadable file is skipped and reported through the sink, the rest completes", () => {
     const badPath = writeSession(env.projects, "-repo", "BAD", [userMsg("BAD", "b1", "hidden")]);
     writeSession(env.projects, "-repo", "OK", [userMsg("OK", "u1", "still indexed")]);
-    require("node:fs").chmodSync(badPath, 0o000);
+    // The file vanishes between discovery and read: a real race, and unlike a
+    // chmod it fails the read under root too.
+    const [inner] = env.adapters;
+    const racing = {
+      ...inner!,
+      discover: () => {
+        const files = inner!.discover();
+        require("node:fs").rmSync(badPath);
+        return files;
+      },
+    };
 
     const skips: string[] = [];
-    const result = runIndex(db, { adapters: env.adapters, onSkip: (line) => skips.push(line) });
+    const result = runIndex(db, { adapters: [racing], onSkip: (line) => skips.push(line) });
 
     // The good file made it in; the bad one was skipped, not fatal.
     expect(countMessages(db)).toBe(1);
@@ -648,9 +673,6 @@ describe("runIndex", () => {
     expect(skips).toHaveLength(1);
     expect(skips[0]).toContain("skipped");
     expect(skips[0]).toContain(badPath);
-
-    // Restore so cleanup can remove the directory.
-    require("node:fs").chmodSync(badPath, 0o644);
   });
 });
 

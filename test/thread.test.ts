@@ -9,6 +9,7 @@ import {
   attachThreadIdentity,
   countThreads,
   messageOrdinal,
+  relinkThreads,
   rootOf,
   threadIdentity,
   threadLastTs,
@@ -77,6 +78,118 @@ describe("thread (identity + membership)", () => {
       // A row that exists but has not been relinked (NULL root) falls back to itself.
       db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
       expect(rootOf(db, "UNLINKED")).toBe("UNLINKED");
+    });
+  });
+
+  describe("relinkThreads", () => {
+    const totalChanges = (): number =>
+      (db.query("SELECT total_changes() AS c").get() as { c: number }).c;
+
+    test("a relink with nothing to change writes no rows (#202)", () => {
+      seedThread();
+      const before = totalChanges();
+      relinkThreads(db);
+      expect(totalChanges()).toBe(before);
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    });
+
+    test("only the row whose link moved is rewritten", () => {
+      seedThread();
+      db.run("UPDATE sessions SET root_session_id = NULL WHERE session_id = 'RESUME'");
+      const before = totalChanges();
+      relinkThreads(db);
+      expect(totalChanges() - before).toBe(1);
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    });
+
+    test("the link comes from the first main-chain turn, not a sidechain turn (#201)", () => {
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+      ]);
+      writeSession(env.projects, "-repo", "OTHER", [
+        userMsg("OTHER", "o1", "unrelated", { timestamp: ts(1) }),
+      ]);
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "s1", "side", { parentUuid: "o1", isSidechain: true, timestamp: ts(2) }),
+        userMsg("RESUME", "u2", "main", { parentUuid: "u1", timestamp: ts(3) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+      expect(rootOf(db, "OTHER")).toBe("OTHER");
+    });
+  });
+
+  describe("summaries across a reroot (#206)", () => {
+    const summaryKeys = (): string[] =>
+      (
+        db.query("SELECT root_session_id FROM summaries ORDER BY 1").all() as {
+          root_session_id: string;
+        }[]
+      ).map((row) => row.root_session_id);
+
+    const indexResumeThenOriginal = (summarizeOriginalFirst: boolean): void => {
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "carry on with the limiter", {
+          parentUuid: "a1",
+          timestamp: ts(2),
+        }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      writeSummary(db, "RESUME", "Resume summary about the limiter. Keywords: limiter");
+      // An id with no sessions row is its own root, so this keys the summary on ORIG.
+      if (summarizeOriginalFirst) writeSummary(db, "ORIG", "Original summary. Keywords: original");
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+        assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(rootOf(db, "RESUME")).toBe("ORIG");
+    };
+
+    test("the summary moves to the new root, marked stale", () => {
+      indexResumeThenOriginal(false);
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      const row = db
+        .query("SELECT source_last_ts FROM summaries WHERE root_session_id = 'ORIG'")
+        .get() as { source_last_ts: string | null };
+      expect(row.source_last_ts).toBeNull();
+      // Still found, under the thread it belongs to.
+      expect(searchSummaries(db, "limiter").map((hit) => hit.id)).toEqual(["ORIG"]);
+    });
+
+    test("a root that already has a summary keeps it and the orphan is dropped", () => {
+      indexResumeThenOriginal(true);
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "limiter")).toEqual([]);
+      expect(searchSummaries(db, "original").map((hit) => hit.id)).toEqual(["ORIG"]);
+    });
+
+    test("an orphan newer than the root's own summary replaces it", () => {
+      writeSummary(db, "ORIG", "Older original summary. Keywords: original");
+      db.run("UPDATE summaries SET summarized_at = '2026-01-01T00:00:00.000Z'");
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "carry on with the limiter", {
+          parentUuid: "a1",
+          timestamp: ts(2),
+        }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      writeSummary(db, "RESUME", "Newer resume summary about the limiter. Keywords: limiter");
+      writeSession(env.projects, "-repo", "ORIG", [
+        userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
+        assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+
+      expect(summaryKeys()).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "limiter").map((hit) => hit.id)).toEqual(["ORIG"]);
+      expect(searchSummaries(db, "original")).toEqual([]);
+    });
+
+    test("a summary whose sessions rows are gone is left alone", () => {
+      writeSummary(db, "GONE", "Summary of a thread whose sessions were never indexed.");
+      seedThread();
+      expect(summaryKeys()).toEqual(["GONE"]);
     });
   });
 
