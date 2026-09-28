@@ -154,7 +154,7 @@ describe("runDigest", () => {
 
     expect(runDigest(db, "SESS", { summarize, models }).status).toBe("summarized");
     expect(getSummary(db, "SESS")?.source_last_ts).toBe(beforeCall);
-    expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
+    expect(staleThreads(db, { limit: 10 }).map((t) => t.id)).toContain("SESS");
   });
 
   test("reports the thread and the model before the call, for a hung one", () => {
@@ -171,7 +171,7 @@ describe("runDigest", () => {
   test("every failure leaves the thread stale so a later run retries it", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
     runDigest(db, "SESS", { summarize, models });
-    expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
+    expect(staleThreads(db, { limit: 10 }).map((t) => t.id)).toContain("SESS");
   });
 });
 
@@ -284,7 +284,7 @@ describe("runDrain", () => {
 
     expect(result.summarized).toBe(2);
     expect(result.outcomes.length).toBe(2);
-    expect(staleThreads(db, 10).length).toBe(1);
+    expect(staleThreads(db, { limit: 10 }).length).toBe(1);
   });
 
   test("keeps going after one thread fails, and counts it", () => {
@@ -300,7 +300,7 @@ describe("runDrain", () => {
     expect(result.summarized).toBe(2);
     expect(result.failed).toBe(1);
     expect(result.outcomes.length).toBe(3);
-    expect(staleThreads(db, 10).length).toBe(1);
+    expect(staleThreads(db, { limit: 10 }).length).toBe(1);
   });
 
   test("a timed-out call fails that thread and the drain moves on", () => {
@@ -317,7 +317,7 @@ describe("runDrain", () => {
     expect(result.summarized).toBe(2);
     expect(result.aborted).toBeUndefined();
     expect(result.outcomes[0]!.reason).toContain("timed out");
-    expect(staleThreads(db, 10).length).toBe(1); // the timed-out thread is retried later
+    expect(staleThreads(db, { limit: 10 }).length).toBe(1); // the timed-out thread is retried later
   });
 
   test("an unexpected throw takes down one thread, not the run", () => {

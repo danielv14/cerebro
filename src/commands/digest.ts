@@ -8,7 +8,7 @@ import {
   runDigest,
   runDrain,
 } from "../digest/run.ts";
-import { type StaleThread, staleThreads } from "../digest/stale.ts";
+import { DRAIN_SETTLE_MS, type StaleThread, staleThreads } from "../digest/stale.ts";
 import {
   getSummary,
   type StoredSummary,
@@ -20,25 +20,41 @@ import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveOrThrow } from "./helpers.ts";
 
-export const staleListing = (
-  rows: StaleThread[],
-  opts: { promptVersion: number; now: number },
-): string[] => {
+const reasonLabel = (row: StaleThread, promptVersion: number): string => {
+  switch (row.reason) {
+    case "never":
+      return "never summarized";
+    case "old-prompt":
+      return `prompt v${row.summary_version} < v${promptVersion}`;
+    case "no-coverage":
+      return "summary moved from an earlier root";
+    case "new-activity":
+      return "new activity since summary";
+  }
+};
+
+const holdLabel = (row: StaleThread): string => {
+  const failures = row.failed_attempts
+    ? `; failed ${row.failed_attempts}x, ${
+        row.hold === "backing-off"
+          ? `drain retries after ${shortTime(row.retry_after)}`
+          : "next drain retries it"
+      }`
+    : "";
+  const settling =
+    row.hold === "settling" && row.last_ts
+      ? `; settling, drain waits until ${shortTime(
+          new Date(Date.parse(row.last_ts) + DRAIN_SETTLE_MS).toISOString(),
+        )}`
+      : "";
+  return failures + settling;
+};
+
+export const staleListing = (rows: StaleThread[], opts: { promptVersion: number }): string[] => {
   const lines: string[] = [];
   for (const row of rows) {
-    const reason =
-      row.summary_version == null
-        ? "never summarized"
-        : row.summary_version < opts.promptVersion
-          ? `prompt v${row.summary_version} < v${opts.promptVersion}`
-          : "new activity since summary";
-    const retry =
-      row.retry_after && Date.parse(row.retry_after) > opts.now
-        ? `drain retries after ${shortTime(row.retry_after)}`
-        : "next drain retries it";
-    const failures = row.failed_attempts ? `; failed ${row.failed_attempts}x, ${retry}` : "";
     lines.push(
-      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reason}${failures}]`,
+      `${shortId(row.id)}  ${shortTime(row.last_ts)}  ${String(row.msgs).padStart(4)} msgs  ${projectName(row.project_path)}  [${reasonLabel(row, opts.promptVersion)}${holdLabel(row)}]`,
     );
     lines.push(`    ${oneLine(row.title ?? "(untitled)", 100)}`);
   }
@@ -141,13 +157,13 @@ export const digestCommand: CommandGroup = {
     stale: defineCommand({
       options: { limit: limitOption, ids: flag(), json: flag() } satisfies OptionTable,
       run: ({ db, args, now }) => {
-        const rows = staleThreads(db, args.limit ?? 50);
+        const rows = staleThreads(db, { limit: args.limit ?? 50, now });
         return {
           json: rows,
           lines: args.ids
             ? staleIds(rows)
             : rows.length > 0
-              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION, now })
+              ? staleListing(rows, { promptVersion: DIGEST_PROMPT_VERSION })
               : [],
           empty: args.ids ? undefined : "All threads are summarized and up to date.",
         };

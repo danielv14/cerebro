@@ -3,6 +3,12 @@ import { count } from "../db.ts";
 import { countThreads } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
+// "no-coverage" is a summary reattachSummaries moved onto a new root: it never saw
+// the session that took over, so it has no coverage point to compare.
+export type StaleReason = "never" | "old-prompt" | "no-coverage" | "new-activity";
+
+export type DrainHold = "backing-off" | "settling";
+
 export interface StaleThread {
   id: string;
   last_ts: string | null;
@@ -14,6 +20,8 @@ export interface StaleThread {
   summarized_at: string | null;
   failed_attempts: number | null;
   retry_after: string | null;
+  reason: StaleReason;
+  hold: DrainHold | null;
 }
 
 const STALE_FROM_WHERE = `
@@ -25,30 +33,55 @@ const STALE_FROM_WHERE = `
       OR su.source_last_ts < t.last_ts
       OR su.prompt_version < $version)`;
 
+// Keep in step with the WHERE above: each branch there needs its own label here.
+const STALE_REASON = `CASE
+         WHEN su.root_session_id IS NULL THEN 'never'
+         WHEN su.prompt_version < $version THEN 'old-prompt'
+         WHEN su.source_last_ts IS NULL THEN 'no-coverage'
+         ELSE 'new-activity' END`;
+
+// Backing off first: its wait is at least 6 hours, so it outlasts any settle.
+const DRAIN_HOLD = `CASE
+         WHEN df.retry_after > $now THEN 'backing-off'
+         WHEN t.last_ts >= $settled THEN 'settling'
+         END`;
+
 // A thread active this recently is probably still being worked in: summarizing it
 // now buys a summary that is stale again within minutes, so a drain waits.
 export const DRAIN_SETTLE_MS = 30 * 60 * 1000;
 
 const STALE_COLUMNS = `t.id, t.last_ts, t.first_ts, t.msgs, t.project_path, t.title,
        su.prompt_version AS summary_version, su.summarized_at AS summarized_at,
-       df.attempts AS failed_attempts, df.retry_after AS retry_after`;
+       df.attempts AS failed_attempts, df.retry_after AS retry_after,
+       ${STALE_REASON} AS reason, ${DRAIN_HOLD} AS hold`;
 
-// With `drainAt`, only what a drain may take then: settled, and not backing off.
-export const staleThreads = (db: Database, limit = 50, drainAt?: number): StaleThread[] =>
+export interface StaleQuery {
+  limit?: number;
+  now?: number;
+  // Only what a drain may take at `now`: rows with no hold.
+  drain?: boolean;
+}
+
+export const staleThreads = (
+  db: Database,
+  { limit = 50, now = Date.now(), drain = false }: StaleQuery = {},
+): StaleThread[] =>
   db
     .query(
-      `SELECT ${STALE_COLUMNS}
-       ${STALE_FROM_WHERE}
-         AND ($now IS NULL OR ((t.last_ts IS NULL OR t.last_ts < $settled)
-                           AND (df.retry_after IS NULL OR df.retry_after <= $now)))
-       ORDER BY t.last_ts DESC
+      `SELECT * FROM (
+         SELECT ${STALE_COLUMNS}
+         ${STALE_FROM_WHERE}
+       )
+       WHERE NOT $drain OR hold IS NULL
+       ORDER BY last_ts DESC
        LIMIT $limit`,
     )
     .all({
       $version: DIGEST_PROMPT_VERSION,
       $limit: limit,
-      $now: drainAt === undefined ? null : new Date(drainAt).toISOString(),
-      $settled: drainAt === undefined ? null : new Date(drainAt - DRAIN_SETTLE_MS).toISOString(),
+      $drain: drain ? 1 : 0,
+      $now: new Date(now).toISOString(),
+      $settled: new Date(now - DRAIN_SETTLE_MS).toISOString(),
     }) as StaleThread[];
 
 export const countStaleThreads = (db: Database): number =>
