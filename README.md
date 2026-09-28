@@ -195,8 +195,10 @@ on its own initiative. The model call is a single `claude` subprocess, and it
 only happens when you ask for it.
 
 ```sh
-cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary (never summarized,
-                                            #   new activity since, or older prompt version).
+cerebro digest stale [--limit N] [--ids]    # threads needing a (re)summary and why (never
+                                            #   summarized, new activity since, older prompt
+                                            #   version, or a summary moved from an earlier
+                                            #   root), marking those a drain holds back.
                                             #   --ids: one full id per line, for scripts
 cerebro digest run <id>                     # summarize one thread: render, pick the model,
                                             #   call it, check the output, store it

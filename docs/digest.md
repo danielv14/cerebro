@@ -40,9 +40,10 @@ succeeded and the output looks like an actual summary rather than an error
 message or a fragment. Nothing is stored on failure, so the thread stays stale
 and a later `drain` retries it: 6 hours after the first failure, doubling per
 attempt up to a week, so a thread that fails every time does not cost tokens on
-every run. `digest stale` shows the failure count, and an explicit `digest run`
-ignores the wait. A drain also leaves threads active in the last 30 minutes for
-later, since their summary would be stale again at once. `CEREBRO_CLAUDE_BIN`
+every run. A drain also leaves threads active in the last 30 minutes for later,
+since their summary would be stale again at once. `digest stale` marks both kinds
+of hold-back, the failure count and retry time or `settling` with the time the
+drain takes it, and an explicit `digest run` ignores both. `CEREBRO_CLAUDE_BIN`
 overrides which binary is spawned.
 
 The contract lives in one place: the prompt asks for exactly what the storage

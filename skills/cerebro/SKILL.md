@@ -372,15 +372,17 @@ Do not drown the context by reflexively pulling `--full`; summary -> id -> outli
 is the ladder.
 
 ```
-$ cerebro digest stale --limit 3
-a1b2c3d4  2026-02-12 16:48   162 msgs  my-app  [never summarized]
+$ cerebro digest stale --limit 4
+a1b2c3d4  2026-02-12 16:48   162 msgs  my-app  [never summarized; settling, drain waits until 2026-02-12 17:18]
     Add dark mode toggle
 5e6f7a8b  2026-02-10 09:31    88 msgs  api-server  [new activity since summary]
     Fix flaky auth test
 9c0d1e2f  2026-02-08 14:02   240 msgs  web-shop  [prompt v1 < v2]
     Refactor checkout flow
+7d8e9f0a  2026-02-07 10:15    31 msgs  my-app  [summary moved from an earlier root; failed 2x, drain retries after 2026-02-13 04:00]
+    Migrate the settings page
 
-3 thread(s) need a summary. Summarize one:
+4 thread(s) need a summary. Summarize one:
   cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)
 ```
 
@@ -434,7 +436,10 @@ The threshold and the model names can be overridden via `CEREBRO_DIGEST_MODEL`,
 `cerebro digest drain` is the reconciler: run it now and then (or on a schedule) and
 everything unsummarized or out of date is caught, and `cerebro digest stale` shows the
 backlog without touching it. A thread becomes stale again when it gains new messages or
-when the prompt version (`DIGEST_PROMPT_VERSION`) is bumped. `--ids` gives a
+when the prompt version (`DIGEST_PROMPT_VERSION`) is bumped, and a summary that a relink
+moved onto a new root is stale until it is redone. The listing also marks the threads a
+drain holds back: `settling` (active in the last 30 minutes) or a failure still in its
+retry wait. `--ids` gives a
 machine-readable mode (one full thread id per line, no formatting) that scripts and hooks
 can loop over without scraping the human-readable listing; empty output means nothing is
 stale.
