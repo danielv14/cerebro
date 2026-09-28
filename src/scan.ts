@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import { parseLine, type SessionFile } from "./sources/adapter.ts";
+import { count } from "./db.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
+import { parseLine, type SessionFile, type SourceAdapter } from "./sources/adapter.ts";
 
 // Bytes, not characters: the per-file cursor is a byte offset, and 0x0A never
 // appears inside a UTF-8 multibyte sequence, so a newline split is safe.
@@ -56,8 +58,14 @@ export interface FileReadPlan {
   shouldRead: boolean;
 }
 
+export interface Cursor {
+  bytes_indexed: number;
+  mtime_ms: number;
+  is_digest: number;
+}
+
 export const planFileRead = (
-  state: { bytes_indexed: number; mtime_ms: number; is_digest?: number } | null,
+  state: Cursor | null,
   file: SessionFile,
   full: boolean,
 ): FileReadPlan => {
@@ -103,6 +111,57 @@ export interface ScannedFile {
   cursor: number;
 }
 
+// "nothing-new" is a read that found no complete line yet (a mid-write file).
+export type FileVerdict = "digest" | "nothing-new" | "ingest";
+
+// The digest check only fires on a read from byte 0: a mid-file incremental read
+// opens on an arbitrary turn.
+export const fileVerdict = (
+  { file, plan, lines, cursor }: ScannedFile,
+  classify: SourceAdapter["classifyLines"],
+): FileVerdict => {
+  if (cursor === plan.start) return "nothing-new";
+  if (file.kind === "session" && plan.start === 0) {
+    for (const classified of classify(lines)) {
+      if (classified.kind !== "message") continue;
+      if (classified.role === "user" && classified.text.startsWith(DIGEST_PROMPT_SIGNATURE)) {
+        return "digest";
+      }
+      break;
+    }
+  }
+  return "ingest";
+};
+
+export const cursorWriter = (db: Database) => {
+  const save = db.query(
+    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(source_file) DO UPDATE SET
+       bytes_indexed = excluded.bytes_indexed,
+       mtime_ms      = excluded.mtime_ms,
+       indexed_at    = excluded.indexed_at,
+       is_digest     = excluded.is_digest`,
+  );
+  return (file: SessionFile, bytes: number, isDigest: boolean): void => {
+    save.run(file.path, bytes, file.mtimeMs, new Date().toISOString(), isDigest ? 1 : 0);
+  };
+};
+
+export const resetCursors = (db: Database): void => {
+  db.run("DELETE FROM index_state");
+};
+
+export const countCursors = (db: Database): number =>
+  count(db, "SELECT COUNT(*) AS c FROM index_state");
+
+export const pruneCursors = (db: Database, paths: string[]): void => {
+  const drop = db.query("DELETE FROM index_state WHERE source_file = ?");
+  db.transaction(() => {
+    for (const path of paths) drop.run(path);
+  })();
+};
+
 // Without `onError` a per-file failure propagates, which is what the dry run
 // wants; runIndex passes one so a bad file cannot abort the whole run.
 export const eachIndexableFile = (
@@ -120,11 +179,7 @@ export const eachIndexableFile = (
   );
 
   for (const file of files) {
-    const state = getState.get(file.path) as {
-      bytes_indexed: number;
-      mtime_ms: number;
-      is_digest: number;
-    } | null;
+    const state = getState.get(file.path) as Cursor | null;
 
     const plan = planFileRead(state, file, full);
     if (!plan.shouldRead) {

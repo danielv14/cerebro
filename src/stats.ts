@@ -28,13 +28,7 @@ export const stats = (db: Database): Stats => {
     threads: countThreads(db),
     sessions: count(db, "SELECT COUNT(*) AS c FROM sessions"),
     messages: count(db, "SELECT COUNT(*) AS c FROM messages"),
-    // A NULL source_file is a subagent-only parent stub whose top-level transcript
-    // was never seen; it is body-unavailable but nothing was deleted, so it must
-    // not inflate this count.
-    deletedSources: count(
-      db,
-      "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
-    ),
+    deletedSources: count(db, "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0"),
     firstTs: span.first,
     lastTs: span.last,
     topProjects: db

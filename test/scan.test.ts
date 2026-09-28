@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { planFileRead, splitBuffer } from "../src/scan.ts";
+import { DIGEST_PROMPT_SIGNATURE } from "../src/digest/signature.ts";
+import { fileVerdict, planFileRead, type ScannedFile, splitBuffer } from "../src/scan.ts";
 import type { SessionFile } from "../src/sources/adapter.ts";
+import { classifyLines } from "../src/sources/claude-code-jsonl.ts";
+import { userMsg } from "./fixtures.ts";
 
 describe("splitBuffer", () => {
   test("empty buffer keeps the cursor", () => {
@@ -76,32 +79,91 @@ describe("planFileRead", () => {
   });
 
   test("grown file (state.bytes < size) reads from the saved cursor", () => {
-    const plan = planFileRead({ bytes_indexed: 40, mtime_ms: 1000 }, file(100), false);
+    const plan = planFileRead(
+      { bytes_indexed: 40, mtime_ms: 1000, is_digest: 0 },
+      file(100),
+      false,
+    );
     expect(plan).toEqual({ start: 40, status: "grown", shouldRead: true });
   });
 
   test("truncated file (state.bytes > size) resets start to 0", () => {
-    const plan = planFileRead({ bytes_indexed: 200, mtime_ms: 1000 }, file(100), false);
+    const plan = planFileRead(
+      { bytes_indexed: 200, mtime_ms: 1000, is_digest: 0 },
+      file(100),
+      false,
+    );
     expect(plan).toEqual({ start: 0, status: "truncated", shouldRead: true });
   });
 
   test("unchanged file (bytes === size && mtime matches) is not read", () => {
-    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 1000 }, file(100, 1000), false);
+    const plan = planFileRead(
+      { bytes_indexed: 100, mtime_ms: 1000, is_digest: 0 },
+      file(100, 1000),
+      false,
+    );
     expect(plan).toEqual({ start: 100, status: "unchanged", shouldRead: false });
   });
 
   test("size matches but mtime differs -> should read (treated as grown)", () => {
-    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 999 }, file(100, 1000), false);
+    const plan = planFileRead(
+      { bytes_indexed: 100, mtime_ms: 999, is_digest: 0 },
+      file(100, 1000),
+      false,
+    );
     expect(plan).toEqual({ start: 100, status: "grown", shouldRead: true });
   });
 
   test("full mode always reads from 0 and never short-circuits as unchanged", () => {
-    const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 1000 }, file(100, 1000), true);
+    const plan = planFileRead(
+      { bytes_indexed: 100, mtime_ms: 1000, is_digest: 0 },
+      file(100, 1000),
+      true,
+    );
     expect(plan).toEqual({ start: 0, status: "grown", shouldRead: true });
     expect(planFileRead(null, file(100), true)).toEqual({
       start: 0,
       status: "new",
       shouldRead: true,
     });
+  });
+});
+
+describe("fileVerdict", () => {
+  const session: SessionFile = {
+    path: "/tmp/S.jsonl",
+    kind: "session",
+    sessionId: "S",
+    projectDir: "-repo",
+    provider: "claude-code",
+    size: 100,
+    mtimeMs: 1000,
+  };
+  const scanned = (lines: unknown[], start = 0, file = session): ScannedFile => ({
+    file,
+    plan: { start, status: start === 0 ? "new" : "grown", shouldRead: true },
+    lines: lines.map((line) => JSON.stringify(line)),
+    cursor: start + (lines.length === 0 ? 0 : 50),
+  });
+
+  test("a read with no complete line has nothing new", () => {
+    expect(fileVerdict(scanned([]), classifyLines)).toBe("nothing-new");
+  });
+
+  test("a transcript opening with the digest prompt is a digest", () => {
+    const digest = [userMsg("S", "u1", `${DIGEST_PROMPT_SIGNATURE} ...`)];
+    expect(fileVerdict(scanned(digest), classifyLines)).toBe("digest");
+  });
+
+  test("the digest check only fires on a top-level read from byte 0", () => {
+    const digest = [userMsg("S", "u1", `${DIGEST_PROMPT_SIGNATURE} ...`)];
+    expect(fileVerdict(scanned(digest, 40), classifyLines)).toBe("ingest");
+    expect(fileVerdict(scanned(digest, 0, { ...session, kind: "subagent" }), classifyLines)).toBe(
+      "ingest",
+    );
+  });
+
+  test("an ordinary transcript is ingested", () => {
+    expect(fileVerdict(scanned([userMsg("S", "u1", "hello")]), classifyLines)).toBe("ingest");
   });
 });
