@@ -3,8 +3,6 @@ import { type RankedHit, toMatchQuery } from "../fts.ts";
 import { attachThreadIdentity, rootOf, type ThreadIdentity, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
-// Design notes: docs/architecture.md ("Digest").
-
 // Anchored at the start of the text, where CLI/API failures announce themselves;
 // a real summary opening with one of these is not a plausible prompt output.
 const SUMMARY_REJECT_PATTERNS: RegExp[] = [
@@ -30,9 +28,6 @@ export const rejectSummaryReason = (text: string): string | null => {
   return null;
 };
 
-// `coversLastTs` is the thread's last_ts when the transcript was rendered:
-// messages indexed during the model call must stay stale rather than be stamped
-// as covered. Omitted, the current last_ts is used.
 export const writeSummary = (
   db: Database,
   sessionId: string,
@@ -93,10 +88,7 @@ export const recordDigestFailure = (
   );
 };
 
-// A relink that moves a thread's root leaves its summary keyed on a session that is
-// no longer a root. The summary moves to the current root, stale (it never covered
-// the session that took over), unless that root has a newer one already. Keys
-// with no sessions row are left alone: a summary outlives its sessions.
+// Keys with no sessions row are left alone: a summary outlives its sessions.
 export const reattachSummaries = (db: Database): void => {
   const orphans = db
     .query(
@@ -142,7 +134,6 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-// The summary side of the RankedHit seam (docs/architecture.md, "FTS layer").
 // LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
 // throws on a malformed MATCH so each caller keeps its own fallback.
 export const searchSummaryRoots = (

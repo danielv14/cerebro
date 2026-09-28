@@ -1,6 +1,3 @@
-// The one display zone: the renderer shows times in it and `--since` dates are
-// midnights in it, so a date typed from a listing means what the listing shows.
-
 const DEFAULT_DISPLAY_TZ = "Europe/Stockholm";
 
 // Building an Intl.DateTimeFormat is the expensive part of formatting a date.

@@ -19,9 +19,6 @@ const runGit = (cwd: string, args: string[]): string | null => {
   }
 };
 
-// Tolerates a missing/moved/deleted directory by returning nulls instead of
-// throwing (invariant #9). The cache is per resolver instance, so a caller that
-// wants a fresh view makes a new one.
 export const createGitResolver = (): GitResolver => {
   const cache = new Map<string, GitInfo>();
   return (cwd) => {

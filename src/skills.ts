@@ -3,12 +3,9 @@ import { escapeLike } from "./fts.ts";
 import { toolUseTag } from "./sources/claude-code-jsonl.ts";
 import { archiveSpan } from "./stats.ts";
 
-// Design notes: docs/architecture.md ("Skills").
-
 const SLASH_OPEN = "<command-name>";
 const SLASH_CLOSE = "</command-name>";
 
-// Derived from the flattener so the two cannot drift.
 const SKILL_TAG = toolUseTag("Skill");
 
 // Deliberately no third marker: "Launching skill: <name>" is the tool_result side

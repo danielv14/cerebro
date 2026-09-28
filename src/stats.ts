@@ -9,7 +9,6 @@ export interface Stats {
   deletedSources: number;
   firstTs: string | null;
   lastTs: string | null;
-  // Threads per project, largest first (top 5).
   topProjects: { project_path: string; threads: number }[];
 }
 

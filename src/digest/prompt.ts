@@ -1,8 +1,5 @@
 import { DIGEST_PROMPT_SIGNATURE } from "./signature.ts";
 
-// Design notes: docs/architecture.md ("Digest"); tiering numbers and overrides:
-// docs/digest-model-tiering.md.
-
 // Bump whenever the prompt changes in a way that should invalidate existing
 // summaries.
 export const DIGEST_PROMPT_VERSION = 1;
@@ -52,7 +49,6 @@ export interface DigestModelConfig {
   thresholdBytes: number;
 }
 
-// The shipped tiering. config.ts layers the env overrides on top of it.
 export const DEFAULT_DIGEST_MODELS: DigestModelConfig = {
   small: "claude-haiku-4-5",
   // The [1m] suffix is what actually buys the 1M window; without it the model
@@ -61,8 +57,6 @@ export const DEFAULT_DIGEST_MODELS: DigestModelConfig = {
   thresholdBytes: DEFAULT_HAIKU_MAX_BYTES,
 };
 
-// Bytes, not characters, so multibyte threads tier correctly; `>` is strict so a
-// thread exactly at the threshold stays on the small model.
 export const pickDigestModel = (byteCount: number, models: DigestModelConfig): string =>
   byteCount > models.thresholdBytes ? models.large : models.small;
 
@@ -95,10 +89,6 @@ const sliceToBytes = (text: string, maxBytes: number): string => {
   return text.slice(0, end);
 };
 
-// Below budget every message renders verbatim (identical to `show --full`).
-// Above it, a water-fill caps each body to a fair share: short messages stay
-// whole while the longest essays are trimmed first. Everything is measured in
-// bytes, because the budget is a byte count derived from a token estimate.
 export const buildDigestInput = (
   messages: RenderableMessage[],
   maxBytes = DIGEST_INPUT_MAX_BYTES,

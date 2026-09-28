@@ -8,8 +8,6 @@ import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
 import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
 
-// Design notes: docs/architecture.md ("Indexer").
-
 interface FileMeta {
   sessionId: string;
   projectDir: string | null;
@@ -23,7 +21,7 @@ interface FileMeta {
 }
 
 // The rebuild upsert deliberately does NOT refresh session_id: attribution
-// belongs to the first owner (invariant #6), and a resume file re-read in
+// belongs to the first owner (invariant #4), and a resume file re-read in
 // rebuild mode must not steal the shared prefix.
 const ingestLines = (
   db: Database,
@@ -101,9 +99,8 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 // differ only in which operand wins each COALESCE, and merging them behind a
 // flag hides exactly that.
 
-// Top-level file: incoming values win. Title is the exception: the stored
-// title_priority decides, with >= so a renewed same-priority title still
-// replaces the old.
+// The stored title_priority decides the title, with >= so a renewed same-priority
+// title still replaces the old.
 const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): void => {
   const existing = db
     .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
@@ -162,8 +159,8 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
   );
 };
 
-// Subagent file: existing values win, and the fields a subagent cannot know are
-// passed NULL, so a pure-subagent stub reads as body-unavailable.
+// The fields a subagent cannot know are passed NULL, so a pure-subagent stub reads
+// as body-unavailable.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
@@ -242,9 +239,8 @@ export interface IndexResult {
   relinked: boolean;
 }
 
-// cerebro's own headless summarization run: its first turn is the digest prompt
-// as a user message. Only a read from byte 0 can tell: a mid-file incremental read
-// opens on an arbitrary turn.
+// Detectable only on a read from byte 0: a mid-file incremental read opens on an
+// arbitrary turn.
 const isDigestRunTranscript = (
   { file, plan, lines }: ScannedFile,
   classify: SourceAdapter["classifyLines"],
@@ -260,7 +256,6 @@ const isDigestRunTranscript = (
 export interface IndexOptions {
   adapters: SourceAdapter[];
   full?: boolean;
-  // Implies full.
   rebuild?: boolean;
   resolveGit?: GitResolver;
   onSkip?: (line: string) => void;
@@ -295,7 +290,6 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
       const classify = adapterFor(file.provider, adapters).classifyLines;
       // A mid-write file is still saved (unlike the dry run's skip): recording
       // the new mtime lets a touched-but-unchanged file settle to "unchanged".
-      // The return value is whether the file contributed lines.
       const tx = db.transaction((): boolean => {
         if (isDigestRunTranscript(scanned, classify)) {
           saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
@@ -347,15 +341,12 @@ export interface DryRunResult {
   truncatedFiles: number;
   unchangedFiles: number;
   // Read but not indexable: a digest transcript, or a mid-write file with no
-  // complete line yet. Counted on every run, not only the one that first detects
-  // a digest transcript, so the categories add up to filesScanned either way.
+  // complete line yet.
   skippedFiles: number;
   newBytes: number;
   candidateMessages: number;
 }
 
-// candidateMessages is counted before UUID dedup: incremental bytes are genuinely
-// new so it equals net-new, but a --full dry run reports the whole archive.
 export const dryRunIndex = (
   db: Database,
   adapters: SourceAdapter[],
@@ -393,7 +384,6 @@ export const dryRunIndex = (
         return;
       }
 
-      // Full mode re-reads everything from 0 and does not categorize files.
       if (!full) {
         if (plan.status === "new") result.newFiles++;
         else if (plan.status === "truncated") result.truncatedFiles++;

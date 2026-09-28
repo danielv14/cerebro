@@ -1,8 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
 
-// Design notes: docs/architecture.md ("FTS layer").
-
 // Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
 export const escapeLike = (fragment: string): string =>
   fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -19,28 +17,22 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map(quoteFtsToken).join(" OR ");
 };
 
-// Produced by two adapters (docs/architecture.md, "FTS layer"): the query below
-// and searchSummaryRoots in src/digest/store.ts.
 export interface RankedHit {
   // The thread, never the row the hit came from.
   id: string;
   snippet: string;
   // bm25; lower = more relevant.
   score: number;
-  // NULL when the thread has no rollup row (LEFT JOIN on purpose: a hit must
-  // survive its sessions rows being gone).
   last_ts: string | null;
   git_root: string | null;
   project_path: string | null;
 }
 
 export interface RankedMessageHit extends RankedHit {
-  // The matched message's own rowid, which is what it is; the thread is `id`.
   message_id: number;
   session_id: string;
   ts: string | null;
   role: string;
-  // The message's own branch, which search shows instead of the thread's.
   session_git_branch: string | null;
 }
 
@@ -50,18 +42,13 @@ export const threadOnBranch = (rootExpr: string): string =>
   `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
   `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
 
-// Named filters rather than SQL fragments, so the aliases the predicates below are
-// written against (m = message, s = session, t = rollup) stay private to this
-// module: a caller writing them would break at runtime only when one is renamed.
 export interface HitFilters {
   // Substring of the thread's project path.
   project?: string;
   // Substring of a branch any of the thread's sessions was recorded on.
   branch?: string;
-  // ISO date; only messages at or after it.
   since?: string;
   role?: string;
-  // Drop messages that are nothing but flattened tool plumbing.
   prose?: boolean;
 }
 
@@ -148,9 +135,7 @@ export interface DedupedWindow<T> {
   targetThreads: number;
   minRows: number;
   rowsPerThread: number;
-  // A caller on a latency path passes false to answer out of its first fetch.
   grow?: boolean;
-  // Defaults to the incoming (bm25) order; relevance passes its decayed rank.
   rank?: (hit: T, index: number) => number;
 }
 
@@ -166,8 +151,6 @@ export const dedupedHitWindow = <T extends { id: string }>({
   let size = Math.max(minRows, targetThreads * rowsPerThread);
   let rows = fetch(size);
   let kept = bestHitPerThread(rows, rank);
-  // Grow only when genuinely exhausted: fewer threads than asked for AND a full
-  // window came back, so deeper rows can still exist.
   for (
     let round = 0;
     round < rounds && kept.length < targetThreads && rows.length >= size;

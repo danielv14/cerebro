@@ -1,6 +1,3 @@
-// Untrusted I/O boundary: Claude Code's JSONL, validated with tolerant Valibot
-// schemas. Design notes: docs/architecture.md ("Sources").
-
 import * as v from "valibot";
 import { type Classified, parseLine } from "./adapter.ts";
 
@@ -69,8 +66,6 @@ const capToolText = (rendered: string): string =>
     ? rendered
     : `${rendered.slice(0, TOOL_TEXT_CAP)} [+${rendered.length - TOOL_TEXT_CAP} chars truncated]`;
 
-// cerebro's own rendering; skills.ts derives its marker from here so the two
-// cannot drift.
 export const toolUseTag = (name: string): string => `[tool_use:${name}]`;
 
 export const flattenContent = (content: unknown): string => {

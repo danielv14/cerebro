@@ -8,8 +8,6 @@ import {
 } from "./fts.ts";
 import { attachThreadIdentity, messageOrdinal } from "./thread.ts";
 
-// Filter semantics and design notes: docs/architecture.md ("Search").
-
 export interface SearchHit {
   // The matched message's rowid, not a thread id; `show --range` uses `ordinal`.
   message_id: number;
@@ -22,12 +20,10 @@ export interface SearchHit {
   model: string | null;
   title: string | null;
   snippet: string;
-  // The same numbering `show` uses, so a hit can be jumped to with show --range.
   ordinal: number;
 }
 
 export interface SearchOpts extends HitFilters {
-  // Every matching message instead of the best hit per thread.
   all?: boolean;
 }
 

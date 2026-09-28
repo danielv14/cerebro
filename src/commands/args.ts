@@ -1,14 +1,10 @@
 import { displayTz, zonedMidnightIso } from "../tz.ts";
 
-// CLI options as data. See CLAUDE.md ("How a command is shaped").
-
-// runCli turns this into a clean message plus exit 1, never a stack trace.
 export class CliError extends Error {}
 
 export interface OptionSpec<T> {
   kind: "string" | "boolean";
-  // Throws CliError on bad input. Never called for a boolean or an absent option.
-  // `now` is the dispatch's instant, for values relative to it.
+  // Never called for a boolean or an absent option.
   coerce: (raw: string, name: string, now: number) => T;
   absent: T;
 }
@@ -32,8 +28,7 @@ export const text = (): OptionSpec<string | undefined> => ({
   absent: undefined,
 });
 
-// Integrality is opt-in: fractions are meaningful for --days. `label` is the
-// exact noun phrase in the error, pinned by tests.
+// Integrality is opt-in: fractions are meaningful for --days.
 export const numeric = (opts: {
   integer?: boolean;
   min: number;
@@ -66,12 +61,9 @@ const isCalendarDate = (raw: string): boolean => {
   );
 };
 
-// Resolves to an ISO instant, compared as a string against the stored UTC ts. A
-// date is midnight in the display zone, so it means the day a listing shows; an
-// age (7d, 2w) counts back from the dispatch's instant. The date is checked by
-// shape and by a calendar round-trip: an unanchored regex lets "2026-31-01"
-// through, and Date.parse alone rolls "2026-02-30" over to March 2. A bad date
-// would silently exclude everything.
+// Resolves to an ISO instant, compared as a string against the stored UTC ts. The
+// date is checked by shape and by a calendar round-trip: an unanchored regex lets
+// "2026-31-01" through, and Date.parse alone rolls "2026-02-30" over to March 2.
 export const sinceBound = (): OptionSpec<string | undefined> => ({
   kind: "string",
   coerce: (raw, name, now) => {

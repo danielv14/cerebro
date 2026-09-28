@@ -9,8 +9,6 @@ import {
 } from "./fts.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
-// Design notes: docs/architecture.md ("Relevance").
-
 // bm25 is negative (lower = better); a decay factor in (0,1] shrinks an old hit's
 // magnitude toward 0, ranking it worse.
 const RELEVANCE_HALF_LIFE_DAYS = 90;

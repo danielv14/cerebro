@@ -1,7 +1,5 @@
 import { DEFAULT_DIGEST_MODELS, type DigestModelConfig } from "./prompt.ts";
 
-// The env overrides and the numbers behind them: docs/digest-model-tiering.md.
-
 // Generous on purpose: a large thread legitimately takes minutes, and a timeout
 // on a slow-but-alive call wastes a finished summary.
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -12,8 +10,6 @@ export interface DigestConfig {
   claudeBin: string;
 }
 
-// The one place cerebro reads the digest environment; the CLI edge calls it and
-// passes the result down.
 export const digestConfigFromEnv = (
   env: Record<string, string | undefined> = process.env,
 ): DigestConfig => {
