@@ -10,8 +10,6 @@ import {
 import { countStaleThreads, staleThreads } from "./stale.ts";
 import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
 
-// Design notes: docs/architecture.md ("Digest").
-
 export interface SummarizeRequest {
   input: string;
   model: string;
@@ -74,7 +72,6 @@ export const createClaudeSummarizer =
   };
 
 export interface DigestOutcome {
-  // Only "summarized" writes; the other two leave the thread stale for a retry.
   status: "summarized" | "skipped" | "failed";
   root: string;
   reason?: string;
@@ -156,7 +153,6 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
   };
   if (threads.length > 0) opts.onStart?.(threads.length);
   for (const thread of threads) {
-    // One thread must never take the run down with it.
     let outcome: DigestOutcome;
     try {
       outcome = runDigest(db, thread.id, {
@@ -178,7 +174,6 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
     if (outcome.status === "summarized") result.summarized++;
     else if (outcome.status === "skipped") result.skipped++;
     else result.failed++;
-    // Fatal means every remaining thread would fail the same way.
     if (outcome.fatal) {
       result.aborted = outcome.reason;
       break;

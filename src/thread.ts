@@ -1,11 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { escapeLike, threadOnBranch } from "./fts.ts";
 
-// Design notes: docs/architecture.md ("Threads").
-
-// Fixed literal the codebase owns; the root id stays a bound `?` at the call site.
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
+
+const THREAD_MESSAGE_ORDER = "ts, id";
 
 // Callers that scope by project must filter the view's OUTPUT: filtering raw
 // sessions before the GROUP BY drops resume/subagent rows with NULL project_path.
@@ -15,7 +14,6 @@ const rootPreferring = (column: string): string =>
       MAX(r.${column})
     )`;
 
-// Single source of both the CREATE VIEW and the shape check openDb runs.
 const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["id", "r.root_session_id"],
   ["last_ts", "MAX(r.last_ts)"],
@@ -31,8 +29,6 @@ const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["body_available", "MIN(r.body_available)"],
 ];
 
-// Changing this view needs a SCHEMA_VERSION bump in db.ts: CREATE VIEW IF NOT
-// EXISTS silently keeps an old view.
 export const THREADS_VIEW_DDL = `
 DROP VIEW IF EXISTS threads;
 CREATE VIEW IF NOT EXISTS threads AS
@@ -70,7 +66,6 @@ export interface ThreadRow {
   body_available: number;
 }
 
-// `conditions` are codebase literals, each with its `?` bound in order from `params`.
 const latestThreads = (
   db: Database,
   conditions: string[],
@@ -126,10 +121,6 @@ export interface ThreadIdentity {
   title: string | null;
 }
 
-// The sole construction site, so there is one field order to keep: `relevant` and
-// `digest search` spread this shape straight into their result rows, which makes
-// the order below their JSON key order. A rest-spread of the SELECT would follow
-// the column order instead.
 export const threadIdentity = (
   id: string,
   row: Partial<Omit<ThreadIdentity, "id">> = {},
@@ -186,14 +177,11 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
       `SELECT m.role, m.ts, m.text, m.session_id, m.is_sidechain
        FROM messages m
        WHERE m.${THREAD_MEMBERSHIP}
-       ORDER BY m.ts, m.id`,
+       ORDER BY ${THREAD_MESSAGE_ORDER}`,
     )
     .all(root) as ThreadMessage[];
 };
 
-// A slash-command turn wraps what the user typed in tags, so the tags are peeled
-// off rather than shown. The command name is the fallback: `/retro` with no
-// arguments still tells the reader what the session opened with.
 const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
 const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
 
@@ -224,12 +212,11 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
   return row?.text == null ? null : typedWords(row.text);
 };
 
-// Same ORDER BY as threadMessages, so search's #N and show's numbering agree.
 export const messageOrdinal = (db: Database, root: string, id: number): number => {
   const row = db
     .query(
       `SELECT rn FROM (
-         SELECT id, ROW_NUMBER() OVER (ORDER BY ts, id) AS rn
+         SELECT id, ROW_NUMBER() OVER (ORDER BY ${THREAD_MESSAGE_ORDER}) AS rn
          FROM messages WHERE ${THREAD_MEMBERSHIP}
        ) WHERE id = ?`,
     )

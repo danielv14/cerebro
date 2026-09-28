@@ -55,7 +55,6 @@ describe("flattenContent", () => {
   test("caps a large tool_result, keeping the head plus a marker", () => {
     const big = "x".repeat(5000);
     const out = flattenContent([{ type: "tool_result", content: big }]);
-    // head is "[tool_result] " (14) + first chars up to the 1000 cap, then a marker.
     expect(out.startsWith("[tool_result] xxxx")).toBe(true);
     expect(out).toContain("chars truncated]");
     expect(out.indexOf(" [+")).toBe(1000);
@@ -132,8 +131,6 @@ describe("classify", () => {
   });
 
   test("classifies a message with every optional field missing as nulls + isSidechain false", () => {
-    // The tolerant default: only type, uuid, and message are required; the rest
-    // default to null (parentUuid, sessionId, ts, cwd, gitBranch) or false (sidechain).
     expect(classify({ type: "user", uuid: "u1", message: { content: "hi" } })).toEqual({
       kind: "message",
       uuid: "u1",
@@ -157,7 +154,6 @@ describe("classify", () => {
         message: { content: "x", model: "claude-sonnet-4-6" },
       }),
     ).toMatchObject({ kind: "message", model: "claude-sonnet-4-6" });
-    // A non-string model (an evolving log) defaults like the other optional scalars.
     expect(
       classify({ type: "assistant", uuid: "a2", message: { content: "x", model: 42 } }),
     ).toMatchObject({ kind: "message", model: null });
@@ -168,17 +164,14 @@ describe("classify", () => {
   });
 
   test("keeps the message when an optional field has an unexpected type, defaulting that field", () => {
-    // Only type/uuid/message are load-bearing. If a future log format changes an
-    // optional scalar's type, the turn is still archived (the bad field defaults),
-    // never dropped: skip the unknown, default the bad, never lose a conversation turn.
     expect(
       classify({
         type: "user",
         uuid: "u1",
         message: { content: "still archived" },
-        timestamp: 1_700_000_000, // number, not the usual ISO string
-        isSidechain: "yes", // string, not boolean
-        parentUuid: 42, // number, not a uuid string
+        timestamp: 1_700_000_000,
+        isSidechain: "yes",
+        parentUuid: 42,
       }),
     ).toEqual({
       kind: "message",
@@ -219,8 +212,6 @@ describe("classify", () => {
   });
 
   test("drops non-message bookkeeping events that may reuse UUIDs", () => {
-    // file-history-snapshot etc. reuse other messages' UUIDs; they must never
-    // become messages or they cause false dedup collisions.
     expect(classify({ type: "file-history-snapshot", uuid: "u1" })).toEqual({ kind: "skip" });
     expect(classify({ type: "system", uuid: "s1", content: "x" })).toEqual({ kind: "skip" });
     expect(classify({ type: "attachment", uuid: "x1" })).toEqual({ kind: "skip" });

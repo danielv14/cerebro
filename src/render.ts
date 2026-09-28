@@ -1,9 +1,5 @@
 import { displayTz, perZone } from "./tz.ts";
 
-// CLI output is consumed by hooks and agents, so the exact bytes are load-bearing:
-// do not change spacing, widths, truncation lengths, or labels without updating
-// the tests in lockstep.
-
 export const shortId = (id: string): string => id.slice(0, 8);
 
 // The sv-SE locale is NOT a preference: it produces the "YYYY-MM-DD HH:mm" shape

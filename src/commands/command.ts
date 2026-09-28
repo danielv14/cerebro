@@ -3,14 +3,11 @@ import type { GitResolver } from "../git.ts";
 import type { SourceAdapter } from "../sources/adapter.ts";
 import type { OptionTable, OptionValues } from "./args.ts";
 
-// See CLAUDE.md ("How a command is shaped").
-
 export interface CommandContext<A> {
   args: A;
   now: number;
   cwd: string;
   resolveGit: GitResolver;
-  // The registered sources, built at the CLI edge from the roots it resolved.
   adapters: SourceAdapter[];
   rest: string[];
   dbPath: string;
@@ -32,8 +29,6 @@ export interface CommandOutput {
   exitCode?: number;
 }
 
-// The builders below are the one place the argument type is cast away; the
-// dispatcher itself casts nothing.
 export type Command = { options: OptionTable } & (
   | { needsDb: true; run: (input: CommandInput<Record<string, unknown>>) => CommandOutput }
   | { needsDb: false; run: (context: CommandContext<Record<string, unknown>>) => CommandOutput }
@@ -67,8 +62,6 @@ export const defineCommand = <T extends OptionTable>(spec: {
   run: (input) => spec.run(input as unknown as CommandInput<OptionValues<T>>),
 });
 
-// The run step takes the context alone, so reaching for a database is a compile
-// error rather than a crash on a null.
 export const defineDbLessCommand = <T extends OptionTable>(spec: {
   options: T;
   run: (context: CommandContext<OptionValues<T>>) => CommandOutput;

@@ -12,7 +12,6 @@ export interface StaleThread {
   title: string | null;
   summary_version: number | null;
   summarized_at: string | null;
-  // Both null when the thread has no failed attempt on record.
   failed_attempts: number | null;
   retry_after: string | null;
 }

@@ -15,15 +15,11 @@ import {
 } from "./fixtures.ts";
 
 describe("dedupedHitWindow", () => {
-  // A fetch that serves the top `size` rows of a fixed ranked list and records the
-  // window sizes it was asked for, so a test can pin the number of rounds.
   const fetcher = (rows: { id: string }[], asked: number[]) => (size: number) => {
     asked.push(size);
     return rows.slice(0, size);
   };
 
-  // `roots` threads with `perRoot` matching rows each, worst hit last, which is the
-  // shape a chatty thread makes in a ranked window.
   const chatty = (roots: number, perRoot: number): { id: string }[] =>
     Array.from({ length: roots }, (_, root) =>
       Array.from({ length: perRoot }, () => ({ id: `R${root}` })),
@@ -90,15 +86,13 @@ describe("dedupedHitWindow", () => {
       minRows: 10,
       rowsPerThread: 1,
     });
-    // Ten rows per root, so 10 rows hold 1 root, 40 hold 4, and 160 hold 16, past the
-    // 10 asked for. Without the growth the answer would have been that single root.
+    // Ten rows per root, so 10 rows hold 1 root, 40 hold 4, and 160 hold 16, past the 10 asked for.
     expect(asked).toEqual([10, 40, 160]);
     expect(kept).toHaveLength(16);
   });
 
   test("caps the growth rounds rather than fetching forever", () => {
     const asked: number[] = [];
-    // One root owns every row, so the target is never reachable.
     dedupedHitWindow({
       fetch: fetcher(chatty(1, 100_000), asked),
       targetThreads: 5,
@@ -121,9 +115,8 @@ describe("dedupedHitWindow", () => {
 
   test("answers out of the first fetch when the caller turns growth off", () => {
     const asked: number[] = [];
-    // Exactly 80 rows over 2 roots: a full window holding fewer roots than asked for,
-    // which is the one shape that sends the growth rounds off. The latency-path caller
-    // takes the two it found instead.
+    // Exactly 80 rows over 2 roots: a full window holding fewer roots than asked for, which is the
+    // one shape that sends the growth rounds off.
     const kept = dedupedHitWindow({
       fetch: fetcher(chatty(2, 40), asked),
       targetThreads: 5,
@@ -150,12 +143,6 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
   });
 
   test("a thread with metadata split across root and resume shows one project and title", () => {
-    // The bug class this pins: a resumed thread whose root carries the cwd (and no
-    // title) while the resume carries the title (and no cwd). When search and
-    // relevance each owned their own copy of the FTS join, one path read the
-    // session row and the other the rollup, and the same thread rendered with two
-    // different projects/titles. Both paths now go through rankedMessageHits plus
-    // the same rollup hydration, so the metadata must be identical.
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "started the flux capacitor work", {
         cwd: "/home/user/alpha",
@@ -179,7 +166,6 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
     expect(relevantHits).toHaveLength(1);
     expect(relevantHits[0]!.id).toBe("ROOT");
 
-    // The same thread resolves to the same rollup metadata through both paths.
     expect(searchHits[0]!.project_path).toBe("/home/user/alpha");
     expect(relevantHits[0]!.project_path).toBe("/home/user/alpha");
     expect(searchHits[0]!.title).toBe("Flux capacitor tuning");
@@ -187,8 +173,6 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
   });
 
   test("relevant fills its limit when chatty threads dominate the raw tier (#141)", () => {
-    // 20 threads with 10 equally matching turns each. With a flat window a handful of
-    // chatty threads own all of it, so the window has to grow off the caller's limit.
     for (let thread = 0; thread < 20; thread++) {
       const id = `T${thread}`;
       writeSession(
@@ -209,11 +193,8 @@ describe("search and relevant agree on thread rollup metadata (#119/#127)", () =
   });
 
   test("relevant stays on one fetch at its default limit (#141)", () => {
-    // CHATTY matches strongly 200 times, so it owns the whole first 80-row window and
-    // BURIED only surfaces from a deeper fetch. At the default limit `relevant` runs
-    // on the prompt hook's latency path and declines to pay for that: one query, and
-    // the thread those 80 rows held. Ask for more than the default and the growth
-    // rounds are back, which is the trade made explicit.
+    // CHATTY matches strongly 200 times, so it owns the whole first 80-row window and BURIED only
+    // surfaces from a deeper fetch.
     writeSession(
       env.projects,
       "-repo",

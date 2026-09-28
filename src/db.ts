@@ -3,8 +3,6 @@ import fs from "node:fs";
 import { dirname } from "node:path";
 import { THREADS_VIEW_DDL, threadsViewIsCurrent } from "./thread.ts";
 
-// Design notes: docs/architecture.md ("Database").
-
 // Bump whenever SCHEMA or migrate() changes, the threads view DDL included.
 export const SCHEMA_VERSION = 7;
 
@@ -24,7 +22,6 @@ CREATE TABLE IF NOT EXISTS index_state (
   bytes_indexed INTEGER NOT NULL DEFAULT 0,
   mtime_ms      REAL    NOT NULL DEFAULT 0,
   indexed_at    TEXT,
-  -- 1 = cerebro's own digest transcript: permanently excluded from indexing.
   is_digest     INTEGER NOT NULL DEFAULT 0
 );
 
@@ -40,8 +37,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   provider          TEXT,
   model             TEXT,
   title             TEXT,
-  -- Persisted so a later lower-priority title event can never clobber a
-  -- higher-priority title indexed earlier.
   title_priority    INTEGER NOT NULL DEFAULT 0,
   first_ts          TEXT,
   last_ts           TEXT,
@@ -80,7 +75,6 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text)
     VALUES ('delete', old.id, old.text);
 END;
--- 'index --rebuild' re-flattens stored text in place via an upsert.
 CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text)
     VALUES ('delete', old.id, old.text);
@@ -93,12 +87,9 @@ CREATE TABLE IF NOT EXISTS summaries (
   prompt_version  INTEGER NOT NULL,
   model           TEXT,
   summarized_at   TEXT NOT NULL,
-  -- The thread's last_ts at summarization time; later activity marks it stale.
   source_last_ts  TEXT
 );
 
--- A thread whose last digest attempts failed; a drain skips it until retry_after.
--- writeSummary clears it.
 CREATE TABLE IF NOT EXISTS digest_failures (
   root_session_id TEXT PRIMARY KEY,
   attempts        INTEGER NOT NULL,
@@ -140,10 +131,10 @@ const migrate = (db: Database): void => {
   addColumnIfMissing(db, "sessions", "provider", "provider TEXT");
   addColumnIfMissing(db, "sessions", "model", "model TEXT");
   // Here rather than in SCHEMA: it names is_sidechain, which a pre-sidechain
-  // archive only has after the ALTER above. It covers relinkThreads' first-turn
-  // scan. idx_messages_session is redundant next to it but stays: a pre-v7 hook
-  // binary re-runs its SCHEMA on this archive, and would rebuild a dropped index
-  // over every message on each open until it is redeployed.
+  // archive only has after the ALTER above. idx_messages_session is redundant next
+  // to it but stays: a pre-v7 hook binary re-runs its SCHEMA on this archive, and
+  // would rebuild a dropped index over every message on each open until it is
+  // redeployed.
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_messages_session_chain ON messages(session_id, is_sidechain)",
   );

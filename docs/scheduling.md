@@ -25,6 +25,10 @@ to catch up faster:
 CEREBRO_DIGEST_BATCH_CAP=400 ~/.claude/cerebro/digest-stale-batch.sh   # one-shot full catch-up
 ```
 
+A lock older than `CEREBRO_DIGEST_LOCK_STALE_MIN` minutes (default 180) is the residue
+of a killed run and gets broken on the next start. Raise it for a long manual drain that
+may run past the default.
+
 Schedule it however you like. On macOS, a `launchd` agent every 6 hours keeps the
 backlog near zero. The plist is machine-specific (absolute paths; launchd does not
 expand `~` or `$HOME`), so it is not checked in; create
@@ -70,5 +74,7 @@ launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/com.you.cerebro.digest-s
 
 Progress lands in `digest.log`, one `[stale ...]`-stamped line per thread as it
 completes (the drain reports each thread as it finishes rather than everything at
-the end, so a stuck model call is visible while it is happening). A plain `cron`
-entry that runs the same script works just as well on Linux.
+the end, so a stuck model call is visible while it is happening). Skips are counted
+apart from failures, because `digest.log` is the only place to see whether the model
+itself is broken. A plain `cron` entry that runs the same script works just as well on
+Linux.

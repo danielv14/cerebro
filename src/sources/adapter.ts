@@ -1,5 +1,3 @@
-// The source-adapter contract. Guarantees and how-to: docs/architecture.md.
-
 export interface SessionFile {
   path: string;
   // "subagent" folds into the parent session named by sessionId.

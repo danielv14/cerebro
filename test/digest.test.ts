@@ -43,10 +43,12 @@ describe("DIGEST_PROMPT", () => {
   });
 
   test("opens with the exact signature the indexer keys digest-transcript skipping on", () => {
-    // The signature is a persisted contract: transcripts already on disk begin with
-    // these bytes, and isDigestRunTranscript matches on the prefix. This guards the
-    // template-literal composition after the constant moved to its own leaf module.
+    // The signature is a persisted contract: transcripts already on disk begin with these bytes,
+    // and isDigestRunTranscript matches on the prefix.
     expect(DIGEST_PROMPT.startsWith(DIGEST_PROMPT_SIGNATURE)).toBe(true);
+    expect(DIGEST_PROMPT_SIGNATURE).toBe(
+      "You are summarizing a single Claude Code session for a personal, full-text-searchable archive.",
+    );
   });
 });
 
@@ -100,13 +102,9 @@ describe("pickDigestModel (size -> model tiering)", () => {
   });
 });
 
-// The env is an argument here, so these read a given environment rather than
-// mutating the process's own and restoring it afterwards.
 describe("digestConfigFromEnv", () => {
   test("defaults to the token-derived threshold", () => {
     // (SMALL_MODEL_CONTEXT_TOKENS 200k - RESERVED_CONTEXT_TOKENS 90k) * BYTES_PER_TOKEN 3.
-    // Leaves room for claude -p's ~77k-token system-prompt/tools overhead so a thread
-    // that fits on size also fits the real request.
     expect(digestConfigFromEnv({})).toEqual({
       models: {
         small: "claude-haiku-4-5",
@@ -119,10 +117,6 @@ describe("digestConfigFromEnv", () => {
   });
 
   test("a dense thread that overflowed Haiku now escalates", () => {
-    // Regression: a ~535k-byte thread rendered to ~136k transcript tokens but the
-    // request reached ~213k tokens once claude -p added its overhead, overflowing
-    // Haiku's 200k window. The old 540k-char threshold kept it on Haiku; the
-    // token-derived 330k threshold escalates it to the large model.
     expect(pickDigestModel(535_524, digestConfigFromEnv({}).models)).toBe("claude-sonnet-4-6[1m]");
   });
 
@@ -143,7 +137,6 @@ describe("digestConfigFromEnv", () => {
   });
 
   test("a non-numeric override falls back instead of becoming NaN", () => {
-    // NaN would wedge every thread on the small model and disable the timeout.
     const config = digestConfigFromEnv({
       CEREBRO_DIGEST_HAIKU_MAX_CHARS: "lots",
       CEREBRO_DIGEST_TIMEOUT_MS: "soon",
@@ -185,12 +178,9 @@ describe("buildDigestInput (size-bounded transcript)", () => {
     ];
     const out = buildDigestInput(messages, 2_000);
 
-    // All four messages are still represented (water-fill keeps the conversation shape).
     expect((out.match(/──── /g) ?? []).length).toBe(4);
-    // Short steering messages survive intact.
     expect(out).toContain("tiny steer one");
     expect(out).toContain("tiny steer two");
-    // The long essays are trimmed, not dropped.
     expect(out).toContain("truncated for digest");
     // Bounded near the budget (marker overhead aside), far below the ~20k verbatim size.
     expect(out.length).toBeLessThan(2_500);
@@ -202,9 +192,7 @@ describe("buildDigestInput (size-bounded transcript)", () => {
       [msg("user", "short"), msg("assistant", "y".repeat(5_000))],
       1_000,
     );
-    // The short body renders whole (its block ends, then the next header begins).
     expect(out).toContain("short\n\n──── assistant");
-    // Only the long body carries the truncation marker.
     expect(out).toContain("truncated for digest");
   });
 
@@ -213,7 +201,6 @@ describe("buildDigestInput (size-bounded transcript)", () => {
   });
 
   test("caps a non-ASCII thread within the byte budget", () => {
-    // 7 bytes per 4 characters, the ratio the character-count budget overshot on.
     const swedish = "åäö ".repeat(50_000);
     const out = buildDigestInput([msg("user", swedish), msg("assistant", swedish)], 20_000);
 
@@ -291,10 +278,6 @@ describe("digest (summaries layer)", () => {
     ]);
     runIndex(db, { adapters: env.adapters });
 
-    // A session that indexed into a sessions row but contributed no messages
-    // (e.g. a /clear-only or resume-marker session): rolls up to msgs = 0 in the
-    // threads view, so there is nothing to summarize. Fed an empty transcript the
-    // model answers "please paste the transcript", which must never be stored.
     db.run(
       `INSERT INTO sessions (session_id, root_session_id, project_path, msg_count, first_ts, last_ts)
        VALUES ('EMPTY', 'EMPTY', '-repo', 0, ?, ?)`,
@@ -349,7 +332,6 @@ describe("digest (summaries layer)", () => {
     writeSummary(db, "S", "Second version migrating to knex. Keywords: knex");
     expect(getSummary(db, "S")!.summary).toContain("knex");
     expect((db.query("SELECT COUNT(*) AS c FROM summaries").get() as { c: number }).c).toBe(1);
-    // The old text is gone from the index, the new text is searchable.
     expect(searchSummaries(db, "drizzle").length).toBe(0);
     expect(searchSummaries(db, "knex").map((h) => h.id)).toEqual(["S"]);
   });
@@ -367,7 +349,6 @@ describe("digest (summaries layer)", () => {
     const root = writeSummary(db, "RESUME", "Thread summary. Keywords: start, more");
     expect(root).toBe("ORIG");
     expect(getSummary(db, "ORIG")!.summary).toContain("Thread summary");
-    // The whole thread now counts as summarized.
     expect(staleThreads(db).length).toBe(0);
   });
 
@@ -386,9 +367,6 @@ describe("digest (summaries layer)", () => {
   });
 
   test("searchSummaries orders matches by bm25 (dense summary before a buried one)", () => {
-    // Both summaries match "limiter", so this exercises ranking rather than the
-    // single-hit filtering the test above covers: the dense, term-heavy summary must
-    // outrank the one where the term is buried in filler. Pins the ORDER BY bm25.
     writeSession(env.projects, "-repo-a", "DENSE", [
       userMsg("DENSE", "ua", "a", { timestamp: ts(0) }),
     ]);
@@ -403,10 +381,6 @@ describe("digest (summaries layer)", () => {
   });
 
   test("searchSummaries still renders a hit whose sessions rows are gone (#118)", () => {
-    // The `threads` rollup carries HAVING SUM(msg_count) > 0 and searchSummaryRoots
-    // LEFT JOINs it, so a summary is the archive's only remaining copy of such a
-    // thread. Hydration must tolerate the missing rollup row: keep the snippet, show
-    // null metadata, never drop or throw.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "Set up the rate limiter middleware. Keywords: limiter");
@@ -441,13 +415,10 @@ describe("digest (summaries layer)", () => {
     runIndex(db, { adapters: env.adapters });
     writeSummary(db, "S", "Built the rate limiter middleware. Keywords: rate-limiter");
 
-    // The seam returns the matching root with a bracketed snippet at the requested width.
     const roots = searchSummaryRoots(db, '"limiter"', 5, 12);
     expect(roots.map((r) => r.id)).toEqual(["S"]);
     expect(roots[0]!.snippet).toContain("[limiter]");
 
-    // Both callers route through it: the summary surfaces in `relevant` (summary tier)
-    // and in `digest search` for the same prompt.
     const relevant = relevantThreads(db, "how did the rate limiter work");
     expect(relevant.map((r) => r.id)).toEqual(["S"]);
     expect(relevant[0]!.fromSummary).toBe(true);

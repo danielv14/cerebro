@@ -2,8 +2,6 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { parseLine, type SessionFile } from "./sources/adapter.ts";
 
-// Design notes: docs/architecture.md ("Scan layer").
-
 // Bytes, not characters: the per-file cursor is a byte offset, and 0x0A never
 // appears inside a UTF-8 multibyte sequence, so a newline split is safe.
 const readRange = (path: string, start: number, size: number): Buffer => {
@@ -55,7 +53,7 @@ export type FileStatus = "new" | "grown" | "truncated" | "unchanged" | "skipped"
 export interface FileReadPlan {
   start: number;
   status: FileStatus;
-  shouldRead: boolean; // false only when unchanged or skipped
+  shouldRead: boolean;
 }
 
 export const planFileRead = (
@@ -106,9 +104,7 @@ export interface ScannedFile {
 }
 
 // Without `onError` a per-file failure propagates, which is what the dry run
-// wants; runIndex passes one so a bad file cannot abort the whole run. `onUnread`
-// gets the plan rather than one callback per status, so this layer never learns a
-// caller's reporting categories.
+// wants; runIndex passes one so a bad file cannot abort the whole run.
 export const eachIndexableFile = (
   db: Database,
   files: SessionFile[],

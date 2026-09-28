@@ -49,8 +49,6 @@ export const staleListing = (
   return lines;
 };
 
-// Machine mode for the batch hook: full ids only, so a caller never scrapes the
-// human listing format.
 export const staleIds = (rows: StaleThread[]): string[] => rows.map((row) => row.id);
 
 export const summarySearchListing = (hits: SummaryHit[]): string[] => {
@@ -93,7 +91,6 @@ export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   }
 };
 
-// Printed before the model call, so a wedged call still leaves this line behind.
 export const digestStartLine = (about: { root: string; bytes: number; model: string }): string =>
   `Summarizing ${shortId(about.root)}: ${about.bytes} bytes -> ${about.model}`;
 
@@ -114,11 +111,8 @@ export const drainSummary = (result: DrainResult): string[] => {
   return lines;
 };
 
-// Untrusted I/O boundary: the SessionEnd payload on stdin. Extra keys ignored.
 const SessionEndPayloadSchema = v.object({ session_id: v.optional(v.string()) });
 
-// null on any parse or validation failure: the caller reports a missing id
-// rather than summarizing something arbitrary.
 export const parseSessionEndPayload = (raw: string): string | null => {
   try {
     const parsed = v.safeParse(SessionEndPayloadSchema, JSON.parse(raw));
@@ -129,15 +123,12 @@ export const parseSessionEndPayload = (raw: string): string | null => {
   }
 };
 
-// The summarizer and the tiering must come from the same resolved config, so
-// they are derived together rather than at two call sites.
 const digestPipeline = (config: DigestConfig) => ({
   summarize: createClaudeSummarizer(config),
   models: config.models,
 });
 
-// Matches the reconciler's default cap.
-const DEFAULT_DRAIN_LIMIT = 8;
+export const DEFAULT_DRAIN_LIMIT = 8;
 
 const limitOption = positiveInt();
 

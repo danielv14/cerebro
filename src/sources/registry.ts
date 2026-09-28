@@ -1,13 +1,10 @@
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
 import { createClaudeCodeAdapter } from "./claude-code.ts";
 
-// The registered sources, built from the roots the CLI edge resolved. Adding a
-// source: docs/architecture.md ("Sources").
 export const sourceAdapters = (claudeCodeProjects: string): SourceAdapter[] => [
   createClaudeCodeAdapter(claudeCodeProjects),
 ];
 
-// An unknown provider is a programming error, so this throws rather than guessing.
 export const adapterFor = (provider: string, adapters: SourceAdapter[]): SourceAdapter => {
   const adapter = adapters.find((a) => a.id === provider);
   if (!adapter) throw new Error(`no source adapter registered for provider "${provider}"`);

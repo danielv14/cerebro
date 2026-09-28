@@ -8,7 +8,7 @@ import type { SourceAdapter } from "./sources/adapter.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
 // Read-only by construction: doctor never repairs, it names the command that
-// does. Design notes: docs/architecture.md ("Doctor").
+// does.
 
 export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
@@ -22,8 +22,7 @@ export interface Check {
 }
 
 // Identity declared once per check: rebuilding the literal per branch would let a
-// typo hand --json consumers two keys for the same check. `remedy` stays absent
-// rather than undefined so the JSON shape is stable.
+// typo hand --json consumers two keys for the same check.
 interface CheckOutcomes {
   ok: (detail: string, remedy?: string) => Check;
   warn: (detail: string, remedy?: string) => Check;
@@ -93,8 +92,6 @@ const schemaCheck = (db: Database): Check => {
       );
 };
 
-// Counted through the same reader the prune deletes through, so this can never
-// disagree with what `cerebro index` would remove.
 const orphanedCursors = (db: Database, adapters: SourceAdapter[]): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
   const cursors = count(db, "SELECT COUNT(*) AS c FROM index_state");
@@ -156,8 +153,6 @@ const deployedDrift = (running: BuildStamp, path: string): Check => {
     return check.warn("deployed binary predates the build stamp", "bun run deploy");
   }
   if (!running.stamped) {
-    // Running from source there is no commit to compare; "behind" would be a
-    // guess.
     return check.unknown(`${deployedCommit} (running from source, nothing to compare)`);
   }
   return deployedCommit === running.commit
@@ -189,8 +184,6 @@ const hookWiring = (path: string): Check => {
 };
 
 export interface DoctorOptions {
-  // The two probes of the machine rather than the archive. Resolved at the CLI
-  // edge so doctor never decides on its own where to look.
   deployedBinary: string;
   settingsFile: string;
   adapters: SourceAdapter[];
@@ -211,6 +204,5 @@ export const runDoctor = (db: Database, dbPath: string, opts: DoctorOptions): Do
     digestCoverage(db),
     hookWiring(opts.settingsFile),
   ];
-  // Only a hard failure exits non-zero; warnings are things to get around to.
   return { build, checks, ok: !checks.some((c) => c.status === "fail") };
 };

@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { openDb, SCHEMA_VERSION } from "../src/db.ts";
 import { threadsViewIsCurrent } from "../src/thread.ts";
 
-// The DDL runs once per SCHEMA_VERSION; the stamp is what lets every later open
-// (the per-prompt hook hot path) skip it entirely.
 describe("openDb schema versioning", () => {
   let dir: string;
   let path: string;
@@ -39,8 +37,6 @@ describe("openDb schema versioning", () => {
   });
 
   test("an old-version database re-runs DDL and migrations on open", () => {
-    // Simulate a database from before a migration: strip a migrated column and
-    // reset the stamp. Reopening must re-add the column and re-stamp.
     const db = openDb(path);
     db.run("ALTER TABLE sessions DROP COLUMN title_priority");
     db.run("PRAGMA user_version = 0");
@@ -69,10 +65,7 @@ describe("openDb schema versioning", () => {
   });
 
   test("migration backfills provider='claude-code' on pre-adapter rows", () => {
-    // Simulate a database written before the source-adapter seam: no provider or
-    // model column, an existing session row, and an old stamp. Reopening must add
-    // both columns and backfill provider on the old row (everything indexed before
-    // the seam came from Claude Code); model stays NULL, it cannot be recovered.
+    // Model stays NULL, it cannot be recovered.
     const db = openDb(path);
     db.run("INSERT INTO sessions (session_id, msg_count) VALUES ('OLD', 3)");
     // The threads view references both columns, and SQLite refuses to drop a
@@ -92,10 +85,6 @@ describe("openDb schema versioning", () => {
   });
 
   test("an old-version database gets the current threads view definition (#83)", () => {
-    // CREATE VIEW IF NOT EXISTS does not replace an existing view, so the DDL drops
-    // the view first. Without that, an old database would keep serving its stale
-    // rollup (here: a pre-#83 one with no HAVING) forever. Simulate one, reset the
-    // stamp, and reopen.
     const db = openDb(path);
     db.run("DROP VIEW threads");
     db.run(
@@ -108,24 +97,17 @@ describe("openDb schema versioning", () => {
          GROUP BY r.root_session_id`,
     );
     db.run("INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('E', 'E', 0)");
-    // The old definition rolls the zero-message session up into a thread.
     expect(db.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 1 });
     db.run("PRAGMA user_version = 0");
     db.close();
 
     const reopened = openDb(path);
-    // The replaced view excludes it, and the session row itself is untouched.
     expect(reopened.query("SELECT COUNT(*) AS c FROM threads").get()).toEqual({ c: 0 });
     expect(reopened.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 1 });
     reopened.close();
   });
 
   test("a wrong-shaped threads view is replaced even when the stamp is current", () => {
-    // A binary built for a different SCHEMA_VERSION racing this one through the
-    // first open after an upgrade can leave the current stamp over its own (older)
-    // view. Version-gating alone would trust that forever and every reader of the
-    // missing column would fail; the open-time shape check must heal it. Simulate
-    // the wedged state: current stamp, pre-v5 view (no git_branch).
     const db = openDb(path);
     db.run("DROP VIEW threads");
     db.run(
@@ -149,24 +131,15 @@ describe("openDb schema versioning", () => {
   });
 
   test("the shape check agrees with the view the DDL creates", () => {
-    // Both are built from the same column declaration in thread.ts, so drift is
-    // impossible by construction; this pins the wiring end to end (a mismatch
-    // would make upToDate() permanently false and every open would silently
-    // re-run the full DDL under the write lock, the exact hot-path cost the
-    // version gate exists to avoid). A fresh database must pass the shape check.
     const db = openDb(path);
     expect(threadsViewIsCurrent(db)).toBe(true);
     db.close();
   });
 
   test("messages keeps the legacy line_no column for the deployed hook binary", () => {
-    // The compiled hook binary is a frozen snapshot whose INSERT names line_no;
-    // dropping (or omitting) the column would make every automated index run fail
-    // silently until the next deploy. It must exist on fresh databases too.
     const db = openDb(path);
     const cols = db.query("PRAGMA table_info(messages)").all() as { name: string }[];
     expect(cols.some((c) => c.name === "line_no")).toBe(true);
-    // The frozen binary's exact INSERT shape must keep working.
     db.run(
       `INSERT OR IGNORE INTO messages (uuid, session_id, parent_uuid, line_no, ts, role, text, is_sidechain)
        VALUES ('u1', 'S', NULL, NULL, NULL, 'user', 'x', 0)`,
@@ -177,7 +150,7 @@ describe("openDb schema versioning", () => {
 
   test("per-connection pragmas apply on every open", () => {
     openDb(path).close();
-    const db = openDb(path); // second open skips the DDL block
+    const db = openDb(path);
     const busy = db.query("PRAGMA busy_timeout").get() as { timeout: number };
     expect(busy.timeout).toBe(5000);
     db.close();

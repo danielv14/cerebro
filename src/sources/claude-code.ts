@@ -76,8 +76,6 @@ export const discoverSessionFiles = (root: string): SessionFile[] => {
   return out;
 };
 
-// The projects root is handed in, never read from the environment here: the CLI
-// edge resolves it once and tests build the adapter from their fixture tree.
 export const createClaudeCodeAdapter = (projectsRoot: string): SourceAdapter => ({
   id: CLAUDE_CODE_PROVIDER,
   discover: () => discoverSessionFiles(projectsRoot),

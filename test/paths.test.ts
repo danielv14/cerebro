@@ -9,9 +9,8 @@ import {
   settingsPath,
 } from "../src/paths.ts";
 
-// File level, so both describes run against a clean environment and neither leaks
-// an override into the files bun runs after this one in the same process. A
-// developer with CLAUDE_CONFIG_DIR exported is exactly who these paths are for.
+// File level, so both describes run against a clean environment and neither leaks an override into
+// the files bun runs after this one in the same process.
 const saved: Record<string, string | undefined> = {};
 const VARS = ["CLAUDE_CONFIG_DIR", "CEREBRO_CLAUDE_DIR", "CEREBRO_DB"];
 
@@ -28,9 +27,6 @@ afterEach(() => {
   }
 });
 
-// The binary and settings paths are the two doctor probes, and `bun run deploy`
-// plus both hook scripts build them from their own bash literals. Drift between
-// the four is the bug this pins: deploy installing where the hooks do not look.
 describe("Claude config directory resolution", () => {
   test("defaults to ~/.claude", () => {
     expect(deployedBinaryPath()).toBe(join(homedir(), ".claude", "cerebro", "cerebro"));
@@ -44,8 +40,6 @@ describe("Claude config directory resolution", () => {
     expect(deployedBinaryPath()).toBe(join("/tmp/elsewhere", "cerebro", "cerebro"));
     expect(settingsPath()).toBe(join("/tmp/elsewhere", "settings.json"));
     expect(claudeProjectsDir()).toBe(join("/tmp/elsewhere", "projects"));
-    // The archive moves with the installation, so an existing one is left behind
-    // rather than migrated: docs/operations.md tells the reader to move it.
     expect(defaultDbPath()).toBe(join("/tmp/elsewhere", "cerebro", "archive.sqlite"));
   });
 
@@ -55,7 +49,6 @@ describe("Claude config directory resolution", () => {
     expect(claudeProjectsDir()).toBe(join("/tmp/fixture", "projects"));
     expect(deployedBinaryPath()).toBe(join("/tmp/elsewhere", "cerebro", "cerebro"));
     expect(settingsPath()).toBe(join("/tmp/elsewhere", "settings.json"));
-    // The archive follows the transcripts, so a fixture run is fully sandboxed.
     expect(defaultDbPath()).toBe(join("/tmp/fixture", "cerebro", "archive.sqlite"));
   });
 });
@@ -87,8 +80,6 @@ describe("the bash copies of the cerebro directory", () => {
     return line;
   };
 
-  // Both the directory and the filename deploy installs under: the same silent
-  // failure either way, since doctor probes one exact path.
   const deployInstall = (): string => {
     const deploy = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).scripts
       .deploy as string;
@@ -108,8 +99,6 @@ describe("the bash copies of the cerebro directory", () => {
     );
     expect(deployedBinaryPath()).toBe(join(homedir(), ".claude", "cerebro", "cerebro"));
 
-    // Set on both sides: the two answers are the same absolute path, or deploy
-    // installs somewhere doctor does not probe.
     process.env.CLAUDE_CONFIG_DIR = CONFIG_DIR;
     expect(resolve(deployInstall(), { CLAUDE_CONFIG_DIR: CONFIG_DIR }, "INSTALLED")).toBe(
       deployedBinaryPath(),
@@ -123,7 +112,6 @@ describe("the bash copies of the cerebro directory", () => {
       expect(resolve(assignment, { CLAUDE_CONFIG_DIR: CONFIG_DIR }, "CEREBRO")).toBe(
         `${CONFIG_DIR}/cerebro/cerebro`,
       );
-      // CEREBRO_BIN still wins over both, for a hook pointed at a one-off build.
       expect(resolve(assignment, { CEREBRO_BIN: "/opt/cerebro" }, "CEREBRO")).toBe("/opt/cerebro");
     }
   });

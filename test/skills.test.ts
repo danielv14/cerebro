@@ -77,9 +77,6 @@ describe("skillUsage", () => {
   });
 
   test("a quoted marker on the other side of the conversation does not count", () => {
-    // A transcript that greps for the markers, or prints these very numbers, lands
-    // in a tool_result on the user side. Without the role filter the measurement
-    // counts itself every time it runs.
     writeSession(env.projects, "-repo", "S", [
       userMsg(
         "S",
@@ -99,8 +96,6 @@ describe("skillUsage", () => {
   });
 
   test("a marker quoted mid-sentence by the assistant is prose, not a call", () => {
-    // Documenting the format is not using the skill. The real rendering always opens
-    // a line, so an inline mention is distinguishable.
     writeSession(env.projects, "-repo", "S", [
       assistantMsg("S", "a1", 'match on [tool_use:Skill] {"skill":"X"} without the brace', {
         timestamp: ts(0),
@@ -111,9 +106,6 @@ describe("skillUsage", () => {
   });
 
   test("a marker quoted inside cerebro's own output does not count", () => {
-    // `show` and `recent` collapse a turn onto one line, so a recall of a session that
-    // used a skill puts the marker mid-line inside a tool_result. Counting it would
-    // make every recall inflate the numbers it just reported.
     writeSession(env.projects, "-repo", "S", [
       userMsg(
         "S",
@@ -141,9 +133,6 @@ describe("skillUsage", () => {
   });
 
   test("text that cannot be a name is not reported as one", () => {
-    // The slice between two markers is foreign input: an opening tag whose nearest
-    // closing tag is far away would otherwise print an arbitrary chunk of someone's
-    // transcript as a skill name.
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "<command-name>a name\nwith a newline and a secret</command-name>", {
         timestamp: ts(0),

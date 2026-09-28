@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  DEFAULT_DRAIN_LIMIT,
   digestShow,
   drainSummary,
   noSummaryHint,
@@ -219,4 +222,12 @@ describe("status lines", () => {
       "No summary yet for 01234567. Generate the backlog with: cerebro digest stale",
     );
   });
+});
+
+test("digest drain defaults to the batch hook's cap", () => {
+  const hook = readFileSync(
+    join(import.meta.dir, "..", "..", "hooks", "digest-stale-batch.sh"),
+    "utf8",
+  );
+  expect(hook).toContain(`CAP="\${CEREBRO_DIGEST_BATCH_CAP:-${DEFAULT_DRAIN_LIMIT}}"`);
 });

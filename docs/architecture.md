@@ -254,8 +254,10 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
   resume rows whose project_path is NULL or differs.
 - **The view's columns are declared once** (`THREADS_VIEW_COLUMN_EXPRS`) and
   drive both the CREATE VIEW and the shape check `openDb` runs, so the two
-  cannot drift. `CREATE VIEW IF NOT EXISTS` silently keeps an old view; see the
-  db section for the race that closes.
+  cannot drift. The view DDL drops and recreates it, but only runs when the
+  version gate opens (see the db section). The shape check catches a changed
+  column list; any other change to the view, a new `HAVING` for instance, needs
+  a `SCHEMA_VERSION` bump.
 - **`HAVING SUM(msg_count) > 0`** is what makes "a thread" mean the same thing to
   every reader: a session opened and closed right away still gets a sessions row
   with zero messages, and excluding it in the view rather than per listing keeps
@@ -388,7 +390,9 @@ The same-repo boost (`repoBoost`, 1.5x) prefers threads in the repo the prompt
 was typed in, matched on the thread's git_root when the cwd is in a repo, else on
 exact project_path (the same pairing `recent` scopes by). 1.5x is worth roughly
 two months of recency at the 90-day half-life. It is a boost, never a filter, so
-a much stronger cross-repo match stays reachable.
+a much stronger cross-repo match stays reachable. The boost needs an explicit
+`--cwd`: `relevant` does not adopt the invoking directory, so a manual call ranks
+the same wherever it is typed.
 
 The raw tier's window is deduped on the tier's own decayed-and-boosted rank (not
 on bm25), so the hit kept per thread is the one it actually ranks on. Growth is
@@ -510,7 +514,7 @@ failure when one drifts is silent: deploy installs the binary where the hooks an
 doctor do not look. `test/paths.test.ts` runs all three bash copies under `bash
 -c` and compares them to this one, so drift is a red test rather than a
 convention nobody can check. `CEREBRO_CLAUDE_DIR` answers the different question
-of where transcripts are read from, and only that.
+of where transcripts are read from, and the default archive path follows it.
 
 ## CLI (`src/cli.ts`, `src/commands/`)
 

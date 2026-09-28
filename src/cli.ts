@@ -31,8 +31,6 @@ import { claudeProjectsDir, defaultDbPath } from "./paths.ts";
 import type { SourceAdapter } from "./sources/adapter.ts";
 import { sourceAdapters } from "./sources/registry.ts";
 
-// Design notes: docs/architecture.md ("CLI").
-
 export interface CliIO {
   log: (line: string) => void;
   error: (line: string) => void;
@@ -52,8 +50,6 @@ const GLOBAL_OPTIONS = {
   help: flag(),
 } satisfies OptionTable;
 
-// db-less on purpose: doctor's drift check spawns the deployed binary's
-// `version`, and that answer must not depend on the archive being readable.
 const versionCommand = defineDbLessCommand({
   options: { json: flag() } satisfies OptionTable,
   run: ({ dbPath }) => {
@@ -80,8 +76,6 @@ export const commands = new Map<string, CommandNode>([
   ["version", versionCommand],
 ]);
 
-// One table for the whole vocabulary, so a name declared with two different
-// kinds is caught here at startup instead of silently breaking the loser.
 export const buildParserOptions = (
   entries: Iterable<[string, CommandNode]>,
 ): Record<string, { type: "string" | "boolean"; short?: string }> => {
@@ -136,8 +130,6 @@ export const runCli = (
     io.setExitCode(1);
   };
 
-  // `tokens` records which options were actually supplied, which the values
-  // object cannot express.
   let parsed: ReturnType<typeof parseCliArgs>;
   try {
     parsed = parseCliArgs(args);
@@ -188,7 +180,6 @@ export const runCli = (
     }
   }
 
-  // Read once per run, so every command in one dispatch sees the same instant.
   const now = env.now ?? Date.now();
   let commandArgs: Record<string, unknown>;
   try {
@@ -200,9 +191,7 @@ export const runCli = (
 
   const dbPath = (typeof values.db === "string" && values.db) || defaultDbPath();
   const cwd = env.cwd ?? process.cwd();
-  // One resolver per dispatch, so its per-cwd cache lives exactly as long as the run.
   const resolveGit = env.resolveGit ?? createGitResolver();
-  // The one place the session-file root is resolved, next to the database path.
   const adapters = env.adapters ?? sourceAdapters(claudeProjectsDir());
   const context: CommandContext<Record<string, unknown>> = {
     args: commandArgs,
@@ -248,5 +237,4 @@ const main = (): void => {
   runCli(Bun.argv.slice(2), realIO);
 };
 
-// Importing this module (a test driving runCli) must not execute a command.
 if (import.meta.main) main();

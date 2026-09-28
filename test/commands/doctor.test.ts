@@ -30,9 +30,6 @@ describe("runDoctor", () => {
   let deployedBinary: string;
   let settingsFile: string;
 
-  // Both probes are arguments, so these point at the fixture directly: no binary
-  // in the developer's ~/.claude and no real settings.json can make the
-  // assertions flap, and no env var has to be saved and restored.
   const doctor = (opts: { full?: boolean } = {}): DoctorReport =>
     runDoctor(db, ":memory:", { deployedBinary, settingsFile, adapters: env.adapters, ...opts });
 
@@ -63,8 +60,6 @@ describe("runDoctor", () => {
   });
 
   test("every check reports under its own key exactly once (#124)", () => {
-    // The failure the builder rules out: a check whose branches disagree on their own
-    // key, handing --json consumers two entries for one check.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hello")]);
     runIndex(db, { adapters: env.adapters });
     const keys = doctor().checks.map((c) => c.key);
@@ -113,14 +108,10 @@ describe("runDoctor", () => {
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("1 of 2");
     expect(check.remedy).toBe("cerebro index");
-    // A warning is not a failure: doctor stays usable as a cron guard.
     expect(doctor().ok).toBe(true);
   });
 
   test("the doctor count and the prune target agree on the same fixture set (#137)", () => {
-    // Two indexed files, one deleted afterwards. Doctor counts orphans through the
-    // same reader the prune deletes through, so what it reports must be exactly
-    // what the next `cerebro index` removes.
     const goneAfter = writeSession(env.projects, "-repo", "GONE", [userMsg("GONE", "g1", "bye")]);
     writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "k1", "hi")]);
     runIndex(db, { adapters: env.adapters });
@@ -130,7 +121,7 @@ describe("runDoctor", () => {
     expect(check.status).toBe("warn");
     expect(check.detail).toContain("1 of 2");
 
-    runIndex(db, { adapters: env.adapters }); // the prune removes what doctor counted, nothing else
+    runIndex(db, { adapters: env.adapters });
     const remaining = db.query("SELECT source_file FROM index_state").all() as {
       source_file: string;
     }[];
@@ -177,7 +168,6 @@ describe("runDoctor", () => {
     };
     fs.writeFileSync(settingsFile, JSON.stringify(settings));
     expect(byKey(doctor(), "hook:SessionEnd").status).toBe("ok");
-    // Read-only: the file is byte-identical afterwards.
     expect(fs.readFileSync(settingsFile, "utf8")).toBe(JSON.stringify(settings));
   });
 
@@ -211,10 +201,6 @@ describe("runDoctor", () => {
   });
 
   test("stats and doctor agree once a relink moves a summarized root (#121)", () => {
-    // RESUME is indexed and summarized while it is its own thread root, then the
-    // original transcript arrives and relinkThreads reroots it under ORIG. The
-    // summary moves to ORIG, stale because it never covered ORIG's turns (#206).
-    // Both commands must count it the same way.
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
@@ -291,7 +277,6 @@ describe("doctorReport", () => {
     const lines = doctorReport(failing, "/tmp/archive.sqlite", null);
     expect(lines).toContain("  FAIL  schema            v3, this build expects v4");
     expect(lines.at(-1)).toBe("1 check(s) FAILED, 0 warning(s).");
-    // No size suffix when the file cannot be measured.
     expect(lines[1]).toBe("database   /tmp/archive.sqlite");
   });
 });

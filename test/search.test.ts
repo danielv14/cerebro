@@ -68,10 +68,6 @@ describe("query (populated archive)", () => {
   });
 
   test("search orders hits by bm25 relevance (dense match before a buried one)", () => {
-    // DENSE: the term dominates a short message. BURIED: one occurrence drowned in
-    // filler. bm25 ranks the dense, shorter document higher; this pins the ORDER BY
-    // so a regression that drops or reverses it is caught (every other search test
-    // has a single hit and would stay green regardless of ordering).
     writeSession(env.projects, "-repo", "DENSE", [
       userMsg("DENSE", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
     ]);
@@ -95,7 +91,6 @@ describe("query (populated archive)", () => {
     ]);
     runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 2);
-    // Three documents match, but limit=2 truncates to the two best by bm25.
     expect(hits.map((h) => h.session_id)).toEqual(["TOP", "MID"]);
   });
 
@@ -109,10 +104,8 @@ describe("query (populated archive)", () => {
       userMsg("OTHER", "u3", `limiter ${"filler ".repeat(50)}`, { timestamp: ts(10) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Default: one (best) hit per thread, so OTHER is not buried by CHATTY.
     const deduped = search(db, "limiter", 10);
     expect(deduped.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
-    // --all: every matching message.
     const all = search(db, "limiter", 10, { all: true });
     expect(all.length).toBe(4);
   });
@@ -131,9 +124,6 @@ describe("query (populated archive)", () => {
   });
 
   test("search --project keeps a resume whose own project_path is NULL (#86)", () => {
-    // The root carries the cwd; the resume's lines omit it, so its session row has a
-    // NULL project_path. Filtering on the session would drop the resume's hit even
-    // though the thread belongs to alpha.
     writeSession(env.projects, "-repo-a", "ROOT", [
       userMsg("ROOT", "r1", "zebra in the root", { cwd: "/home/user/alpha", timestamp: ts(0) }),
     ]);
@@ -169,7 +159,6 @@ describe("query (populated archive)", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // The thread's representative project_path is the root's, so both hits match.
     expect(
       search(db, "zebra", 10, { all: true, project: "user/alpha" })
         .map((h) => h.session_id)
@@ -196,7 +185,6 @@ describe("query (populated archive)", () => {
       "FEAT",
     ]);
     expect(search(db, "limiter", 10).length).toBe(2);
-    // The hit carries its own session's branch.
     expect(search(db, "limiter", 10, { branch: "feat" })[0]!.git_branch).toBe("feat/limiter");
   });
 
@@ -212,8 +200,6 @@ describe("query (populated archive)", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Any-session semantics: the root's hit (recorded on main) matches too, because
-    // the thread touched the branch in its resume.
     expect(
       search(db, "zebra", 10, { all: true, branch: "feat/zebra" })
         .map((h) => h.session_id)
@@ -268,9 +254,8 @@ describe("query (populated archive)", () => {
   });
 
   test("deduped search looks past a chatty thread that dominates the ranked hits", () => {
-    // 210 matching messages in one thread outrank the other thread's single match.
-    // A 200-row window would starve OTHER; the 2000-row over-fetch surfaces it in one
-    // fetch, without growing.
+    // A 200-row window would starve OTHER; the 2000-row over-fetch surfaces it in one fetch,
+    // without growing.
     const chatty = Array.from({ length: 210 }, (_, i) =>
       userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
         timestamp: ts(i),
@@ -313,13 +298,12 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     const hits = search(db, "limiter", 10);
     expect(hits.length).toBe(1);
-    expect(hits[0]!.ordinal).toBe(2); // second message in the thread's chronology
+    expect(hits[0]!.ordinal).toBe(2);
   });
 
   test("search recovers from a malformed FTS query via the sanitized fallback", () => {
-    // A bare unbalanced quote is invalid FTS5 (`unterminated string`) and throws on
-    // the verbatim MATCH. The catch re-runs the query as a sanitized phrase of the
-    // bare tokens, so a fat-fingered query still returns its hit instead of erroring.
+    // A bare unbalanced quote is invalid FTS5 (`unterminated string`) and throws on the verbatim
+    // MATCH.
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "alpha beta gamma", { timestamp: ts(0) }),
     ]);
@@ -354,8 +338,6 @@ describe("query (populated archive)", () => {
   });
 
   test("search returns no hits when a malformed query sanitizes to nothing matchable", () => {
-    // The fallback must also fail soft: a punctuation-only query throws on the raw
-    // MATCH, sanitizes to a phrase with no tokens, and yields [] rather than throwing.
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "alpha beta", { timestamp: ts(0) }),
     ]);
@@ -373,7 +355,7 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     const all = listThreads(db, {});
     expect(all.length).toBe(2);
-    expect(all[0]!.id).toBe("B"); // newest first
+    expect(all[0]!.id).toBe("B");
 
     const filtered = listThreads(db, { project: "repo-a" });
     expect(filtered.length).toBe(1);
@@ -393,7 +375,6 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     expect(listThreads(db, { since: "2026-02-01" }).map((t) => t.id)).toEqual(["NEW", "CUTOFF"]);
     expect(listThreads(db, { since: "2026-04-01" })).toEqual([]);
-    // Combines with --project rather than replacing it.
     expect(listThreads(db, { since: "2026-02-01", project: "nope" })).toEqual([]);
     expect(listThreads(db, {}).length).toBe(3);
   });
@@ -415,7 +396,6 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     const hits = listThreads(db, { branch: "feat/x" });
     expect(hits.map((t) => t.id)).toEqual(["ROOT"]);
-    // Display is root-preferring even though the match came from the resume.
     expect(hits[0]!.git_branch).toBe("main");
     expect(
       listThreads(db, { branch: "main" })
@@ -425,7 +405,6 @@ describe("query (populated archive)", () => {
   });
 
   test("search --branch and sessions --branch agree on which threads touch a branch (#123)", () => {
-    // Both readers compose threadOnBranch, so the any-session rule has one spelling.
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "the limiter work", { timestamp: ts(0) }),
     ]);
@@ -479,9 +458,6 @@ describe("query (populated archive)", () => {
   });
 
   test("the threads view rolls up root + resume + subagent with root-preferring fields", () => {
-    // Root: has a title and project_path. Resume: NULL title, different project_path,
-    // and we delete its file so its body_available drops to 0. Subagent: folds into
-    // the root's session id (does not add a sessions row).
     writeSession(env.projects, "-repo-root", "ROOT", [
       userMsg("ROOT", "u1", "start", {
         cwd: "/repo-root",
@@ -492,7 +468,6 @@ describe("query (populated archive)", () => {
         parentUuid: "u1",
         timestamp: ts(1),
       }),
-      // A summary line gives the root a title (priority 1).
       { type: "summary", summary: "Root title", leafUuid: "a1" },
     ]);
     const resumePath = writeSession(env.projects, "-repo-resume", "RESUME", [
@@ -517,7 +492,6 @@ describe("query (populated archive)", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Drop the resume's source file so a re-index marks its body unavailable.
     fs.rmSync(resumePath);
     runIndex(db, { adapters: env.adapters });
 
@@ -539,16 +513,11 @@ describe("query (populated archive)", () => {
     };
 
     expect(thread.id).toBe("ROOT");
-    // Root-preferring: title, project_path, and git_branch come from the root, not
-    // the resume.
     expect(thread.title).toBe("Root title");
     expect(thread.project_path).toBe("/repo-root");
     expect(thread.git_branch).toBe("main");
-    // msgs is the sum across root (2) + resume (1) + folded subagent (2).
     expect(thread.msgs).toBe(5);
-    // ROOT and RESUME are sessions rows; the subagent folds into ROOT.
     expect(thread.sessions_in_thread).toBe(2);
-    // MIN: RESUME's body is unavailable (file deleted), so the thread is too.
     expect(thread.body_available).toBe(0);
     expect(thread.first_ts).toBe(ts(0));
     expect(thread.last_ts).toBe(ts(4));
@@ -558,20 +527,15 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "REAL", [
       userMsg("REAL", "u1", "real work", { timestamp: ts(0) }),
     ]);
-    // A session opened and closed right away: a title event, no user/assistant turns.
     writeSession(env.projects, "-repo", "EMPTY", [
       { type: "summary", summary: "Title only, no turns", sessionId: "EMPTY" },
     ]);
     runIndex(db, { adapters: env.adapters });
 
-    // The sidecar row stays (it outlives Claude Code's own cleanup, so it is the only
-    // record the session ever existed), with msg_count 0.
     expect(db.query("SELECT COUNT(*) AS c FROM sessions").get()).toEqual({ c: 2 });
-    // But it is not a thread, and the listing and the count agree on that.
     expect(listThreads(db, {}).map((t) => t.id)).toEqual(["REAL"]);
     expect(countThreads(db)).toBe(1);
     expect(stats(db).threads).toBe(1);
-    // Still reachable by id: show resolves it and renders an empty thread.
     expect(resolveSession(db, "EMPTY")).toBe("EMPTY");
     expect(threadMessages(db, "EMPTY")).toEqual([]);
   });
@@ -581,9 +545,7 @@ describe("query (populated archive)", () => {
       userMsg("REAL", "u1", "real work", { cwd: "/repo-x", timestamp: ts(0) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // A zero-message session that does carry a project_path (a title-only file has no
-    // cwd to harvest one from, so it is written directly) would otherwise inflate both
-    // the recent listing and the per-project thread counts.
+    // A title-only file has no cwd to harvest one from, so it is written directly.
     db.run(
       `INSERT INTO sessions (session_id, root_session_id, project_path, cwd, msg_count, first_ts, last_ts)
        VALUES ('EMPTY', 'EMPTY', '/repo-x', '/repo-x', 0, ?, ?)`,
@@ -612,9 +574,6 @@ describe("query (populated archive)", () => {
   });
 
   test("every surface shows the same title, last activity and project for a resumed thread (#118)", () => {
-    // The root ran once and never carried a title event; the resume carried the title
-    // and ran a month later. Read the root's own sessions row and you get the root's
-    // date and "(untitled)", so all four surfaces must read the thread's rollup.
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
@@ -648,9 +607,8 @@ describe("query (populated archive)", () => {
       });
     }
 
-    // The summary above made every relevant hit a tier-1 one. Drop it so the same
-    // assertion runs through the raw tier, which shares the one hydration but would
-    // not be covered by any assertion above if a future change split them again.
+    // The summary above made every relevant hit a tier-1 one. Drop it so the same assertion runs
+    // through the raw tier.
     db.run("DELETE FROM summaries");
     expect(relevantThreads(db, "limiter", 3, now)[0]!).toMatchObject({
       id: "ROOT",
@@ -663,10 +621,6 @@ describe("query (populated archive)", () => {
   });
 
   test("search hits show the thread's title and project, not the matched session's (#120)", () => {
-    // The ordinary shape of a resumed thread: the root carries the cwd and never got a
-    // title event, the resume carries the title and no cwd at all. Reading each hit's
-    // own sessions row showed "(untitled)" for the root's hit and "(unknown)" for the
-    // resume's, on a thread that has both.
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo", "ROOT", [
       userMsg("ROOT", "u1", "start the limiter work", { timestamp: ts(0) }),
@@ -684,7 +638,6 @@ describe("query (populated archive)", () => {
       { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
     ]);
     runIndex(db, { adapters: env.adapters });
-    // The premise: the resume's own row really is missing the project.
     expect(
       (
         db.query("SELECT project_path FROM sessions WHERE session_id = 'RESUME'").get() as {
@@ -697,7 +650,6 @@ describe("query (populated archive)", () => {
     const hits = search(db, "limiter", 20, { all: true });
     expect(hits.map((h) => h.session_id).sort()).toEqual(["RESUME", "ROOT"]);
     for (const hit of hits) {
-      // Whichever session the hit landed in, it agrees with the thread listing.
       expect({
         id: hit.session_id,
         title: hit.title,
@@ -716,12 +668,10 @@ describe("query (populated archive)", () => {
     // comes from the rollup rather than the matched session's own row.
     expect(thread.model).toBe("opus-test");
 
-    // The sharp edge: a hit that matched --project must never render (unknown).
     const scoped = search(db, "limiter", 20, { all: true, project: "repo" });
     expect(scoped.map((h) => h.session_id).sort()).toEqual(["RESUME", "ROOT"]);
     expect(scoped.every((h) => h.project_path === "/repo")).toBe(true);
 
-    // Per-message fields are untouched: ts stays the matched turn's, not the thread's.
     const resumeHit = hits.find((h) => h.session_id === "RESUME")!;
     expect(resumeHit.ts).toBe(ts(month));
     expect(resumeHit.git_branch).toBe("main");
@@ -734,15 +684,14 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
 
     expect(resolveSession(db, "abc12345-aaaa")).toBe("abc12345-aaaa");
-    expect(resolveSession(db, "abc12345")).toBe("abc12345-aaaa"); // unique prefix
-    expect(resolveSession(db, "zzz")).toBeNull(); // no match
-    expect(() => resolveSession(db, "abc")).toThrow(/[Aa]mbiguous/); // matches both
+    expect(resolveSession(db, "abc12345")).toBe("abc12345-aaaa");
+    expect(resolveSession(db, "zzz")).toBeNull();
+    expect(() => resolveSession(db, "abc")).toThrow(/[Aa]mbiguous/);
   });
 
   test("resolveSession treats LIKE wildcards in a prefix literally (#48)", () => {
     writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
     runIndex(db, { adapters: env.adapters });
-    // `_` would match any character unescaped; `%` would match everything.
     expect(resolveSession(db, "abc_2345")).toBeNull();
     expect(resolveSession(db, "%")).toBeNull();
   });
@@ -752,7 +701,6 @@ describe("query (populated archive)", () => {
       userMsg("S", "u1", "hi", { cwd: "/home/user/myXapp" }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Unescaped, `my_app` would match `myXapp` via the `_` wildcard.
     expect(listThreads(db, { project: "my_app" }).length).toBe(0);
     expect(listThreads(db, { project: "myXapp" }).length).toBe(1);
   });
@@ -777,7 +725,6 @@ describe("query (populated archive)", () => {
     const path = writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hi")]);
     runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(0);
-    // A genuinely deleted source still counts.
     fs.rmSync(path);
     runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(1);
@@ -791,14 +738,13 @@ describe("query (populated archive)", () => {
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
-    // A second, independent thread so the thread count is exercised above one.
     writeSession(env.projects, "-repo", "OTHER", [
       userMsg("OTHER", "u3", "another", { timestamp: ts(3) }),
     ]);
     runIndex(db, { adapters: env.adapters });
     const s = stats(db);
     expect(s.sessions).toBe(3);
-    expect(s.threads).toBe(2); // RESUME folds into ORIG; OTHER is its own thread
+    expect(s.threads).toBe(2);
     expect(s.messages).toBe(4);
     expect(s.deletedSources).toBe(0);
   });

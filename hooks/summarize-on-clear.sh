@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# cerebro's Claude Code SessionEnd hook (matcher "clear"). Indexes synchronously,
-# then hands the payload to `cerebro digest run --stdin` detached. Wiring and
-# rationale: docs/hooks.md.
+# Wiring and rationale: docs/hooks.md.
 set -uo pipefail
 
 CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"

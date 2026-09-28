@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { humanBytes, oneLine, projectName, shortDate, shortId, shortTime } from "../src/render.ts";
 
-// The shared formatting vocabulary; the per-command listing builders (and their
-// pinned-output tests) live with their commands under test/commands/.
-
 describe("humanBytes", () => {
   test("formats bytes, KB, and MB with the expected precision", () => {
     expect(humanBytes(0)).toBe("0 B");
@@ -25,7 +22,6 @@ describe("oneLine", () => {
   });
 
   test("truncates one char past the max to max-1 chars plus the ellipsis", () => {
-    // 11 chars at max 10 -> 9 chars + "…" = 10 visible columns.
     expect(oneLine("abcdefghijk", 10)).toBe("abcdefghi…");
   });
 
@@ -42,12 +38,10 @@ describe("oneLine", () => {
 
 describe("shortTime", () => {
   test("renders a winter (CET) timestamp in Europe/Stockholm wall-clock", () => {
-    // 08:00 UTC + 1h (CET) = 09:00.
     expect(shortTime("2026-01-15T08:00:00Z")).toBe("2026-01-15 09:00");
   });
 
   test("renders a summer (CEST) timestamp in Europe/Stockholm wall-clock", () => {
-    // 08:00 UTC + 2h (CEST) = 10:00.
     expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 10:00");
   });
 
@@ -84,19 +78,19 @@ describe("CEREBRO_TZ", () => {
 
   test("overrides the display zone for shortTime and shortDate", () => {
     process.env.CEREBRO_TZ = "UTC";
-    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 08:00"); // no offset
+    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 08:00");
     expect(shortDate("2026-07-15T23:30:00Z")).toBe("2026-07-15"); // Stockholm would roll over
   });
 
   test("an unknown zone falls back to the default instead of throwing", () => {
     process.env.CEREBRO_TZ = "Mars/Olympus_Mons";
     expect(() => shortTime("2026-07-15T08:00:00Z")).not.toThrow();
-    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 10:00"); // CEST
+    expect(shortTime("2026-07-15T08:00:00Z")).toBe("2026-07-15 10:00");
   });
 
   test("an empty value is treated as unset", () => {
     process.env.CEREBRO_TZ = "";
-    expect(shortTime("2026-01-15T08:00:00Z")).toBe("2026-01-15 09:00"); // CET
+    expect(shortTime("2026-01-15T08:00:00Z")).toBe("2026-01-15 09:00");
   });
 });
 

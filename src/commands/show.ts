@@ -36,7 +36,6 @@ export const showOutline = (sessionId: string, messages: ThreadMessage[]): strin
   return lines;
 };
 
-// `label` precedes the role in the block's rule line: empty, or "#N ".
 const messageBlock = (message: ThreadMessage, label = ""): string[] => {
   const tag = message.is_sidechain ? " · subagent" : "";
   return [`──── ${label}${message.role}${tag} · ${shortTime(message.ts)} ────`, message.text, ""];

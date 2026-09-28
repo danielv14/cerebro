@@ -12,7 +12,6 @@ export const readStdin = (): string => {
   }
 };
 
-// Throws on an ambiguous prefix, returns null when nothing matches.
 export const resolveSession = (db: Database, idOrPrefix: string): string | null => {
   const exact = db
     .query("SELECT session_id FROM sessions WHERE session_id = ?")
