@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
+import { countStaleThreads } from "../src/digest/stale.ts";
 import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
@@ -69,11 +70,9 @@ describe("thread (identity + membership)", () => {
       });
     });
 
-    test("falls back to the given id for an unknown or not-yet-relinked session", () => {
+    test("falls back to the given id for an unknown session", () => {
       seedThread();
       expect(rootOf(db, "does-not-exist")).toBe("does-not-exist");
-      db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
-      expect(rootOf(db, "UNLINKED")).toBe("UNLINKED");
     });
   });
 
@@ -91,7 +90,7 @@ describe("thread (identity + membership)", () => {
 
     test("only the row whose link moved is rewritten", () => {
       seedThread();
-      db.run("UPDATE sessions SET root_session_id = NULL WHERE session_id = 'RESUME'");
+      db.run("UPDATE sessions SET root_session_id = 'RESUME' WHERE session_id = 'RESUME'");
       const before = totalChanges();
       relinkThreads(db);
       expect(totalChanges() - before).toBe(1);
@@ -270,6 +269,20 @@ describe("thread (identity + membership)", () => {
       expect(threadOpeningPrompt(db, "N")).toBe("/standup");
     });
 
+    test("a prompt that opens with a bracket is still the user's words (#216)", () => {
+      writeSession(env.projects, "-repo", "W", [
+        userMsg("W", "u1", "[WIP] fix the thing", { timestamp: ts(0) }),
+        userMsg("W", "u2", "and the other thing", { timestamp: ts(1) }),
+      ]);
+      writeSession(env.projects, "-repo", "I", [
+        userMsg("I", "i1", "[Request interrupted by user]", { timestamp: ts(0) }),
+        userMsg("I", "i2", "<command-name>/standup</command-name>", { timestamp: ts(1) }),
+      ]);
+      runIndex(db, { adapters: env.adapters });
+      expect(threadOpeningPrompt(db, "W")).toBe("[WIP] fix the thing");
+      expect(threadOpeningPrompt(db, "I")).toBe("/standup");
+    });
+
     test("returns null for a thread with no user turn", () => {
       expect(threadOpeningPrompt(db, "does-not-exist")).toBeNull();
     });
@@ -284,6 +297,19 @@ describe("thread (identity + membership)", () => {
 
     test("is null for an unknown thread root", () => {
       expect(threadLastTs(db, "does-not-exist")).toBeNull();
+    });
+
+    test("a summary's coverage point is the threads view's last_ts (#214)", () => {
+      seedThread();
+      writeSummary(db, "RESUME", "Summary of the whole thread. Keywords: start");
+      const view = db.query("SELECT last_ts FROM threads WHERE id = 'ORIG'").get() as {
+        last_ts: string;
+      };
+      const stored = db
+        .query("SELECT source_last_ts FROM summaries WHERE root_session_id = 'ORIG'")
+        .get() as { source_last_ts: string };
+      expect(stored.source_last_ts).toBe(view.last_ts);
+      expect(countStaleThreads(db)).toBe(0);
     });
   });
 

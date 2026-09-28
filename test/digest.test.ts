@@ -224,7 +224,7 @@ describe("buildDigestInput (size-bounded transcript)", () => {
     }
   });
 
-  test("an ASCII thread below budget renders byte-identically to `show --full`", () => {
+  test("a thread below budget renders every message whole under a role and timestamp header", () => {
     const out = buildDigestInput([msg("user", "hello there"), msg("assistant", "general kenobi")]);
     expect(out).toBe(
       "──── user · 2026-01-01T00:00:00.000Z ────\nhello there\n\n" +
@@ -404,10 +404,10 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "A", [userMsg("A", "ua", "one", { timestamp: ts(0) })]);
     writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "two", { timestamp: ts(1) })]);
     runIndex(db, { adapters: env.adapters });
-    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, { limit: 1000 }).length);
     writeSummary(db, "A", "Summary of A with enough length. Keywords: a");
     expect(countStaleThreads(db)).toBe(1);
-    expect(countStaleThreads(db)).toBe(staleThreads(db, 1000).length);
+    expect(countStaleThreads(db)).toBe(staleThreads(db, { limit: 1000 }).length);
   });
 
   test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {

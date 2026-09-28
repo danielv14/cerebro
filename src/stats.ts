@@ -28,9 +28,8 @@ export const stats = (db: Database): Stats => {
     threads: countThreads(db),
     sessions: count(db, "SELECT COUNT(*) AS c FROM sessions"),
     messages: count(db, "SELECT COUNT(*) AS c FROM messages"),
-    // A NULL source_file is a subagent-only parent stub whose top-level transcript
-    // was never seen; it is body-unavailable but nothing was deleted, so it must
-    // not inflate this count.
+    // The source_file guard is for a hook binary built before #220, which still
+    // flags a subagent-only stub body_available = 0 until it is redeployed.
     deletedSources: count(
       db,
       "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
-import { escapeLike } from "../fts.ts";
+import { escapeLike } from "../like.ts";
 import { CliError } from "./args.ts";
 
 // Degrades to "" when there is no stdin (a closed fd 0 throws from readFileSync).

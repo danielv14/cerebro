@@ -1,9 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-
-// Every LIKE built from user input pairs this with an explicit ESCAPE '\' clause.
-export const escapeLike = (fragment: string): string =>
-  fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+import { isToolText } from "./sources/claude-code-jsonl.ts";
+import { type ThreadScope, threadScope } from "./thread.ts";
 
 // A quoted FTS5 string is always valid syntax, whatever the token holds.
 export const quoteFtsToken = (token: string): string => `"${token.replace(/"/g, '""')}"`;
@@ -36,40 +34,23 @@ export interface RankedMessageHit extends RankedHit {
   session_git_branch: string | null;
 }
 
-// `rootExpr` is a codebase literal; the branch fragment stays a bound `?`,
-// LIKE-escaped by the caller.
-export const threadOnBranch = (rootExpr: string): string =>
-  `${rootExpr} IN (SELECT root_session_id FROM sessions ` +
-  `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`;
-
-export interface HitFilters {
-  // Substring of the thread's project path.
-  project?: string;
-  // Substring of a branch any of the thread's sessions was recorded on.
-  branch?: string;
+export interface HitFilters extends ThreadScope {
   since?: string;
   role?: string;
   prose?: boolean;
 }
 
 const hitPredicates = (filters: HitFilters): { sql: string; params: (string | number)[] }[] => {
-  const out: { sql: string; params: (string | number)[] }[] = [];
-  if (filters.project) {
-    out.push({
-      sql: "t.project_path LIKE '%' || ? || '%' ESCAPE '\\'",
-      params: [escapeLike(filters.project)],
-    });
-  }
-  if (filters.branch) {
-    out.push({ sql: threadOnBranch("s.root_session_id"), params: [escapeLike(filters.branch)] });
-  }
+  const out: { sql: string; params: (string | number)[] }[] = threadScope(filters, {
+    root: "s.root_session_id",
+    projectPath: "t.project_path",
+  });
   if (filters.since) out.push({ sql: "m.ts >= ?", params: [filters.since] });
   if (filters.role) out.push({ sql: "m.role = ?", params: [filters.role] });
   if (filters.prose) {
-    // Prefix heuristic: a tool-only message always opens with "[tool_" as
-    // flattenContent renders it. A message that opens with prose and then calls a
-    // tool further down is kept on purpose.
-    out.push({ sql: "m.text NOT LIKE '[tool\\_%' ESCAPE '\\'", params: [] });
+    // A message that opens with prose and then calls a tool further down is kept
+    // on purpose.
+    out.push({ sql: `NOT ${isToolText("m.text")}`, params: [] });
   }
   return out;
 };
@@ -80,9 +61,7 @@ export interface RankedHitWindow {
   filters?: HitFilters;
 }
 
-// The thread id is coalesced to the session itself when root_session_id is NULL,
-// so a not-yet-relinked hit is never silently dropped. Throws on a malformed
-// MATCH so each caller keeps its own fallback.
+// Throws on a malformed MATCH so each caller keeps its own fallback.
 export const rankedMessageHits = (
   db: Database,
   match: string,
@@ -91,7 +70,7 @@ export const rankedMessageHits = (
   const filters = hitPredicates(window.filters ?? {});
   const sql = `
     SELECT m.id AS message_id, m.session_id, m.ts, m.role,
-           COALESCE(s.root_session_id, s.session_id) AS id,
+           s.root_session_id AS id,
            s.git_branch AS session_git_branch,
            snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
            bm25(messages_fts) AS score,

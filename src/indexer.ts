@@ -1,9 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { count } from "./db.ts";
-import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
 import { reattachSummaries } from "./digest/store.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
-import { eachIndexableFile, orphanedCursorPaths, type ScannedFile } from "./scan.ts";
+import {
+  cursorWriter,
+  eachIndexableFile,
+  fileVerdict,
+  orphanedCursorPaths,
+  pruneCursors,
+  resetCursors,
+} from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
 import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
 import { relinkThreads } from "./thread.ts";
@@ -114,8 +120,8 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
        git_remote, git_branch, source_file, provider, model, title, title_priority,
-       first_ts, last_ts, msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       first_ts, last_ts, msg_count
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = COALESCE(excluded.project_path, sessions.project_path),
@@ -134,7 +140,6 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
                           WHEN excluded.title IS NOT NULL
                            AND excluded.title_priority >= sessions.title_priority
                           THEN excluded.title_priority ELSE sessions.title_priority END,
-       body_available = COALESCE(excluded.body_available, sessions.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
        msg_count      = excluded.msg_count`,
@@ -155,12 +160,9 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
     agg.mn,
     agg.mx,
     agg.c,
-    1,
   );
 };
 
-// The fields a subagent cannot know are passed NULL, so a pure-subagent stub reads
-// as body-unavailable.
 const touchParentSession = (db: Database, parentId: string, meta: FileMeta): void => {
   const agg = sessionAggregate(db, parentId);
 
@@ -168,8 +170,8 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
        git_remote, git_branch, source_file, provider, model, title, title_priority,
-       first_ts, last_ts, msg_count, body_available
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       first_ts, last_ts, msg_count
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
        project_path   = COALESCE(sessions.project_path, excluded.project_path),
@@ -182,7 +184,6 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
        model          = COALESCE(sessions.model, excluded.model),
        title          = COALESCE(sessions.title, excluded.title),
        title_priority = sessions.title_priority,
-       body_available = COALESCE(sessions.body_available, excluded.body_available),
        first_ts       = excluded.first_ts,
        last_ts        = excluded.last_ts,
        msg_count      = excluded.msg_count`,
@@ -203,10 +204,11 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     agg.mn,
     agg.mx,
     agg.c,
-    1,
   );
 };
 
+// The one writer of body_available. A NULL source_file is a subagent-only parent
+// stub whose top-level transcript was never seen: nothing was deleted, so it stays 1.
 const reconcilePresence = (db: Database, files: SessionFile[]): void => {
   // null = an empty scan (transient readdir failure): bail rather than flag the
   // whole archive body-unavailable and wipe every cursor.
@@ -222,14 +224,12 @@ const reconcilePresence = (db: Database, files: SessionFile[]): void => {
   fill();
   db.run(
     `UPDATE sessions
-       SET body_available = CASE WHEN source_file IN (SELECT p FROM _present) THEN 1 ELSE 0 END`,
+       SET body_available = CASE
+             WHEN source_file IS NULL OR source_file IN (SELECT p FROM _present) THEN 1
+             ELSE 0 END`,
   );
   db.run("DROP TABLE _present");
-  const drop = db.query("DELETE FROM index_state WHERE source_file = ?");
-  const prune = db.transaction(() => {
-    for (const path of orphans) drop.run(path);
-  });
-  prune();
+  pruneCursors(db, orphans);
 };
 
 export interface IndexResult {
@@ -238,20 +238,6 @@ export interface IndexResult {
   filesIndexed: number;
   relinked: boolean;
 }
-
-// Detectable only on a read from byte 0: a mid-file incremental read opens on an
-// arbitrary turn.
-const isDigestRunTranscript = (
-  { file, plan, lines }: ScannedFile,
-  classify: SourceAdapter["classifyLines"],
-): boolean => {
-  if (file.kind !== "session" || plan.start !== 0) return false;
-  for (const classified of classify(lines)) {
-    if (classified.kind !== "message") continue;
-    return classified.role === "user" && classified.text.startsWith(DIGEST_PROMPT_SIGNATURE);
-  }
-  return false;
-};
 
 export interface IndexOptions {
   adapters: SourceAdapter[];
@@ -264,21 +250,13 @@ export interface IndexOptions {
 export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   const rebuild = opts.rebuild ?? false;
   const readAll = (opts.full ?? false) || rebuild;
-  if (readAll) db.run("DELETE FROM index_state");
+  if (readAll) resetCursors(db);
 
   const before = count(db, "SELECT COUNT(*) AS c FROM messages");
   const adapters = opts.adapters;
   const resolveGit = opts.resolveGit ?? createGitResolver();
   const files = discoverAllSessionFiles(adapters);
-  const saveState = db.query(
-    `INSERT INTO index_state (source_file, bytes_indexed, mtime_ms, indexed_at, is_digest)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(source_file) DO UPDATE SET
-       bytes_indexed = excluded.bytes_indexed,
-       mtime_ms      = excluded.mtime_ms,
-       indexed_at    = excluded.indexed_at,
-       is_digest     = excluded.is_digest`,
-  );
+  const saveCursor = cursorWriter(db);
 
   let filesIndexed = 0;
   eachIndexableFile(
@@ -286,20 +264,19 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
     files,
     readAll,
     (scanned) => {
-      const { file, plan, lines, cursor } = scanned;
+      const { file, lines, cursor } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
-      // A mid-write file is still saved (unlike the dry run's skip): recording
-      // the new mtime lets a touched-but-unchanged file settle to "unchanged".
+      const verdict = fileVerdict(scanned, classify);
+      // A mid-write file still gets its cursor saved (the dry run only counts it):
+      // recording the new mtime lets a touched-but-unchanged file settle to
+      // "unchanged".
       const tx = db.transaction((): boolean => {
-        if (isDigestRunTranscript(scanned, classify)) {
-          saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 1);
-          return false;
-        }
+        saveCursor(file, cursor, verdict === "digest");
+        if (verdict !== "ingest") return false;
         const meta = ingestLines(db, file, lines, classify, rebuild);
-        saveState.run(file.path, cursor, file.mtimeMs, new Date().toISOString(), 0);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta, resolveGit);
-        return cursor > plan.start;
+        return true;
       });
       if (tx()) filesIndexed++;
     },
@@ -373,13 +350,8 @@ export const dryRunIndex = (
     full,
     (scanned) => {
       const { file, plan, lines, cursor } = scanned;
-      if (cursor === plan.start) {
-        result.skippedFiles++;
-        return;
-      }
       const classify = adapterFor(file.provider, adapters).classifyLines;
-
-      if (isDigestRunTranscript(scanned, classify)) {
+      if (fileVerdict(scanned, classify) !== "ingest") {
         result.skippedFiles++;
         return;
       }

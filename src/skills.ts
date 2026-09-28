@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { escapeLike } from "./fts.ts";
-import { toolUseTag } from "./sources/claude-code-jsonl.ts";
+import { escapeLike } from "./like.ts";
+import { isToolText, toolUseTag } from "./sources/claude-code-jsonl.ts";
 import { archiveSpan } from "./stats.ts";
 
 const SLASH_OPEN = "<command-name>";
@@ -97,7 +97,7 @@ export const skillUsage = (db: Database, opts: SkillUsageOpts = {}): SkillUsage 
       `SELECT role, text, ts, is_sidechain FROM messages
        WHERE ($since IS NULL OR ts >= $since)
          AND ((role = 'user'      AND text LIKE $slashLike ESCAPE '\\'
-                                  AND text NOT LIKE '[tool\\_%' ESCAPE '\\')
+                                  AND NOT ${isToolText("text")})
            OR (role = 'assistant' AND text LIKE $tagLike   ESCAPE '\\'))`,
     )
     .all({

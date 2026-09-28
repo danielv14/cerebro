@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -10,107 +11,103 @@ import {
   staleListing,
   summarySearchListing,
 } from "../../src/commands/digest.ts";
+import { openDb } from "../../src/db.ts";
+import { DIGEST_PROMPT_VERSION } from "../../src/digest/prompt.ts";
+import { staleThreads } from "../../src/digest/stale.ts";
+import { reattachSummaries } from "../../src/digest/store.ts";
 
-describe("staleListing", () => {
-  test("renders each reason, the title line, and the how-to footer", () => {
-    const lines = staleListing(
-      [
-        {
-          id: "0123456789abcdef",
-          last_ts: "2026-07-15T08:00:00Z",
-          first_ts: null,
-          msgs: 5,
-          project_path: "/Users/foo/cerebro",
-          title: "First",
-          summary_version: null,
-          summarized_at: null,
-          failed_attempts: null,
-          retry_after: null,
-        },
-        {
-          id: "abcdef0123456789",
-          last_ts: "2026-07-15T08:00:00Z",
-          first_ts: null,
-          msgs: 9,
-          project_path: "/Users/foo/cerebro",
-          title: null,
-          summary_version: 1,
-          summarized_at: "2026-07-01T08:00:00Z",
-          failed_attempts: null,
-          retry_after: null,
-        },
-        {
-          id: "deadbeefdeadbeef",
-          last_ts: "2026-07-15T08:00:00Z",
-          first_ts: null,
-          msgs: 120,
-          project_path: "/Users/foo/cerebro",
-          title: "Third",
-          summary_version: 2,
-          summarized_at: "2026-07-01T08:00:00Z",
-          failed_attempts: null,
-          retry_after: null,
-        },
-      ],
-      { promptVersion: 2, now: 0 },
+describe("staleListing, through the stale query", () => {
+  const NOW = Date.parse("2026-07-15T12:00:00Z");
+  let db: Database;
+
+  beforeEach(() => {
+    db = openDb(":memory:");
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  const thread = (id: string, lastTs: string, title: string | null = null, root = id): void => {
+    db.run(
+      `INSERT INTO sessions (session_id, root_session_id, project_path, title, msg_count, first_ts, last_ts)
+       VALUES (?, ?, '/Users/foo/cerebro', ?, 5, ?, ?)`,
+      [id, root, title, lastTs, lastTs],
     );
-    expect(lines).toEqual([
-      "01234567  2026-07-15 10:00     5 msgs  cerebro  [never summarized]",
-      "    First",
-      "abcdef01  2026-07-15 10:00     9 msgs  cerebro  [prompt v1 < v2]",
+  };
+
+  const summary = (id: string, coversLastTs: string | null, version = DIGEST_PROMPT_VERSION) => {
+    db.run(
+      `INSERT INTO summaries (root_session_id, summary, prompt_version, summarized_at, source_last_ts)
+       VALUES (?, 'A summary of the thread.', ?, '2026-07-01T08:00:00Z', ?)`,
+      [id, version, coversLastTs],
+    );
+  };
+
+  const failure = (id: string, retryAfter: string): void => {
+    db.run(
+      `INSERT INTO digest_failures (root_session_id, attempts, last_error, failed_at, retry_after)
+       VALUES (?, 2, 'boom', '2026-07-15T06:00:00Z', ?)`,
+      [id, retryAfter],
+    );
+  };
+
+  const listing = (): string[] => staleListing(staleThreads(db, { now: NOW }));
+
+  test("each stale reason gets its own label, then the how-to footer", () => {
+    thread("aaaaaaaa00000000", "2026-07-15T08:00:00Z", "Never");
+    thread("bbbbbbbb00000000", "2026-07-15T07:00:00Z");
+    summary("bbbbbbbb00000000", "2026-07-15T07:00:00Z", DIGEST_PROMPT_VERSION - 1);
+    thread("cccccccc00000000", "2026-07-15T06:00:00Z", "Grown");
+    summary("cccccccc00000000", "2026-07-15T05:00:00Z");
+    thread("dddddddd00000000", "2026-07-15T05:00:00Z", "Covered");
+    summary("dddddddd00000000", "2026-07-15T05:00:00Z");
+
+    expect(listing()).toEqual([
+      "aaaaaaaa  2026-07-15 10:00     5 msgs  cerebro  [never summarized]",
+      "    Never",
+      `bbbbbbbb  2026-07-15 09:00     5 msgs  cerebro  [prompt v${DIGEST_PROMPT_VERSION - 1} < v${DIGEST_PROMPT_VERSION}]`,
       "    (untitled)",
-      "deadbeef  2026-07-15 10:00   120 msgs  cerebro  [new activity since summary]",
-      "    Third",
+      "cccccccc  2026-07-15 08:00     5 msgs  cerebro  [new activity since summary]",
+      "    Grown",
       "\n3 thread(s) need a summary. Summarize one:\n" +
         "  cerebro digest run <id>          (or drain the backlog: cerebro digest drain --limit N)",
     ]);
   });
-});
 
-describe("staleListing failures (#205)", () => {
-  test("a thread with failed attempts carries the count and the next drain retry", () => {
-    const [line] = staleListing(
-      [
-        {
-          id: "0123456789abcdef",
-          last_ts: "2026-07-15T08:00:00Z",
-          first_ts: null,
-          msgs: 5,
-          project_path: "/Users/foo/cerebro",
-          title: "First",
-          summary_version: null,
-          summarized_at: null,
-          failed_attempts: 2,
-          retry_after: "2026-07-16T08:00:00Z",
-        },
-      ],
-      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
-    );
-    expect(line).toBe(
-      "01234567  2026-07-15 10:00     5 msgs  cerebro  " +
-        "[never summarized; failed 2x, drain retries after 2026-07-16 10:00]",
+  test("a summary moved onto a new root reads as moved, not as new activity", () => {
+    thread("root0000aaaaaaaa", "2026-07-15T08:00:00Z", "Thread");
+    thread("former00aaaaaaaa", "2026-07-15T07:00:00Z", null, "root0000aaaaaaaa");
+    summary("former00aaaaaaaa", "2026-07-15T08:00:00Z");
+    reattachSummaries(db);
+
+    expect(listing()[0]).toBe(
+      "root0000  2026-07-15 10:00    10 msgs  cerebro  [summary moved from an earlier root]",
     );
   });
 
-  test("a retry time already past reads as due, not as a wait", () => {
-    const [line] = staleListing(
-      [
-        {
-          id: "0123456789abcdef",
-          last_ts: "2026-07-15T08:00:00Z",
-          first_ts: null,
-          msgs: 5,
-          project_path: "/Users/foo/cerebro",
-          title: "First",
-          summary_version: null,
-          summarized_at: null,
-          failed_attempts: 1,
-          retry_after: "2026-07-15T09:00:00Z",
-        },
-      ],
-      { promptVersion: 1, now: Date.parse("2026-07-15T12:00:00Z") },
+  test("the listing marks what a drain holds back, and why", () => {
+    thread("backoff0aaaaaaaa", "2026-07-15T08:00:00Z");
+    failure("backoff0aaaaaaaa", "2026-07-16T08:00:00Z");
+    thread("due00000aaaaaaaa", "2026-07-15T07:00:00Z");
+    failure("due00000aaaaaaaa", "2026-07-15T09:00:00Z");
+    thread("active00aaaaaaaa", "2026-07-15T11:50:00Z");
+    failure("active00aaaaaaaa", "2026-07-15T11:55:00Z");
+
+    const lines = listing();
+    expect(lines[0]).toBe(
+      "active00  2026-07-15 13:50     5 msgs  cerebro  " +
+        "[never summarized; failed 2x; settling, drain waits until 2026-07-15 14:20]",
     );
-    expect(line).toContain("[never summarized; failed 1x, next drain retries it]");
+    expect(lines[2]).toBe(
+      "backoff0  2026-07-15 10:00     5 msgs  cerebro  " +
+        "[never summarized; failed 2x, drain retries after 2026-07-16 10:00]",
+    );
+    expect(lines[4]).toBe(
+      "due00000  2026-07-15 09:00     5 msgs  cerebro  [never summarized; failed 2x, next drain retries it]",
+    );
+    expect(staleThreads(db, { now: NOW, drain: true }).map((row) => row.id)).toEqual([
+      "due00000aaaaaaaa",
+    ]);
   });
 });
 
@@ -146,6 +143,8 @@ describe("staleIds", () => {
           summarized_at: null,
           failed_attempts: null,
           retry_after: null,
+          reason: "never",
+          hold: null,
         },
         {
           id: "abcdef0123456789",
@@ -158,6 +157,8 @@ describe("staleIds", () => {
           summarized_at: null,
           failed_attempts: null,
           retry_after: null,
+          reason: "never",
+          hold: null,
         },
       ]),
     ).toEqual(["0123456789abcdef", "abcdef0123456789"]);

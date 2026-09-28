@@ -59,7 +59,9 @@ thinking pass through, while tool blocks get a compact tag and a size cap, becau
 tool plumbing dominates transcript bytes and ages worst and the head of the
 payload already carries the searchable identifiers. Errors are exempt, a truncated
 stack trace being useless. `toolUseTag` is exported so `skills` derives its marker
-from the flattener instead of duplicating the string.
+from the flattener instead of duplicating the string, and `isToolText` is the one
+SQL predicate for "this text is flattened tool output", used by `search --prose`,
+`skills` and the opening-prompt ranking.
 
 ### What a new adapter must guarantee
 
@@ -91,6 +93,11 @@ and `test/sources.test.ts` has a fake adapter driven end to end as a template.
 6. **Tolerant parsing.** The log format will evolve under you, and a parser that
    throws loses whole files. Validate with Valibot the way `claude-code-jsonl.ts`
    does, fold whatever is searchable into `text`, and drop the rest.
+7. **Tool blocks in the shared tag format.** A tool call or result folded into
+   `text` opens with `[tool_` (`[tool_use:<name>] <json>`, `[tool_result] …`,
+   `[tool_result:error] …`), and prose never does. `isToolText` tells tool
+   output from the user's words by that prefix alone, so a source with its own
+   tool rendering breaks `search --prose`, `skills` and opening prompts.
 
 Titles, `model`, `cwd` and `gitBranch` are optional and wired through when
 present; titles use the shared priority scale (user-set 3 > tool-generated 2 >
@@ -122,30 +129,33 @@ until an `index --full` re-harvests it for files still on disk.
   ([scheduling.md](scheduling.md)). cerebro's own home stays `~/.claude/cerebro`
   regardless of sources.
 - The digest prompt's opening sentence names Claude Code, and neutralizing it is
-  not free: that sentence is also the marker `isDigestRunTranscript` matches on,
+  not free: that sentence is also the marker `fileVerdict` matches on,
   so rewording it hides existing digest transcripts from a `--full` re-read
   unless the check keeps recognizing the old wording too. Adding a second adapter
   is what makes the wording wrong, so do it then.
 
 ## Scan layer (`src/scan.ts`)
 
-Bytes, cursors, mtimes and `index_state`; nothing about messages or sessions.
+Bytes, cursors, mtimes and `index_state`; nothing about sessions. Every read and
+write of the cursor table lives here (load, `cursorWriter`, `resetCursors`,
+`pruneCursors`, `countCursors`), and the `Cursor` row shape is declared once.
 `runIndex` and `dryRunIndex` both consume this module, which is what makes
 invariant #2 structural: there is one splitter (`splitBuffer`), one read plan
-(`planFileRead`), and one discover-state-plan-read-split walk
-(`eachIndexableFile`). The per-file cursor is a byte offset, so reads work on
+(`planFileRead`), one discover-state-plan-read-split walk
+(`eachIndexableFile`), and one per-file verdict (`fileVerdict`: digest, nothing
+new, or ingest) that both callers act on. The per-file cursor is a byte offset, so reads work on
 bytes (invariant #1), and `splitBuffer` only advances past a trailing newline or
 a final unterminated line that parses as JSON; an unparseable tail is a mid-write
 line left for the next run.
 
 `planFileRead` decides skip/read/truncate per file. A file flagged `is_digest`
-(cerebro's own summarization transcript, see below) is permanently excluded even
+(cerebro's own summarization transcript, see the indexer) is permanently excluded even
 when it grows: the content guard only inspects reads starting at byte 0, so
 without the flag a digest transcript still being written when first detected would
 leak its later lines into the archive on the next incremental run.
 
 `orphanedCursorPaths` is the one owner of the orphan predicate: the indexer's
-presence reconciliation deletes through it and `doctor` counts through it, so
+presence reconciliation prunes through it and `doctor` counts through it, so
 the diagnostic can never disagree with what `cerebro index` would prune. It
 returns null on an empty scan, because an empty scan almost always means a
 transient readdir failure rather than every session being deleted; "unknown"
@@ -175,21 +185,25 @@ Two session-row writers exist on purpose (invariant #7):
 Merging them behind a `prefer` flag is a decided non-goal: it hides the one
 thing that differs, and a wrong merge silently mis-attributes sessions.
 
-`reconcilePresence` reconciles the archive against disk: sessions whose source
-file is gone are flagged body-unavailable (a NULL `source_file`, i.e. a
-subagent-only parent stub, correctly reads as unavailable too), and `index_state`
-cursors for vanished files are pruned. Unlike sessions and messages, where the
+`reconcilePresence` reconciles the archive against disk and is the only writer of
+`body_available`: sessions whose source file is gone are flagged
+body-unavailable, and cursors for vanished files are pruned. A NULL
+`source_file` is a subagent-only parent stub whose top-level transcript was never
+seen; nothing was deleted, so it stays available, and `sessions` and `stats` both
+read the column as is. Unlike sessions and messages, where the
 row *is* the archive, a cursor into an unreadable file carries no information,
 and Claude Code deletes session files on its own schedule, so without pruning the
 one working table grows forever. A pruned file that reappears is re-read from
 byte 0 and UUID dedup makes that a no-op.
 
-`isDigestRunTranscript` keeps cerebro's own headless `claude -p` summarization
-runs out of the archive: such a transcript opens with the digest prompt as a user
+The `digest` verdict keeps cerebro's own headless `claude -p` summarization runs
+out of the archive: such a transcript opens with the digest prompt as a user
 message, and indexing it would feed prompt boilerplate back into search. New
 digest runs pass `--no-session-persistence` and write no transcript at all; the
 guard covers transcripts already on disk. Detection only runs on reads starting at
-byte 0, and a detected file is flagged `is_digest` so it is never read again.
+byte 0, and a detected file is flagged `is_digest` so it is never read again. A
+`nothing-new` file (no complete line yet) still gets its cursor saved, so a
+touched-but-unchanged file settles to "unchanged", but no session row.
 
 `relinkThreads` only runs when at least one file was read: a run that read no
 file inserted no message, so no new cross-session parent link can exist. This
@@ -239,9 +253,11 @@ updates message text in place and re-summarizing upserts summaries.
 
 The thread module owns what a thread is, end to end: identity and membership, the
 `threads` rollup view (DDL and row shape), the listings that read it, and
-`relinkThreads`, the sole writer of `root_session_id`. A logical thread is a root
-session plus its resumes and folded subagent transcripts, all sharing one
-`root_session_id`. The db module consumes the view DDL as an opaque fragment, so
+`relinkThreads`. A logical thread is a root session plus its resumes and folded
+subagent transcripts, all sharing one `root_session_id`. Both session upserts in
+the indexer seed that column with the session's own id, and `relinkThreads`
+rewrites it to the true root, so it is never NULL and readers use it without a
+fallback. The db module consumes the view DDL as an opaque fragment, so
 adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 
 - **Membership is expressed once** (`THREAD_MEMBERSHIP`): every reader that
@@ -263,10 +279,16 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
   with zero messages, and excluding it in the view rather than per listing keeps
   `countThreads`, `topProjects` and the listings agreeing. Nothing is deleted;
   `show` on such a session still resolves.
-- **The branch filter is any-session**, not root-preferring: branch work often
-  starts in a resume of a thread whose root sat on master, so a thread touches a
-  branch when any of its sessions was recorded on it. `search --branch` and
-  `sessions --branch` compose the same `threadOnBranch` fragment.
+- **`threadScope` is the one project and branch filter.** The thread listing and
+  the search hit filters both build it, passing their own root-id and
+  project-path expressions, so `--project` and `--branch` select the same threads
+  in `search` and `sessions`. The branch half is any-session, not
+  root-preferring: branch work often starts in a resume of a thread whose root sat
+  on master, so a thread touches a branch when any of its sessions was recorded
+  on it.
+- **`threadLastTs` reads the view's `last_ts`.** It is the coverage point a
+  summary stores, and the stale check compares it against the view's `last_ts`,
+  so re-aggregating `sessions` separately would let the two drift.
 - **`attachThreadIdentity`** is the step every ranked-hit path runs after dedup:
   hydrate the rollup once for the whole batch and pair each hit with its thread's
   identity row, leaving the caller to map that into its own result shape. It reads
@@ -310,10 +332,11 @@ thread", and the two repeatedly disagreed about the same thread. The join, the
 dedup and the window growth live here once; a caller keeps only its ranking
 function, the size of its first fetch and its own result shape.
 
-- `escapeLike` escapes user-supplied LIKE fragments; every LIKE built from user
-  input pairs it with an explicit `ESCAPE '\'`.
+- `escapeLike` (in `src/like.ts`) escapes user-supplied LIKE fragments; every
+  LIKE built from user input pairs it with an explicit `ESCAPE '\'`.
 - `HitFilters` is what a caller narrows a hit by: named filters (`project`,
-  `branch`, `since`, `role`, `prose`), turned into SQL here. `search` used to
+  `branch`, `since`, `role`, `prose`), turned into SQL here, with the project and
+  branch halves taken from the thread module's `threadScope`. `search` used to
   hand in raw predicate strings, which made the table aliases part of the query's
   interface without being declared anywhere, so renaming one broke search at
   runtime only. The aliases are private to this module now.
@@ -324,9 +347,8 @@ function, the size of its first fetch and its own result shape.
 - `rankedMessageHits` attaches the thread rollup via LEFT JOIN (root-preferring
   `last_ts`/repo, so a resume with a NULL git_root still ranks with the thread's
   repo), plus the matched message's own git branch, which `search` shows instead
-  of the thread's. The root is coalesced to the session itself for
-  not-yet-relinked sessions so a rootless hit is never dropped. It throws on a
-  malformed MATCH so each caller keeps its own fallback.
+  of the thread's. It throws on a malformed MATCH so each caller keeps its own
+  fallback.
 - `dedupedHitWindow` implements the shared window policy: fetch
   `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
   thread, and grow the window geometrically (x4, up to 3 rounds) only when it was
@@ -355,13 +377,13 @@ Filter semantics worth knowing:
   from the rollup rather than the matched message's own session row. Filtering
   on the session would silently drop every hit in a resume whose lines carry no
   cwd or a differing one (a subdirectory, a worktree, a moved repo). The rollup
-  value is the same one `sessions --project` matches on, so the two commands
-  agree by construction.
+  value is the same one `sessions --project` matches on, through the same
+  `threadScope`, so the two commands agree by construction.
 - `--since` is per message, deliberately: it is a property of the turn, not the
   thread.
 - `--prose` is a prefix heuristic, not a parser: a tool-only message always
-  starts with `[tool_` as `flattenContent` renders it. A message that opens with
-  prose and calls a tool further down is kept on purpose.
+  starts with `[tool_` (`isToolText`). A message that opens with prose and calls
+  a tool further down is kept on purpose.
 
 Title, project, provider and model on a hit are the thread's, attached by
 `attachThreadIdentity` in one query over the kept hits; `ts` and `git_branch` stay
@@ -418,14 +440,16 @@ never summarizes on its own initiative; the hooks decide when.
   binary-search water-fill, so short steering messages stay whole while the
   longest essays are trimmed first. The numbers and env overrides are in
   [digest-model-tiering.md](digest-model-tiering.md).
-- **`stale.ts`** owns the staleness predicate (never summarized, summarized
-  before the thread's latest activity, or summarized by an older prompt version),
-  defined once for the listing, the count and the coverage reading so they cannot
-  drift. A drain passes `drainAt` for a narrower set: a thread active within
-  the last 30 minutes is probably still being worked in, and summarizing it would
-  buy a summary that is stale again within minutes while the older backlog waits;
-  a thread whose recent attempts failed waits out its backoff. `digest stale`
-  still lists both, and `digest run` ignores both.
+- **`stale.ts`** owns the staleness predicate (never summarized, summarized by an
+  older prompt version, a summary with no coverage point because it was moved onto
+  a new root, or new activity since), defined once for the listing, the count and
+  the coverage reading so they cannot drift. The query also returns each row's
+  `reason`, one per predicate branch, and its drain `hold`: `settling` for a
+  thread active within the last 30 minutes (it is probably still being worked in,
+  and a summary now would be stale again within minutes while the older backlog
+  waits) or `backing-off` for one whose recent attempts failed. A drain takes only
+  rows with no hold; `digest stale` lists them all with the hold marked, and
+  `digest run` ignores both.
 - **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage

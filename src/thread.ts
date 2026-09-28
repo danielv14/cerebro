@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { escapeLike, threadOnBranch } from "./fts.ts";
+import { escapeLike } from "./like.ts";
+import { isToolText } from "./sources/claude-code-jsonl.ts";
 
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";
@@ -66,6 +67,36 @@ export interface ThreadRow {
   body_available: number;
 }
 
+export interface ThreadScope {
+  // Substring of the thread's project path.
+  project?: string;
+  // Substring of a branch any of the thread's sessions was recorded on.
+  branch?: string;
+}
+
+// The expressions are codebase literals; the fragments stay bound `?`s.
+export const threadScope = (
+  scope: ThreadScope,
+  columns: { root: string; projectPath: string },
+): { sql: string; params: string[] }[] => {
+  const out: { sql: string; params: string[] }[] = [];
+  if (scope.project) {
+    out.push({
+      sql: `${columns.projectPath} LIKE '%' || ? || '%' ESCAPE '\\'`,
+      params: [escapeLike(scope.project)],
+    });
+  }
+  if (scope.branch) {
+    out.push({
+      sql:
+        `${columns.root} IN (SELECT root_session_id FROM sessions ` +
+        `WHERE git_branch LIKE '%' || ? || '%' ESCAPE '\\')`,
+      params: [escapeLike(scope.branch)],
+    });
+  }
+  return out;
+};
+
 const latestThreads = (
   db: Database,
   conditions: string[],
@@ -80,18 +111,11 @@ const latestThreads = (
 
 export const listThreads = (
   db: Database,
-  opts: { project?: string; branch?: string; since?: string; limit?: number } = {},
+  opts: ThreadScope & { since?: string; limit?: number } = {},
 ): ThreadRow[] => {
-  const params: (string | number)[] = [];
-  const conditions: string[] = [];
-  if (opts.project) {
-    conditions.push("project_path LIKE '%' || ? || '%' ESCAPE '\\'");
-    params.push(escapeLike(opts.project));
-  }
-  if (opts.branch) {
-    conditions.push(threadOnBranch("id"));
-    params.push(escapeLike(opts.branch));
-  }
+  const scope = threadScope(opts, { root: "id", projectPath: "project_path" });
+  const conditions = scope.map((filter) => filter.sql);
+  const params: (string | number)[] = scope.flatMap((filter) => filter.params);
   if (opts.since) {
     conditions.push("last_ts >= ?");
     params.push(opts.since);
@@ -158,7 +182,7 @@ export const attachThreadIdentity = <H extends { id: string }>(
 export const rootOf = (db: Database, sessionId: string): string => {
   const row = db
     .query("SELECT root_session_id FROM sessions WHERE session_id = ?")
-    .get(sessionId) as { root_session_id: string | null } | null;
+    .get(sessionId) as { root_session_id: string } | null;
   return row?.root_session_id ?? sessionId;
 };
 
@@ -192,9 +216,9 @@ const typedWords = (text: string): string => {
   return COMMAND_NAME.exec(text)?.[1]?.trim() || text;
 };
 
-// Three tiers, worst last: a skill body and flattened tool output are injected and
-// can never be the user's words, while a slash-command turn still carries them in
-// its arguments.
+// Three tiers, worst last: a skill body, flattened tool output and an interrupt
+// marker are injected and can never be the user's words, while a slash-command
+// turn still carries them in its arguments.
 export const threadOpeningPrompt = (db: Database, root: string): string | null => {
   const row = db
     .query(
@@ -202,8 +226,9 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
        WHERE ${THREAD_MEMBERSHIP}
          AND role = 'user' AND is_sidechain = 0
        ORDER BY (CASE
-                   WHEN text LIKE '[%'
-                     OR text LIKE 'Base directory for this skill:%' THEN 2
+                   WHEN ${isToolText("text")}
+                     OR text LIKE 'Base directory for this skill:%'
+                     OR text LIKE '[Request interrupted%' THEN 2
                    WHEN text LIKE '<command-%' THEN 1
                    ELSE 0 END), ts, id
        LIMIT 1`,
@@ -224,11 +249,13 @@ export const messageOrdinal = (db: Database, root: string, id: number): number =
   return row?.rn ?? 0;
 };
 
+// Read from the view, not re-aggregated: the stale check compares a summary's
+// coverage point against the view's last_ts, so both must be one definition.
 export const threadLastTs = (db: Database, root: string): string | null => {
-  const row = db
-    .query("SELECT MAX(last_ts) AS mx FROM sessions WHERE root_session_id = ?")
-    .get(root) as { mx: string | null };
-  return row.mx;
+  const row = db.query("SELECT last_ts FROM threads WHERE id = ?").get(root) as {
+    last_ts: string | null;
+  } | null;
+  return row?.last_ts ?? null;
 };
 
 export const countThreads = (db: Database): number => {

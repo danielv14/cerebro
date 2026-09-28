@@ -143,7 +143,7 @@ export interface DrainOptions {
 
 export const runDrain = (db: Database, limit: number, opts: DrainOptions): DrainResult => {
   const clock = opts.clock ?? Date.now;
-  const threads = staleThreads(db, limit, clock());
+  const threads = staleThreads(db, { limit, now: clock(), drain: true });
   const result: DrainResult = {
     outcomes: [],
     summarized: 0,

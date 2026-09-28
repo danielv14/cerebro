@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { type BuildStamp, buildStamp } from "./build-stamp.ts";
 import { count, SCHEMA_VERSION } from "./db.ts";
 import { summaryCoverage } from "./digest/stale.ts";
-import { orphanedCursorPaths } from "./scan.ts";
+import { countCursors, orphanedCursorPaths } from "./scan.ts";
 import type { SourceAdapter } from "./sources/adapter.ts";
 import { discoverAllSessionFiles } from "./sources/registry.ts";
 
@@ -94,7 +94,7 @@ const schemaCheck = (db: Database): Check => {
 
 const orphanedCursors = (db: Database, adapters: SourceAdapter[]): Check => {
   const check = defineCheck({ key: "cursors", group: "Archive", label: "index cursors" });
-  const cursors = count(db, "SELECT COUNT(*) AS c FROM index_state");
+  const cursors = countCursors(db);
   if (cursors === 0) return check.ok("0 rows");
   const orphans = orphanedCursorPaths(db, discoverAllSessionFiles(adapters));
   if (orphans === null) {
