@@ -5,8 +5,6 @@ import { join } from "node:path";
 import type { SourceAdapter } from "../src/sources/adapter.ts";
 import { sourceAdapters } from "../src/sources/registry.ts";
 
-// A throwaway ~/.claude directory for one test: write session files under
-// `projects` and hand `adapters` to runIndex, dryRunIndex, runDoctor or runCli.
 export interface TempClaude {
   claudeRoot: string;
   projects: string;
@@ -26,7 +24,6 @@ export const makeClaudeDir = (): TempClaude => {
   };
 };
 
-// Write a top-level session file: projects/<projectDir>/<sessionId>.jsonl
 export const writeSession = (
   projects: string,
   projectDir: string,
@@ -40,7 +37,6 @@ export const writeSession = (
   return path;
 };
 
-// Write a subagent transcript: projects/<projectDir>/<parentSession>/subagents/<name>.jsonl
 export const writeSubagent = (
   projects: string,
   projectDir: string,
@@ -55,13 +51,11 @@ export const writeSubagent = (
   return path;
 };
 
-// Append a raw, already-serialized chunk to a file (for partial-write / incremental tests).
 export const appendRaw = (path: string, raw: string): void => {
   fs.appendFileSync(path, raw);
 };
 
 const BASE = Date.parse("2026-01-01T10:00:00.000Z");
-// Deterministic increasing ISO timestamp, `seconds` after the base.
 export const ts = (seconds: number): string => new Date(BASE + seconds * 1000).toISOString();
 
 export const userMsg = (

@@ -16,7 +16,6 @@ import {
   writeSubagent,
 } from "./fixtures.ts";
 
-// Force a file's mtime so ordering is deterministic (real runs differ by ms).
 const setMtime = (path: string, secondsFromEpoch: number): void => {
   const when = new Date(secondsFromEpoch * 1000);
   fs.utimesSync(path, when, when);
@@ -24,10 +23,8 @@ const setMtime = (path: string, secondsFromEpoch: number): void => {
 
 const oneMsg = (sessionId: string) => [userMsg(sessionId, "u1", "work")];
 
-// A minimal second source, exercising the whole adapter contract against a log
-// format that shares nothing with Claude Code's: its own directory layout, its own
-// event grammar ({who, id, say}), synthesized provider-prefixed message ids, and a
-// per-turn model field. What the indexer tests through it is the seam itself.
+// A minimal second source, exercising the whole adapter contract against a log format that shares
+// nothing with Claude Code's.
 const FAKE_PROVIDER = "fake-agent";
 
 const classifyFakeLine = (raw: unknown): Classified => {
@@ -37,8 +34,6 @@ const classifyFakeLine = (raw: unknown): Classified => {
   if (typeof event.id !== "string" || typeof event.say !== "string") return { kind: "skip" };
   return {
     kind: "message",
-    // Synthesized, provider-prefixed: stable across re-reads and collision-free
-    // against other sources' ids (the dedup-key guarantee in the contract).
     uuid: `${FAKE_PROVIDER}:${event.id}`,
     parentUuid: null,
     sessionId: null,
@@ -121,15 +116,12 @@ describe("claude-code discoverSessionFiles", () => {
     expect(top).toBeDefined();
     expect(top!.sessionId).toBe("PARENT");
     expect(sub).toBeDefined();
-    // The subagent's owning session is the enclosing <uuid> directory (the parent),
-    // so its turns fold into the parent thread.
     expect(sub!.sessionId).toBe("PARENT");
     expect(sub!.path.endsWith(join("PARENT", "subagents", "agent-1.jsonl"))).toBe(true);
   });
 
   test("skips non-jsonl entries and a project dir with no session files", () => {
     writeSession(env.projects, "-repo", "REAL", oneMsg("REAL"));
-    // A non-jsonl file alongside, and an empty extra project dir.
     fs.writeFileSync(join(env.projects, "-repo", "notes.txt"), "ignore me");
     fs.mkdirSync(join(env.projects, "-empty"), { recursive: true });
 
@@ -139,7 +131,6 @@ describe("claude-code discoverSessionFiles", () => {
   });
 
   test("returns an empty list when there are no projects", () => {
-    // makeClaudeDir creates an empty projects/ dir; nothing to discover.
     expect(discoverSessionFiles(env.projects)).toEqual([]);
   });
 });
@@ -154,11 +145,10 @@ describe("registry", () => {
   });
   afterEach(() => env.cleanup());
 
-  // Pinned as literals on purpose. Every archived session row carries its provider
-  // id, and the migration backfill only heals a NULL one, so renaming an id would
-  // silently orphan history instead of failing. Spelling the strings out here (not
-  // importing the constant) is what turns a rename into a red test. A new adapter
-  // adds its id to this list.
+  // Pinned as literals on purpose. Every archived session row carries its provider id, and the
+  // migration backfill only heals a NULL one, so renaming an id would silently orphan history
+  // instead of failing. Spelling the strings out here (not importing the constant) is what turns a
+  // rename into a red test.
   test("pins the registered provider ids", () => {
     expect(sourceAdapters(env.projects).map((adapter) => adapter.id)).toEqual(["claude-code"]);
   });
@@ -172,7 +162,6 @@ describe("registry", () => {
     const a = writeSession(env.projects, "-repo", "AAA", oneMsg("AAA"));
     const b = writeSession(env.projects, "-repo", "BBB", oneMsg("BBB"));
     const c = writeSession(env.projects, "-repo", "CCC", oneMsg("CCC"));
-    // Set mtimes out of filename order: B oldest, then C, then A.
     setMtime(a, 1_700_000_300);
     setMtime(b, 1_700_000_100);
     setMtime(c, 1_700_000_200);
@@ -185,7 +174,6 @@ describe("registry", () => {
     const z = writeSession(env.projects, "-repo", "zzz", oneMsg("zzz"));
     const a = writeSession(env.projects, "-repo", "aaa", oneMsg("aaa"));
     const m = writeSession(env.projects, "-repo", "mmm", oneMsg("mmm"));
-    // Identical mtime on all three: only the sessionId tiebreak orders them.
     const same = 1_700_000_000;
     setMtime(z, same);
     setMtime(a, same);
@@ -200,7 +188,7 @@ describe("registry", () => {
     const fakeFile = writeFakeSession(fakeRoot, "FAKE-S", [
       { who: "human", id: "m1", say: "hello" },
     ]);
-    setMtime(fakeFile, 1_700_000_100); // fake session is older
+    setMtime(fakeFile, 1_700_000_100);
     setMtime(claudeFile, 1_700_000_200);
 
     const adapters = [...env.adapters, makeFakeAdapter(fakeRoot)];
@@ -238,8 +226,7 @@ describe("indexing through a second source adapter", () => {
     ]);
 
     const result = runIndex(db, { adapters });
-    expect(result.newMessages).toBe(3); // 1 claude + 2 fake; the noise line is skipped
-    // Idempotent re-index across both sources (dedup on the synthesized uuid too).
+    expect(result.newMessages).toBe(3);
     expect(runIndex(db, { adapters }).newMessages).toBe(0);
 
     const fake = db
@@ -247,7 +234,6 @@ describe("indexing through a second source adapter", () => {
       .get() as { provider: string; model: string | null; msg_count: number };
     expect(fake).toEqual({ provider: "fake-agent", model: "gpt-6-codex", msg_count: 2 });
 
-    // A source without the concept omits projectDir; the column simply stays NULL.
     expect(db.query("SELECT project_dir FROM sessions WHERE session_id = 'FAKE-S'").get()).toEqual({
       project_dir: null,
     });
@@ -257,7 +243,6 @@ describe("indexing through a second source adapter", () => {
       .get() as { provider: string };
     expect(claude.provider).toBe("claude-code");
 
-    // The foreign session's text is in the same FTS index as everything else.
     const hit = db
       .query(
         `SELECT m.session_id FROM messages_fts f JOIN messages m ON m.id = f.rowid
@@ -275,8 +260,6 @@ describe("indexing through a second source adapter", () => {
       { unrelated: "bookkeeping noise" },
     ]);
 
-    // Parity is the point: the dry run classifies through each file's own adapter, so
-    // its counts must match what the real run then indexes, foreign format included.
     const plan = dryRunIndex(db, adapters);
     expect(plan.filesScanned).toBe(2);
     expect(plan.newFiles).toBe(2);
@@ -286,7 +269,6 @@ describe("indexing through a second source adapter", () => {
     expect(real.newMessages).toBe(plan.candidateMessages);
     expect(real.filesIndexed).toBe(plan.filesToRead);
 
-    // And with the archive current, the dry run sees no work left in either source.
     const after = dryRunIndex(db, adapters);
     expect(after.filesToRead).toBe(0);
     expect(after.unchangedFiles).toBe(2);

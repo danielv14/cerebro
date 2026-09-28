@@ -15,7 +15,7 @@ import {
   type Summarizer,
 } from "../src/digest/run.ts";
 import { DRAIN_SETTLE_MS, staleThreads } from "../src/digest/stale.ts";
-import { getSummary, retryDelayMs } from "../src/digest/store.ts";
+import { getSummary, rejectSummaryReason, retryDelayMs } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
@@ -27,14 +27,14 @@ import {
   writeSession,
 } from "./fixtures.ts";
 
-// These assert on the pipeline, not on which model it picked, so they all pass the
-// shipped tiering.
 const models = DEFAULT_DIGEST_MODELS;
 
-// A valid summary has to clear SUMMARY_MIN_CHARS and must not look like an error.
 const GOOD_SUMMARY = "Worked on the limiter in cerebro. Keywords: limiter, cerebro";
 
-// A Summarizer that records what it was asked and answers with a canned result.
+test("GOOD_SUMMARY clears the storage guard", () => {
+  expect(rejectSummaryReason(GOOD_SUMMARY)).toBeNull();
+});
+
 const fakeSummarizer = (
   result: Partial<ReturnType<Summarizer>> = {},
 ): { summarize: Summarizer; calls: SummarizeRequest[] } => {
@@ -75,8 +75,6 @@ describe("runDigest", () => {
     expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
     expect(getSummary(db, "SESS")?.model).toBe(outcome.model!);
 
-    // The seam carries the rendered transcript and the prompt, so the adapter
-    // needs nothing else.
     expect(calls.length).toBe(1);
     expect(calls[0]!.input).toContain("how do I tune the limiter");
     expect(calls[0]!.prompt).toContain("You are summarizing a single Claude Code session");
@@ -84,8 +82,6 @@ describe("runDigest", () => {
   });
 
   test("a thread with no messages is skipped, never summarized as empty", () => {
-    // A session row with no messages at all: rendering it produces nothing, and
-    // storing "(No substantive session content.)" would mark it fresh forever.
     db.run(
       "INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('EMPTY', 'EMPTY', 0)",
     );
@@ -94,7 +90,7 @@ describe("runDigest", () => {
 
     expect(outcome.status).toBe("skipped");
     expect(outcome.reason).toBe("nothing to summarize");
-    expect(calls).toEqual([]); // the model is never called
+    expect(calls).toEqual([]);
     expect(getSummary(db, "EMPTY")).toBeNull();
   });
 
@@ -118,7 +114,6 @@ describe("runDigest", () => {
   });
 
   test("output that looks like an error is rejected by the storage guard", () => {
-    // The incident this guard exists for: an API failure stored as a summary.
     const { summarize } = fakeSummarizer({ text: "Prompt is too long: 213000 tokens" });
     const outcome = runDigest(db, "SESS", { summarize, models });
 
@@ -147,12 +142,8 @@ describe("runDigest", () => {
   });
 
   test("stamps the last_ts the transcript covered, not the one at store time", () => {
-    // The model call takes minutes. Anything indexed while it runs must stay stale:
-    // stamping the thread's *current* last_ts would mark messages the summary never
-    // saw as covered, and the staleness predicate would never surface them again.
     const beforeCall = threadLastTs(db, "SESS");
     const summarize: Summarizer = () => {
-      // Stand in for "a new message landed during the call".
       db.run(
         `INSERT INTO messages (uuid, session_id, parent_uuid, ts, role, text, is_sidechain)
          VALUES ('u2', 'SESS', 'a1', '2099-01-01T00:00:00.000Z', 'user', 'later work', 0)`,
@@ -163,7 +154,6 @@ describe("runDigest", () => {
 
     expect(runDigest(db, "SESS", { summarize, models }).status).toBe("summarized");
     expect(getSummary(db, "SESS")?.source_last_ts).toBe(beforeCall);
-    // ...so the thread is stale again immediately, and the new message gets covered.
     expect(staleThreads(db, 10).map((t) => t.id)).toContain("SESS");
   });
 
@@ -202,8 +192,6 @@ describe("createClaudeSummarizer", () => {
     ...over,
   });
 
-  // A stand-in for the claude CLI, so the adapter's wiring (transcript on stdin,
-  // prompt as an argv, the model flag) is verified without calling a model.
   const fakeClaude = (script: string): string => {
     const path = join(dir, "claude");
     fs.writeFileSync(path, `#!/usr/bin/env bash\n${script}\n`);
@@ -212,7 +200,6 @@ describe("createClaudeSummarizer", () => {
   };
 
   test("passes the transcript on stdin and the prompt as an argument", () => {
-    // Echo back what arrived, so the assertion covers both channels at once.
     fakeClaude('printf "stdin:%s args:%s model:%s" "$(cat)" "$5" "$4"');
     const result = createClaudeSummarizer(config())({
       input: "TRANSCRIPT",
@@ -241,8 +228,6 @@ describe("createClaudeSummarizer", () => {
   });
 
   test("a call that exceeds the timeout is killed and reported, not hung", () => {
-    // The stand-in sleeps far past the timeout; without the kill this test (and a
-    // real drain) would hang.
     fakeClaude("sleep 30");
     const result = createClaudeSummarizer(config({ timeoutMs: 250 }))({
       input: "T",
@@ -252,7 +237,6 @@ describe("createClaudeSummarizer", () => {
 
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("timed out after 250ms");
-    // An ordinary failure, not fatal: the next drain retries the thread.
     expect(result.fatal).toBeUndefined();
   });
 
@@ -286,12 +270,12 @@ describe("runDrain", () => {
 
   test("an empty backlog does no work", () => {
     const { summarize, calls } = fakeSummarizer();
-    runDrain(db, 8, { summarize, models }); // first pass summarizes everything
+    runDrain(db, 8, { summarize, models });
     const second = runDrain(db, 8, { summarize, models });
 
     expect(second.outcomes).toEqual([]);
     expect(second.summarized).toBe(0);
-    expect(calls.length).toBe(3); // only the first pass called the model
+    expect(calls.length).toBe(3);
   });
 
   test("stops at the limit and leaves the rest for the next run", () => {
@@ -316,14 +300,10 @@ describe("runDrain", () => {
     expect(result.summarized).toBe(2);
     expect(result.failed).toBe(1);
     expect(result.outcomes.length).toBe(3);
-    // The failed one is still stale, the other two are not.
     expect(staleThreads(db, 10).length).toBe(1);
   });
 
   test("a timed-out call fails that thread and the drain moves on", () => {
-    // The timeout arrives through the Summarizer seam as an ordinary non-fatal
-    // failure, so a drain treats it like any other failed thread: count it, leave
-    // it stale, keep going.
     let call = 0;
     const summarize: Summarizer = () => {
       call++;
@@ -341,9 +321,6 @@ describe("runDrain", () => {
   });
 
   test("an unexpected throw takes down one thread, not the run", () => {
-    // The bash loop got per-thread isolation for free. Here a SQL error or any
-    // other surprise inside one thread must not abandon the rest of the batch or
-    // the closing report.
     let call = 0;
     const summarize: Summarizer = () => {
       call++;
@@ -359,8 +336,6 @@ describe("runDrain", () => {
   });
 
   test("a skipped thread is counted apart from a failure", () => {
-    // A skip is not a model failure, and digest.log is the only signal for "is the
-    // model broken?".
     db.run(
       "INSERT INTO sessions (session_id, root_session_id, msg_count, last_ts) VALUES ('EMPTY', 'EMPTY', 0, '2026-01-01T00:00:00Z')",
     );
@@ -382,7 +357,7 @@ describe("runDrain", () => {
     const result = runDrain(db, 8, { summarize, models });
 
     expect(result.aborted).toContain("could not run claude");
-    expect(calls.length).toBe(1); // no point trying the other two
+    expect(calls.length).toBe(1);
     expect(result.outcomes.length).toBe(1);
   });
 });

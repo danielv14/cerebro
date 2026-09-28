@@ -19,8 +19,6 @@ import {
   writeSession,
 } from "./fixtures.ts";
 
-// A capturing CliIO so a test can assert on output and exit code without spawning
-// the binary or touching the global process.exitCode.
 const makeIO = () => {
   const logs: string[] = [];
   const errs: string[] = [];
@@ -43,9 +41,8 @@ const makeIO = () => {
 };
 
 describe("option declarations", () => {
-  // The accepted vocabulary of every command, pinned. The dispatcher derives what
-  // it accepts from these declarations, so this is the one place that notices a
-  // flag quietly disappearing from a command (or appearing on the wrong one).
+  // The dispatcher derives what it accepts from these declarations, so this is the one place that
+  // notices a flag quietly disappearing from a command (or appearing on the wrong one).
   const EXPECTED: Record<string, string[]> = {
     index: ["dry-run", "full", "rebuild"],
     search: ["all", "branch", "json", "limit", "project", "prose", "role", "since"],
@@ -78,9 +75,6 @@ describe("option declarations", () => {
   });
 
   test("version is the only command that runs without a database", () => {
-    // The type already forces every command through a builder that sets the flag, so
-    // what is left to pin is the registry: which commands are db-less is a decision,
-    // not something that drifts. See versionCommand in cli.ts for why it is the one.
     const dbLess = eachCommand(commands)
       .filter(([, command]) => !command.needsDb)
       .map(([label]) => label);
@@ -88,9 +82,6 @@ describe("option declarations", () => {
   });
 
   test("the real option table builds, so no two commands disagree on a kind", () => {
-    // The rule lives in the builder now, so this asserts the real thing rather than
-    // re-deriving the aggregation: buildParserOptions throws on a clash, and the
-    // table cerebro actually parses with is the one being built here.
     const table = buildParserOptions(commands);
     expect(table.limit).toEqual({ type: "string" });
     expect(table.help).toEqual({ type: "boolean", short: "h" });
@@ -109,7 +100,6 @@ describe("option declarations", () => {
   });
 
   test("building the table refuses a command that redeclares a global option's kind", () => {
-    // The globals are part of the same rule, not a layer under it.
     const clashing = new Map<string, CommandNode>([
       ["rogue", defineCommand({ options: { db: flag() }, run: () => ({}) })],
     ]);
@@ -120,9 +110,6 @@ describe("option declarations", () => {
   });
 
   test("the seeded --help is inside the rule, not beside it", () => {
-    // `help` is put straight into the parser table rather than declared as an option,
-    // because only that table can carry the `-h` short alias. The rule reads the kind
-    // back off the table, so the seed is an incumbent like any other declaration.
     const clashing = new Map<string, CommandNode>([
       ["rogue", defineCommand({ options: { help: text() }, run: () => ({}) })],
     ]);
@@ -133,8 +120,6 @@ describe("option declarations", () => {
   });
 
   test("the clash is caught inside a group's actions too", () => {
-    // A group's actions each declare their own options, so a clash can hide one level
-    // down.
     const clashing = new Map<string, CommandNode>([
       ["straight", defineCommand({ options: { bytes: positiveInt() }, run: () => ({}) })],
       [
@@ -170,8 +155,7 @@ describe("runCli", () => {
     over: CliEnv = {},
   ): void => runCli(args, io, makeDb, { adapters: env.adapters, ...over });
 
-  // A fresh in-memory db seeded from the current fixture files. runCli owns the
-  // db lifetime (it closes it in finally), so each call gets its own.
+  // runCli owns the db lifetime (it closes it in finally), so each call gets its own.
   const seeded = () => (): ReturnType<typeof openDb> => {
     const db = openDb(":memory:");
     runIndex(db, { adapters: env.adapters });
@@ -194,7 +178,7 @@ describe("runCli", () => {
     expect(cap.logs.join("\n")).toContain("permanent verbatim archive");
     expect(cap.errs).toEqual([]);
     expect(cap.exitCode).toBe(0);
-    expect(opened).toBe(false); // help short-circuits before opening the db
+    expect(opened).toBe(false);
   });
 
   test("no command prints help", () => {
@@ -227,8 +211,6 @@ describe("runCli", () => {
   });
 
   test("a flag another command owns is rejected, not swallowed (#105)", () => {
-    // --keep is backup's, --range is show's, --days is recent's. Each used to
-    // parse fine for any command and then be ignored in silence.
     for (const args of [
       ["sessions", "--keep", "3"],
       ["sessions", "--range", "1..2"],
@@ -251,8 +233,6 @@ describe("runCli", () => {
   });
 
   test("the global options work with every command", () => {
-    // --db is how every test and hook points at a throwaway archive, and --help
-    // short-circuits regardless of the command.
     const cap = makeIO();
     cli(["sessions", "--db", ":memory:"], cap.io, () => memDb());
     expect(cap.errs).toEqual([]);
@@ -427,8 +407,6 @@ describe("runCli", () => {
   });
 
   test("--json emits an empty array rather than the empty-state prose, for every reader", () => {
-    // In JSON mode a reader emits [] and never its human empty state. The rule lives
-    // in runCli's emit, so every reader gets it without opting in.
     for (const args of [
       ["sessions", "--json"],
       ["search", "zzyzx", "--json"],
@@ -479,7 +457,6 @@ describe("runCli", () => {
     expect(payload.total).toBe(3);
     expect(payload.from).toBe(2);
     expect(payload.messages.map((m: { text: string }) => m.text)).toEqual(["second", "third"]);
-    // Range validation still applies in JSON mode.
     const bad = makeIO();
     cli(["show", "SESS", "--range", "9", "--json"], bad.io, seeded());
     expect(bad.errs.join("\n")).toContain("starts at 9");
@@ -531,7 +508,6 @@ describe("runCli", () => {
       opened = true;
       return memDb();
     });
-    // A source run must not claim a commit it does not have.
     expect(cap.logs.join("\n")).toContain("cerebro dev (unknown, built unknown, bun ");
     expect(cap.exitCode).toBe(0);
     expect(opened).toBe(false);
@@ -563,7 +539,7 @@ describe("runCli", () => {
     const cap = makeIO();
     cli(["doctor", "--json"], cap.io, () => {
       const db = seeded()();
-      db.run("PRAGMA user_version = 999"); // a schema this build cannot speak
+      db.run("PRAGMA user_version = 999");
       return db;
     });
     const payload = JSON.parse(cap.logs.join("\n"));
@@ -689,7 +665,6 @@ describe("runCli", () => {
       "FRESHTHREAD",
     ]);
 
-    // Widening the window brings the older thread back, from the same instant.
     const wide = makeIO();
     cli(["recent", "--cwd", "/repo", "--days", "30", "--json"], wide.io, seeded(), { now: NOW });
     expect(JSON.parse(wide.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
@@ -699,10 +674,6 @@ describe("runCli", () => {
   });
 
   test("recent scopes by git_root when the cwd is inside a repo (#164)", () => {
-    // The branch every real invocation takes: a real working directory is a real
-    // repo, so recentThreads filters on git_root rather than project_path. Every
-    // other end-to-end recent test lands on the project_path fallback because the
-    // fixture cwds are not repos, which left this branch uncovered.
     const resolveGit: GitResolver = (cwd) =>
       cwd === "/checkout/mine" || cwd === "/checkout/mine/packages/api"
         ? { root: "/checkout/mine", remote: null }
@@ -739,8 +710,6 @@ describe("runCli", () => {
       "ROOTDIR",
     ]);
 
-    // Without a repo the same cwd falls back to an exact project_path match, so
-    // only the session recorded in that very directory comes back.
     const noRepo = makeIO();
     cli(["recent", "--cwd", "/checkout/mine/packages/api", "--json"], noRepo.io, seededInRepo(), {
       now: NOW,
@@ -761,7 +730,6 @@ describe("runCli", () => {
       "SESS",
     ]);
 
-    // The flag beats the ambient value, in both directions.
     const flagWins = makeIO();
     cli(["recent", "--cwd", "/repo", "--json"], flagWins.io, seeded(), {
       now: NOW,
@@ -778,9 +746,8 @@ describe("runCli", () => {
   });
 
   test("relevant ranks globally on the ambient cwd, and boosts only on --cwd (#125)", () => {
-    // relevant deliberately does not adopt the invoked directory: a manual call must
-    // rank the same wherever it is typed. Two identical matches, one a month newer in
-    // another repo, so only the boost can change the order.
+    // Two identical matches, one a month newer in another repo, so only the boost can change the
+    // order.
     const month = 30 * 86_400;
     writeSession(env.projects, "-repo-mine", "MINETHREAD", [
       userMsg("MINETHREAD", "u1", "the limiter work", { cwd: "/repo-mine", timestamp: ts(0) }),
@@ -812,7 +779,6 @@ describe("runCli", () => {
   });
 
   test("relevant --cwd boosts threads from that repo (#88)", () => {
-    // Equal text match; OTHER is a month fresher, so it leads without --cwd.
     writeSession(env.projects, "-repo-mine", "MINE", [
       userMsg("MINE", "u1", "notes about the limiter design", {
         cwd: "/repo-mine",
@@ -836,10 +802,8 @@ describe("runCli", () => {
     expect(order(["--cwd", "/repo-mine"])).toEqual(["MINE", "OTHER"]);
   });
 
-  // `digest run` / `digest drain` drive the real summarizer, so these go through a
-  // stand-in for the claude CLI (CEREBRO_CLAUDE_BIN) rather than a seam injected in
-  // the test. That covers the wiring the unit tests cannot: dispatch, argument
-  // resolution, the reported line and the exit code.
+  // `digest run` / `digest drain` drive the real summarizer, so these go through a stand-in for the
+  // claude CLI (CEREBRO_CLAUDE_BIN) rather than a seam injected in the test.
   describe("digest run and drain", () => {
     let binDir: string;
     let savedBin: string | undefined;
@@ -908,12 +872,7 @@ describe("runCli", () => {
       const cap = makeIO();
       cli(["digest", "drain", "--limit", "2"], cap.io, seeded());
 
-      // The per-thread lines are streamed as each one finishes, before the run
-      // returns, so the reconciler's log shows progress instead of going quiet for
-      // minutes. Order matters: header, then one line per thread, then the summary.
       expect(cap.logs[0]).toBe("Draining up to 2 stale thread(s): 2 to do.");
-      // Per thread: the breadcrumb naming size and model, then the outcome. The
-      // breadcrumb is what a wedged model call leaves behind.
       expect(cap.logs[1]).toMatch(/^Summarizing \w+: \d+ bytes -> \S+$/);
       expect(cap.logs[2]).toMatch(/^Summarized \w+: \d+ chars stored\.$/);
       expect(cap.logs.at(-1)).toBe("Drain complete: 2 summarized, 0 failed.");

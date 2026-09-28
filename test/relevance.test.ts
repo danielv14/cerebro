@@ -69,13 +69,11 @@ describe("relevance ranking", () => {
     expect(hits.length).toBe(1);
     expect(hits[0]!.id).toBe("S");
     expect(hits[0]!.fromSummary).toBe(true);
-    // Snippet comes from the curated summary, not the raw transcript.
     expect(hits[0]!.snippet).toContain("Refactored");
     expect(hits[0]!.snippet).toContain("[knex]");
   });
 
   test("relevantThreads falls back to the raw transcript for un-summarized threads", () => {
-    // SUMM has a summary, RAW does not; a query matching both must still surface RAW.
     writeSession(env.projects, "-repo", "SUMM", [
       userMsg("SUMM", "u1", "knex migration in the api service", { timestamp: ts(0) }),
     ]);
@@ -94,17 +92,16 @@ describe("relevance ranking", () => {
   test("decayedRank shrinks a hit's bm25 magnitude with age (#52)", () => {
     const now = Date.parse("2026-07-01T00:00:00Z");
     const fresh = decayedRank(-10, "2026-07-01T00:00:00Z", now);
-    const halfLife = decayedRank(-10, "2026-04-02T00:00:00Z", now); // ~90 days old
+    const halfLife = decayedRank(-10, "2026-04-02T00:00:00Z", now);
     const unknown = decayedRank(-10, null, now);
     expect(fresh).toBeCloseTo(-10);
     expect(halfLife).toBeCloseTo(-5, 0);
     expect(fresh).toBeLessThan(halfLife); // fresher = more negative = ranked first
-    expect(halfLife).toBeLessThan(unknown); // unknown activity ranks worst
+    expect(halfLife).toBeLessThan(unknown);
   });
 
   test("relevantThreads prefers a recent thread over an old one at similar text relevance (#52)", () => {
-    // OLD matches slightly more densely, but its last activity is half a year before
-    // NEW's. Recency decay must flip the order for the injection use case.
+    // OLD matches slightly more densely, but its last activity is half a year before NEW's.
     writeSession(env.projects, "-repo", "OLD", [
       userMsg("OLD", "u1", "the limiter limiter design", { timestamp: ts(0) }),
     ]);
@@ -146,14 +143,11 @@ describe("relevance ranking", () => {
     runIndex(db, { adapters: env.adapters });
     const now = Date.parse(ts(month));
 
-    // No scope: recency alone decides.
     expect(relevantThreads(db, "limiter", 2, now).map((h) => h.id)).toEqual(["OTHER", "MINE"]);
-    // Scoped by the cwd's exact project path (no git root, as in these fixtures).
     expect(relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" }).map((h) => h.id)).toEqual([
       "MINE",
       "OTHER",
     ]);
-    // A cwd in neither repo boosts nothing.
     expect(
       relevantThreads(db, "limiter", 2, now, { cwd: "/repo-elsewhere" }).map((h) => h.id),
     ).toEqual(["OTHER", "MINE"]);
@@ -173,14 +167,12 @@ describe("relevance ranking", () => {
         timestamp: ts(month),
       }),
     ]);
-    // The fixture cwds are not real directories, so a fake resolver stands in for
-    // an index run inside a real repo. The resolver itself is covered in
-    // git.test.ts; here it is what makes git_root reach the sessions rows.
+    // The fixture cwds are not real directories, so a fake resolver stands in for an index run
+    // inside a real repo.
     const resolveGit: GitResolver = (cwd) => ({ root: cwd ?? null, remote: null });
     runIndex(db, { adapters: env.adapters, resolveGit });
     const now = Date.parse(ts(month));
 
-    // repoRoot matches on git_root, and takes precedence over the cwd path.
     const hits = relevantThreads(db, "limiter", 2, now, {
       repoRoot: "/checkout/mine",
       cwd: "/checkout/mine/packages/api",
@@ -189,9 +181,6 @@ describe("relevance ranking", () => {
   });
 
   test("relevantThreads boost is not a filter: cross-repo threads still surface (#88)", () => {
-    // STRONG matches densely but sits in another repo; WEAK is a buried match in the
-    // prompt's own repo. Both must come back, so shared-infrastructure work stays
-    // reachable, and the boost must not be strong enough to bury the far better match.
     writeSession(env.projects, "-repo-other", "STRONG", [
       userMsg("STRONG", "u1", "limiter limiter limiter", { cwd: "/repo-other", timestamp: ts(0) }),
     ]);
@@ -215,7 +204,6 @@ describe("relevance ranking", () => {
       userMsg("OTHER", "u2", "some work", { cwd: "/repo-other", timestamp: ts(month) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Identical summaries: only repo and age differ, and the match is summary-only.
     writeSummary(db, "MINE", "Built the limiter middleware. Keywords: limiter");
     writeSummary(db, "OTHER", "Built the limiter middleware. Keywords: limiter");
     const now = Date.parse(ts(month));

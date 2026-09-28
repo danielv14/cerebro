@@ -4,12 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitResolver } from "../src/git.ts";
 
-// The resolver's positive path (a real repo resolving to its root + origin remote)
-// populates the git_root that `recent` scopes by, and invariant #9 requires it to
-// tolerate a missing directory by returning nulls rather than throwing (it runs
-// for every top-level session inside the per-file index transaction). These drive
-// the real `git` over throwaway dirs; the cache is per instance, so each case makes
-// its own resolver rather than needing a distinct cwd.
+// The cache is per instance, so each case makes its own resolver rather than needing a distinct
+// cwd.
 describe("createGitResolver", () => {
   const made: string[] = [];
 
@@ -54,11 +50,10 @@ describe("createGitResolver", () => {
 
     const resolveGit = createGitResolver();
     const first = resolveGit(repo);
-    expect(resolveGit(repo)).toBe(first); // same reference, served from the per-cwd cache
+    expect(resolveGit(repo)).toBe(first);
   });
 
   test("the cache is per instance: a fresh resolver re-resolves the same cwd", () => {
-    // What makes the seam testable: nothing a resolver saw leaks into the next one.
     const repo = tempDir();
     git(repo, ["init"]);
 
@@ -69,7 +64,7 @@ describe("createGitResolver", () => {
   });
 
   test("a non-repo directory resolves to nulls", () => {
-    const dir = tempDir(); // created but never `git init`-ed
+    const dir = tempDir();
     expect(createGitResolver()(dir)).toEqual({ root: null, remote: null });
   });
 

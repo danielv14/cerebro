@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { openDb } from "../src/db.ts";
 import { DIGEST_PROMPT } from "../src/digest/prompt.ts";
 import type { GitResolver } from "../src/git.ts";
@@ -34,9 +35,6 @@ describe("runIndex", () => {
     env.cleanup();
   });
 
-  // The git_root/git_remote half of upsertSession, driven through runIndex's own
-  // interface. Without the seam this branch could only be exercised by whatever
-  // repos happened to exist on the machine running the tests.
   test("git resolution comes from the injected resolver, per session cwd", () => {
     const resolveGit: GitResolver = (cwd) =>
       cwd === "/checkout/mine"
@@ -61,8 +59,6 @@ describe("runIndex", () => {
   });
 
   test("a resolver that reports nothing leaves the git columns null (invariant #9)", () => {
-    // The moved/deleted-directory case: resolution degrades to nulls and the row
-    // is still written.
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { cwd: "/gone" })]);
     runIndex(db, { adapters: env.adapters, resolveGit: () => ({ root: null, remote: null }) });
 
@@ -123,7 +119,6 @@ describe("runIndex", () => {
       { type: "custom-title", customTitle: "Custom title", sessionId: "S" },
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Claude Code appends a summary event later; the incremental run only sees it.
     appendRaw(path, `${JSON.stringify({ type: "summary", summary: "auto", sessionId: "S" })}\n`);
     runIndex(db, { adapters: env.adapters });
     const row = db
@@ -147,14 +142,14 @@ describe("runIndex", () => {
     let row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
       title: string;
     };
-    expect(row.title).toBe("AI v2"); // equal priority: the newer title wins
+    expect(row.title).toBe("AI v2");
     appendRaw(
       path,
       `${JSON.stringify({ type: "custom-title", customTitle: "Mine", sessionId: "S" })}\n`,
     );
     runIndex(db, { adapters: env.adapters });
     row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as { title: string };
-    expect(row.title).toBe("Mine"); // higher priority wins
+    expect(row.title).toBe("Mine");
   });
 
   test("a full re-read keeps the newest same-priority title (#198)", () => {
@@ -188,7 +183,6 @@ describe("runIndex", () => {
       assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
     writeSession(env.projects, "-repo", "RESUME", [
-      // first message of the resume continues from the original's last message
       userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
     runIndex(db, { adapters: env.adapters });
@@ -209,7 +203,7 @@ describe("runIndex", () => {
     ]);
     expect(runIndex(db, { adapters: env.adapters }).relinked).toBe(true);
 
-    const second = runIndex(db, { adapters: env.adapters }); // nothing changed on disk
+    const second = runIndex(db, { adapters: env.adapters });
     expect(second.filesIndexed).toBe(0);
     expect(second.relinked).toBe(false);
     const resume = db
@@ -250,8 +244,6 @@ describe("runIndex", () => {
       userMsg("RESUME", "u2", "continue", { parentUuid: "a1", timestamp: undefined }),
       userMsg("RESUME", "u3", "later", { parentUuid: "u2", timestamp: ts(2) }),
     ]);
-    // A sidechain turn folded into RESUME: excluded outright by the is_sidechain
-    // filter, so it can never carry or shadow the link regardless of ts or id.
     writeSubagent(env.projects, "-repo", "RESUME", "agent-x", [
       userMsg("RESUME", "sa1", "sub", { isSidechain: true, timestamp: ts(1), parentUuid: null }),
     ]);
@@ -270,7 +262,6 @@ describe("runIndex", () => {
       assistantMsg("PARENT", "sa2", "subagent reply", { isSidechain: true, parentUuid: "sa1" }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // All three messages belong to PARENT; the two sidechain turns are flagged.
     const total = (
       db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='PARENT'").get() as {
         c: number;
@@ -291,9 +282,8 @@ describe("runIndex", () => {
       { type: "custom-title", customTitle: "Parent title", sessionId: "PARENT" },
     ]);
     runIndex(db, { adapters: env.adapters });
-    // The subagent transcript shows up later, carrying a different cwd and branch.
-    // The parent's top-level file is unchanged, so this run only touches the parent
-    // row via touchParentSession: it must refresh the aggregate and nothing else.
+    // The parent's top-level file is unchanged, so this run only touches the parent row via
+    // touchParentSession.
     writeSubagent(env.projects, "-repo", "PARENT", "agent-xyz", [
       userMsg("PARENT", "sa1", "subagent prompt", {
         isSidechain: true,
@@ -322,7 +312,7 @@ describe("runIndex", () => {
     expect(row.source_file).toEndWith("PARENT.jsonl");
     expect(row.title).toBe("Parent title");
     expect(row.title_priority).toBe(3);
-    expect(row.msg_count).toBe(2); // the aggregate did refresh
+    expect(row.msg_count).toBe(2);
   });
 
   test("stores the session's provider and the model its turns record", () => {
@@ -348,8 +338,7 @@ describe("runIndex", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // A subagent transcript on a cheaper model arrives later; the parent's
-    // top-level file is unchanged, so only touchParentSession runs.
+    // The parent's top-level file is unchanged, so only touchParentSession runs.
     writeSubagent(env.projects, "-repo", "PARENT", "agent-1", [
       assistantMsg("PARENT", "sa1", "subagent turn", {
         isSidechain: true,
@@ -374,7 +363,6 @@ describe("runIndex", () => {
       (db.query("SELECT model FROM sessions WHERE session_id='S'").get() as { model: string })
         .model;
     expect(model()).toBe("claude-sonnet-4-6");
-    // A turn on another model arrives as an incremental append...
     appendRaw(
       path,
       `${JSON.stringify(
@@ -385,7 +373,6 @@ describe("runIndex", () => {
     );
     runIndex(db, { adapters: env.adapters });
     expect(model()).toBe("claude-opus-4-6");
-    // ...and a full re-read from byte 0 agrees, so --full/--rebuild never rewrite it.
     runIndex(db, { adapters: env.adapters, full: true });
     expect(model()).toBe("claude-opus-4-6");
   });
@@ -414,9 +401,11 @@ describe("runIndex", () => {
       assistantMsg("S", "a1", "two", { parentUuid: "u1" }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    // Rewrite shorter with a different message; cursor (> new size) must reset.
-    writeSession(env.projects, "-repo", "S", [userMsg("S", "u3", "fresh")]);
-    // shrink check relies on the new file being smaller than indexed bytes
+    const cursor = db.query("SELECT bytes_indexed FROM index_state").get() as {
+      bytes_indexed: number;
+    };
+    const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u3", "fresh")]);
+    expect(fs.statSync(path).size).toBeLessThan(cursor.bytes_indexed);
     runIndex(db, { adapters: env.adapters });
     const hasU3 = db.query("SELECT 1 FROM messages WHERE uuid='u3'").get();
     expect(hasU3).not.toBeNull();
@@ -437,13 +426,11 @@ describe("runIndex", () => {
   test("--rebuild re-flattens stored text of on-disk messages and syncs FTS (#43)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "the real searchable text")]);
     runIndex(db, { adapters: env.adapters });
-    // Simulate an old flattening generation: stored text differs from a fresh parse.
     db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
     db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
     runIndex(db, { adapters: env.adapters, rebuild: true });
     const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
     expect(row.text).toBe("the real searchable text");
-    // The update trigger kept the FTS index in sync with the refreshed text.
     const hit = db
       .query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'searchable'")
       .get();
@@ -457,7 +444,6 @@ describe("runIndex", () => {
     require("node:fs").rmSync(path);
     const result = runIndex(db, { adapters: env.adapters, rebuild: true });
     expect(result.newMessages).toBe(0);
-    // The deleted session's only copy survives the rebuild.
     const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
     expect(row.text).toBe("precious");
     const avail = db.query("SELECT body_available FROM sessions WHERE session_id='GONE'").get() as {
@@ -470,7 +456,6 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
     ]);
-    // The resume file carries a copy of the original's message (same uuid).
     writeSession(env.projects, "-repo", "RESUME", [
       userMsg("RESUME", "u1", "start", { timestamp: ts(0) }),
       userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
@@ -486,10 +471,10 @@ describe("runIndex", () => {
   test("mid-write final line is deferred, then indexed once complete", () => {
     const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "complete")]);
     const a1 = JSON.stringify(assistantMsg("S", "a1", "later", { parentUuid: "u1" }));
-    appendRaw(path, a1.slice(0, 25)); // partial JSON, no newline
+    appendRaw(path, a1.slice(0, 25));
     runIndex(db, { adapters: env.adapters });
-    expect(countMessages(db)).toBe(1); // only u1
-    appendRaw(path, `${a1.slice(25)}\n`); // complete it
+    expect(countMessages(db)).toBe(1);
+    appendRaw(path, `${a1.slice(25)}\n`);
     runIndex(db, { adapters: env.adapters });
     expect(countMessages(db)).toBe(2);
   });
@@ -508,8 +493,6 @@ describe("runIndex", () => {
   });
 
   test("a digest summarization run is not indexed as a session", () => {
-    // cerebro's own `claude -p "$(cerebro digest prompt)"` run: Claude Code records it
-    // as a session whose first turn is the digest prompt. It must not enter the archive.
     writeSession(env.projects, "-repo", "DIG", [
       userMsg("DIG", "d1", DIGEST_PROMPT),
       assistantMsg("DIG", "d2", "One-line summary. Keywords: foo", { parentUuid: "d1" }),
@@ -518,27 +501,23 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
 
     const result = runIndex(db, { adapters: env.adapters });
-    expect(result.newMessages).toBe(1); // only REAL's message
+    expect(result.newMessages).toBe(1);
     expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
       c: 0,
     });
     expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
       c: 0,
     });
-    // Cursor was recorded, so a second run does not re-scan and re-skip it.
     expect(runIndex(db, { adapters: env.adapters }).filesIndexed).toBe(0);
   });
 
   test("a digest transcript that grows after detection stays excluded (#42)", () => {
-    // The digest run is still writing while the first index detects it. The later
-    // lines must not leak into the archive on the next incremental run.
     const path = writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
     runIndex(db, { adapters: env.adapters });
     appendRaw(
       path,
       `${JSON.stringify(assistantMsg("DIG", "d2", "the summary", { parentUuid: "d1" }))}\n`,
     );
-    // Real run: nothing indexed, no session row appears.
     expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(0);
     expect(db.query("SELECT COUNT(*) AS c FROM messages WHERE session_id='DIG'").get()).toEqual({
       c: 0,
@@ -546,7 +525,6 @@ describe("runIndex", () => {
     expect(db.query("SELECT COUNT(*) AS c FROM sessions WHERE session_id='DIG'").get()).toEqual({
       c: 0,
     });
-    // Dry run agrees: the grown digest file is not a candidate.
     appendRaw(path, `${JSON.stringify(assistantMsg("DIG", "d3", "more", { parentUuid: "d2" }))}\n`);
     const plan = dryRunIndex(db, env.adapters);
     expect(plan.candidateMessages).toBe(0);
@@ -554,8 +532,6 @@ describe("runIndex", () => {
   });
 
   test("a session that merely contains the digest prompt later is still indexed", () => {
-    // The prompt only disqualifies a file when it is the FIRST turn (a digest run).
-    // A genuine session that quotes or discusses it mid-conversation is unaffected.
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "let us discuss the cerebro digest prompt"),
       userMsg("S", "u2", DIGEST_PROMPT, { parentUuid: "u1", timestamp: ts(2) }),
@@ -572,7 +548,7 @@ describe("runIndex", () => {
     runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
     require("node:fs").rmSync(require("node:path").dirname(path), { recursive: true, force: true });
-    runIndex(db, { adapters: env.adapters }); // now zero files discovered
+    runIndex(db, { adapters: env.adapters });
     const row = db.query("SELECT body_available FROM sessions WHERE session_id='S'").get() as {
       body_available: number;
     };
@@ -588,8 +564,6 @@ describe("runIndex", () => {
     require("node:fs").rmSync(pathA);
     runIndex(db, { adapters: env.adapters });
 
-    // The cursor is gone, but the archive is not: for a session whose source is
-    // deleted the rows here are the only copy (invariant #4).
     expect(countIndexState(db)).toBe(1);
     expect(db.query("SELECT source_file FROM index_state").get()).toEqual({
       source_file: expect.stringContaining("B.jsonl"),
@@ -607,7 +581,7 @@ describe("runIndex", () => {
     runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
     require("node:fs").rmSync(require("node:path").dirname(path), { recursive: true, force: true });
-    runIndex(db, { adapters: env.adapters }); // zero files discovered
+    runIndex(db, { adapters: env.adapters });
     expect(countIndexState(db)).toBe(1);
   });
 
@@ -620,9 +594,8 @@ describe("runIndex", () => {
     runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
     runIndex(db, { adapters: env.adapters });
-    expect(countIndexState(db)).toBe(1); // only the keeper
+    expect(countIndexState(db)).toBe(1);
 
-    // Re-read from byte 0; UUID dedup makes that a no-op (invariant #4).
     require("node:fs").writeFileSync(path, raw);
     expect(runIndex(db, { adapters: env.adapters }).newMessages).toBe(0);
     expect(countMessages(db)).toBe(2);
@@ -666,7 +639,6 @@ describe("runIndex", () => {
     const skips: string[] = [];
     const result = runIndex(db, { adapters: [racing], onSkip: (line) => skips.push(line) });
 
-    // The good file made it in; the bad one was skipped, not fatal.
     expect(countMessages(db)).toBe(1);
     expect(result.filesScanned).toBe(2);
     expect(result.filesIndexed).toBe(1);
@@ -697,7 +669,7 @@ describe("dryRunIndex", () => {
     const plan = dryRunIndex(db, env.adapters);
     expect(plan.candidateMessages).toBe(2);
     expect(plan.newFiles).toBe(1);
-    expect(countMessages(db)).toBe(0); // nothing written
+    expect(countMessages(db)).toBe(0);
   });
 
   test("after a real index, a dry run sees nothing to do", () => {
@@ -734,7 +706,6 @@ describe("dryRunIndex", () => {
     ]);
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
 
-    // First dry run: the transcript has no cursor yet, so it is detected by content.
     const first = dryRunIndex(db, env.adapters);
     expect(first.skippedFiles).toBe(1);
 
@@ -752,7 +723,6 @@ describe("dryRunIndex", () => {
   test("a tree with a skipped file reports the same file total as the real run", () => {
     writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
-    // A mid-write file: one complete line, then a half-written one.
     const partial = writeSession(env.projects, "-repo", "MID", [userMsg("MID", "m1", "first")]);
     runIndex(db, { adapters: env.adapters });
     appendRaw(partial, '{"type":"user","uuid":"m2",');
@@ -762,7 +732,6 @@ describe("dryRunIndex", () => {
 
     expect(plan.filesToRead).toBe(real.filesIndexed);
     expect(plan.filesScanned).toBe(real.filesScanned);
-    // Neither the digest transcript nor the mid-write tail counts as work done.
     expect(real.filesIndexed).toBe(0);
     expect(real.relinked).toBe(false);
     expect(

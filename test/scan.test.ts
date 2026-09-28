@@ -98,7 +98,6 @@ describe("planFileRead", () => {
   test("full mode always reads from 0 and never short-circuits as unchanged", () => {
     const plan = planFileRead({ bytes_indexed: 100, mtime_ms: 1000 }, file(100, 1000), true);
     expect(plan).toEqual({ start: 0, status: "grown", shouldRead: true });
-    // full with no prior state is reported as "new" (callers ignore status in full)
     expect(planFileRead(null, file(100), true)).toEqual({
       start: 0,
       status: "new",

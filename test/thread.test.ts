@@ -40,9 +40,6 @@ describe("thread (identity + membership)", () => {
     env.cleanup();
   });
 
-  // A thread: ORIG (root) + RESUME (resume branching from ORIG) + a subagent folded
-  // into RESUME (its sessionId field is the parent, RESUME). Indexing relinks RESUME
-  // to ORIG and folds the subagent's turns into RESUME.
   const seedThread = (): void => {
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
@@ -65,17 +62,16 @@ describe("thread (identity + membership)", () => {
   describe("rootOf", () => {
     test("resolves a root, a resume, and a folded-subagent parent to the thread root", () => {
       seedThread();
-      expect(rootOf(db, "ORIG")).toBe("ORIG"); // root resolves to itself
-      expect(rootOf(db, "RESUME")).toBe("ORIG"); // resume resolves to the root
-      // The subagent folds into its parent session (RESUME), which resolves to ORIG.
+      expect(rootOf(db, "ORIG")).toBe("ORIG");
       expect(rootOf(db, "RESUME")).toBe("ORIG");
+      expect(db.query("SELECT session_id FROM messages WHERE uuid='su1'").get()).toEqual({
+        session_id: "RESUME",
+      });
     });
 
     test("falls back to the given id for an unknown or not-yet-relinked session", () => {
       seedThread();
-      // No session row at all: the id is its own root rather than an error.
       expect(rootOf(db, "does-not-exist")).toBe("does-not-exist");
-      // A row that exists but has not been relinked (NULL root) falls back to itself.
       db.run("INSERT INTO sessions (session_id, root_session_id) VALUES ('UNLINKED', NULL)");
       expect(rootOf(db, "UNLINKED")).toBe("UNLINKED");
     });
@@ -153,7 +149,6 @@ describe("thread (identity + membership)", () => {
         .query("SELECT source_last_ts FROM summaries WHERE root_session_id = 'ORIG'")
         .get() as { source_last_ts: string | null };
       expect(row.source_last_ts).toBeNull();
-      // Still found, under the thread it belongs to.
       expect(searchSummaries(db, "limiter").map((hit) => hit.id)).toEqual(["ORIG"]);
     });
 
@@ -199,7 +194,6 @@ describe("thread (identity + membership)", () => {
       const fromRoot = threadMessages(db, "ORIG");
       const fromResume = threadMessages(db, "RESUME");
 
-      // Any id in the thread yields the same whole-thread transcript.
       expect(fromRoot).toEqual(fromResume);
       expect(fromRoot.map((m) => m.text)).toEqual([
         "start",
@@ -208,7 +202,6 @@ describe("thread (identity + membership)", () => {
         "subagent prompt",
         "subagent reply",
       ]);
-      // The subagent turns are present and flagged as sidechain.
       const sidechain = fromRoot.filter((m) => m.is_sidechain === 1);
       expect(sidechain.map((m) => m.text)).toEqual(["subagent prompt", "subagent reply"]);
     });
@@ -227,7 +220,6 @@ describe("thread (identity + membership)", () => {
         assistantMsg("S", "a1", "answer", { parentUuid: "u2", timestamp: ts(2) }),
       ]);
       runIndex(db, { adapters: env.adapters });
-      // Prose wins over the earlier `<command-` echo despite its later timestamp.
       expect(threadOpeningPrompt(db, "S")).toBe("the real opening question");
     });
 
@@ -298,7 +290,6 @@ describe("thread (identity + membership)", () => {
   describe("messageOrdinal", () => {
     test("matches the position in threadMessages' (ts, id) order across the whole thread", () => {
       seedThread();
-      // Same ordering threadMessages uses; the ordinal of the i-th row must be i+1.
       const rows = db
         .query(
           `SELECT id FROM messages
@@ -312,8 +303,6 @@ describe("thread (identity + membership)", () => {
     });
 
     test("a NULL-ts message sorts first, before every timestamped turn", () => {
-      // Pins the NULLs-first ASC semantics the ordinal shares with threadMessages:
-      // a tolerated missing timestamp must not push the message to the end.
       writeSession(env.projects, "-repo", "S", [
         userMsg("S", "u1", "first with ts", { timestamp: ts(0) }),
         userMsg("S", "u2", "no timestamp", { timestamp: null }),
@@ -336,7 +325,6 @@ describe("thread (identity + membership)", () => {
   describe("countThreads", () => {
     test("counts a root once; its resumes and folded subagents do not inflate it", () => {
       seedThread();
-      // ORIG + RESUME + the subagent folded into RESUME are one logical thread.
       expect(countThreads(db)).toBe(1);
     });
 
@@ -352,8 +340,6 @@ describe("thread (identity + membership)", () => {
     });
   });
 
-  // The step every ranked-hit path runs after dedup, owned in one place so a new
-  // display column is not paid for by every listing that shows one.
   describe("attachThreadIdentity", () => {
     const seedTwo = (): void => {
       writeSession(env.projects, "-repo", "A", [
@@ -392,8 +378,6 @@ describe("thread (identity + membership)", () => {
     });
 
     test("the null policy keeps a hit whose thread has no rollup row", () => {
-      // A summary outlives its sessions rows, so the hit must survive with its
-      // identity emptied rather than be dropped.
       seedTwo();
       db.run("DELETE FROM sessions WHERE session_id = 'B'");
       const rows = attachThreadIdentity(db, [{ id: "B" }]).map(({ identity }) => identity);
@@ -403,8 +387,6 @@ describe("thread (identity + membership)", () => {
     });
 
     test("hydrates once for the whole batch, deduplicating repeated threads", () => {
-      // Two hits in one thread must not mean two rollup queries; the ordering and
-      // the per-hit result stay unchanged.
       seedTwo();
       let rows: { id: string; title: string | null }[] = [];
       const queries = countQueriesMatching(db, "FROM threads WHERE id IN", () => {
@@ -417,10 +399,8 @@ describe("thread (identity + membership)", () => {
       expect(rows[2]!.title).toBe("Alpha thread");
     });
 
-    // The JSON these commands print is consumed by hooks and agents, so the key
-    // order is part of the contract, not an accident of how the row is built.
-    // threadIdentity is the only thing that decides it for the two spreading
-    // callers, which is why the order is asserted rather than described.
+    // The JSON these commands print is consumed by hooks and agents, so the key order is part of
+    // the contract, not an accident of how the row is built.
     test("the display fields land in one order across every listing", () => {
       seedTwo();
       writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");

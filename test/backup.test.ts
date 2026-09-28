@@ -27,7 +27,6 @@ describe("runBackup", () => {
     expect(result.path).toBe(join(dir, "backups", "archive-20260702-101530.sqlite"));
     expect(result.bytes).toBeGreaterThan(0);
     expect(result.pruned).toEqual([]);
-    // The snapshot is a complete, standalone database.
     const copy = new Database(result.path, { readonly: true });
     expect(copy.query("SELECT text FROM messages WHERE uuid='u1'").get()).toEqual({
       text: "precious",
@@ -46,7 +45,6 @@ describe("runBackup", () => {
   test("--keep prunes the oldest default-named backups only", () => {
     runBackup(db, dbPath, {}, new Date("2026-07-01T00:00:00Z"));
     runBackup(db, dbPath, {}, new Date("2026-07-02T00:00:00Z"));
-    // An unrelated file in the backups dir must never be pruned.
     const stray = join(dir, "backups", "notes.txt");
     fs.writeFileSync(stray, "keep me");
     const result = runBackup(db, dbPath, { keep: 2 }, new Date("2026-07-03T00:00:00Z"));
