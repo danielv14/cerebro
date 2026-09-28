@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { resolveSession } from "../src/commands/helpers.ts";
+import { sessionsListing } from "../src/commands/sessions.ts";
 import { openDb } from "../src/db.ts";
 import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { toMatchQuery } from "../src/fts.ts";
@@ -716,18 +717,70 @@ describe("query (populated archive)", () => {
     expect(search(db, "branchy", 10, { branch: "myXapp" }).length).toBe(1);
   });
 
-  test("stats excludes subagent-only stubs from deleted sources (#45)", () => {
-    // A parent stub created purely from a subagent file: source_file is NULL,
-    // body_available becomes 0, but nothing was ever deleted.
+  test("sessions and stats agree that a subagent-only stub is not a deleted source (#45, #220)", () => {
+    // A parent stub created purely from a subagent file: source_file is NULL, but
+    // nothing was ever deleted.
     writeSubagent(env.projects, "-repo", "STUB", "agent-1", [
-      userMsg("STUB", "sa1", "sub work", { isSidechain: true }),
+      userMsg("STUB", "sa1", "sub work", { isSidechain: true, timestamp: ts(1) }),
     ]);
-    const path = writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "hi")]);
+    const path = writeSession(env.projects, "-repo", "REAL", [
+      userMsg("REAL", "u1", "hi", { timestamp: ts(0) }),
+    ]);
     runIndex(db, { adapters: env.adapters });
+    const deletedInListing = (): string[] =>
+      sessionsListing(listThreads(db))
+        .filter((line) => line.includes("[body deleted]"))
+        .map((line) => line.slice(0, 4));
     expect(stats(db).deletedSources).toBe(0);
+    expect(deletedInListing()).toEqual([]);
+
     fs.rmSync(path);
     runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(1);
+    expect(deletedInListing()).toEqual(["REAL"]);
+  });
+
+  test("search and sessions select the same threads for one --project and --branch (#218)", () => {
+    writeSession(env.projects, "-a", "A_MAIN", [
+      userMsg("A_MAIN", "u1", "widget work", { cwd: "/code/alpha", timestamp: ts(0) }),
+    ]);
+    writeSession(env.projects, "-a", "A_RESUME", [
+      userMsg("A_RESUME", "u2", "widget more", {
+        cwd: "/code/alpha",
+        gitBranch: "feat/w",
+        parentUuid: "u1",
+        timestamp: ts(1),
+      }),
+    ]);
+    writeSession(env.projects, "-b", "B_FEAT", [
+      userMsg("B_FEAT", "u3", "widget beta", {
+        cwd: "/code/beta",
+        gitBranch: "feat/w",
+        timestamp: ts(2),
+      }),
+    ]);
+    runIndex(db, { adapters: env.adapters });
+
+    const searched = (scope: { project?: string; branch?: string }): string[] =>
+      [
+        ...new Set(
+          search(db, "widget", 20, { all: true, ...scope }).map((hit) =>
+            rootOf(db, hit.session_id),
+          ),
+        ),
+      ].sort();
+    const listed = (scope: { project?: string; branch?: string }): string[] =>
+      listThreads(db, scope)
+        .map((thread) => thread.id)
+        .sort();
+
+    for (const project of [undefined, "alpha", "beta", "code", "nope"]) {
+      for (const branch of [undefined, "feat/w", "main", "nope"]) {
+        const scope = { project, branch };
+        expect({ scope, roots: searched(scope) }).toEqual({ scope, roots: listed(scope) });
+      }
+    }
+    expect(listed({ project: "alpha", branch: "feat" })).toEqual(["A_MAIN"]);
   });
 
   test("stats counts threads, sessions, messages, and deleted sources", () => {

@@ -95,7 +95,7 @@ export const reattachSummaries = (db: Database): void => {
       `SELECT su.root_session_id AS old, s.root_session_id AS root, su.summarized_at
        FROM summaries su
        JOIN sessions s ON s.session_id = su.root_session_id
-       WHERE s.root_session_id IS NOT NULL AND s.root_session_id <> su.root_session_id
+       WHERE s.root_session_id <> su.root_session_id
        ORDER BY su.summarized_at DESC`,
     )
     .all() as { old: string; root: string; summarized_at: string }[];
@@ -115,8 +115,7 @@ export const reattachSummaries = (db: Database): void => {
   }
   db.run(
     `DELETE FROM digest_failures WHERE root_session_id IN (
-       SELECT session_id FROM sessions
-       WHERE root_session_id IS NOT NULL AND root_session_id <> session_id)`,
+       SELECT session_id FROM sessions WHERE root_session_id <> session_id)`,
   );
 };
 

@@ -66,7 +66,15 @@ const capToolText = (rendered: string): string =>
     ? rendered
     : `${rendered.slice(0, TOOL_TEXT_CAP)} [+${rendered.length - TOOL_TEXT_CAP} chars truncated]`;
 
-export const toolUseTag = (name: string): string => `[tool_use:${name}]`;
+// Every tool block opens with this, and the source-agnostic queries (search
+// --prose, skills, the opening prompt) tell tool output from prose by it alone.
+const TOOL_TAG_OPEN = "[tool_";
+
+export const toolUseTag = (name: string): string => `${TOOL_TAG_OPEN}use:${name}]`;
+
+// `column` is a codebase literal, never user input.
+export const isToolText = (column: string): string =>
+  `${column} LIKE '${TOOL_TAG_OPEN.replace("_", "\\_")}%' ESCAPE '\\'`;
 
 export const flattenContent = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -94,9 +102,9 @@ export const flattenContent = (content: unknown): string => {
         if (b.is_error) {
           // Deliberately uncapped: errors are tiny and a truncated stack trace
           // is useless.
-          parts.push(`[tool_result:error] ${inner}`.trimEnd());
+          parts.push(`${TOOL_TAG_OPEN}result:error] ${inner}`.trimEnd());
         } else {
-          parts.push(capToolText(`[tool_result] ${inner}`.trimEnd()));
+          parts.push(capToolText(`${TOOL_TAG_OPEN}result] ${inner}`.trimEnd()));
         }
         break;
       }
