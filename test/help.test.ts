@@ -24,9 +24,29 @@ const mentioned = (help: string): string[] => {
   return [...out];
 };
 
+// A command's usage block: its `cerebro <label>` line plus the wrapped lines under
+// it, up to the next invocation or blank line.
+const usageBlock = (label: string): string => {
+  const lines = HELP.split("\n");
+  const start = lines.findIndex((line) => new RegExp(`^\\s*cerebro ${label}( |$)`).test(line));
+  if (start === -1) return "";
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.trim() === "" || /^\s*cerebro /.test(line));
+  return [lines[start], ...rest.slice(0, end === -1 ? rest.length : end)].join("\n");
+};
+
 describe("HELP", () => {
   test("documents every command the dispatcher knows", () => {
     expect(labels.filter((label) => !HELP.includes(`cerebro ${label}`))).toEqual([]);
+  });
+
+  test("every declared flag appears in its command's usage block", () => {
+    const missing = eachCommand(commands).flatMap(([label, command]) =>
+      Object.keys(command.options)
+        .filter((option) => !usageBlock(label).includes(`--${option}`))
+        .map((option) => `${label} --${option}`),
+    );
+    expect(missing).toEqual([]);
   });
 
   test("mentions no command the dispatcher does not know", () => {
