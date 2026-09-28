@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { escapeLike } from "../like.ts";
 import { type Classified, parseLine } from "./adapter.ts";
 
 // Only `type`, `uuid` and `message` are load-bearing. The optional scalars stay
@@ -74,7 +75,7 @@ export const toolUseTag = (name: string): string => `${TOOL_TAG_OPEN}use:${name}
 
 // `column` is a codebase literal, never user input.
 export const isToolText = (column: string): string =>
-  `${column} LIKE '${TOOL_TAG_OPEN.replace("_", "\\_")}%' ESCAPE '\\'`;
+  `${column} LIKE '${escapeLike(TOOL_TAG_OPEN)}%' ESCAPE '\\'`;
 
 export const flattenContent = (content: unknown): string => {
   if (typeof content === "string") return content;

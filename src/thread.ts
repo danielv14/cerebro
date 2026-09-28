@@ -216,9 +216,9 @@ const typedWords = (text: string): string => {
   return COMMAND_NAME.exec(text)?.[1]?.trim() || text;
 };
 
-// Three tiers, worst last: a skill body and flattened tool output are injected and
-// can never be the user's words, while a slash-command turn still carries them in
-// its arguments.
+// Three tiers, worst last: a skill body, flattened tool output and an interrupt
+// marker are injected and can never be the user's words, while a slash-command
+// turn still carries them in its arguments.
 export const threadOpeningPrompt = (db: Database, root: string): string | null => {
   const row = db
     .query(
@@ -227,7 +227,8 @@ export const threadOpeningPrompt = (db: Database, root: string): string | null =
          AND role = 'user' AND is_sidechain = 0
        ORDER BY (CASE
                    WHEN ${isToolText("text")}
-                     OR text LIKE 'Base directory for this skill:%' THEN 2
+                     OR text LIKE 'Base directory for this skill:%'
+                     OR text LIKE '[Request interrupted%' THEN 2
                    WHEN text LIKE '<command-%' THEN 1
                    ELSE 0 END), ts, id
        LIMIT 1`,

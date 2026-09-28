@@ -28,7 +28,12 @@ export const stats = (db: Database): Stats => {
     threads: countThreads(db),
     sessions: count(db, "SELECT COUNT(*) AS c FROM sessions"),
     messages: count(db, "SELECT COUNT(*) AS c FROM messages"),
-    deletedSources: count(db, "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0"),
+    // The source_file guard is for a hook binary built before #220, which still
+    // flags a subagent-only stub body_available = 0 until it is redeployed.
+    deletedSources: count(
+      db,
+      "SELECT COUNT(*) AS c FROM sessions WHERE body_available = 0 AND source_file IS NOT NULL",
+    ),
     firstTs: span.first,
     lastTs: span.last,
     topProjects: db

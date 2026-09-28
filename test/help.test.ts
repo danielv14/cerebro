@@ -24,8 +24,6 @@ const mentioned = (help: string): string[] => {
   return [...out];
 };
 
-// A command's usage block: its `cerebro <label>` line plus the wrapped lines under
-// it, up to the next invocation or blank line.
 const usageBlock = (label: string): string => {
   const lines = HELP.split("\n");
   const start = lines.findIndex((line) => new RegExp(`^\\s*cerebro ${label}( |$)`).test(line));

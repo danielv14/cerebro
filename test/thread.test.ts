@@ -274,8 +274,13 @@ describe("thread (identity + membership)", () => {
         userMsg("W", "u1", "[WIP] fix the thing", { timestamp: ts(0) }),
         userMsg("W", "u2", "and the other thing", { timestamp: ts(1) }),
       ]);
+      writeSession(env.projects, "-repo", "I", [
+        userMsg("I", "i1", "[Request interrupted by user]", { timestamp: ts(0) }),
+        userMsg("I", "i2", "<command-name>/standup</command-name>", { timestamp: ts(1) }),
+      ]);
       runIndex(db, { adapters: env.adapters });
       expect(threadOpeningPrompt(db, "W")).toBe("[WIP] fix the thing");
+      expect(threadOpeningPrompt(db, "I")).toBe("/standup");
     });
 
     test("returns null for a thread with no user turn", () => {
