@@ -238,6 +238,9 @@ describe("classify", () => {
     };
     expect(queued("run npm uninstall first")).toMatchObject(expected);
     expect(queued([{ type: "text", text: "run npm uninstall first" }])).toMatchObject(expected);
+    expect(
+      queued([{ type: "image" }, { type: "text", text: "run npm uninstall first" }]),
+    ).toMatchObject({ ...expected, text: "[image]\nrun npm uninstall first" });
   });
 
   test("skips queued commands that are not user prompts", () => {

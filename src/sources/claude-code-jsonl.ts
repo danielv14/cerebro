@@ -21,8 +21,8 @@ const EventSchema = v.variant("type", [
     message: v.object({ content: v.unknown(), model: v.optional(v.unknown()) }),
     ...MessageFieldsSchema.entries,
   }),
-  // What the user types while the agent is busy. The other commandModes are
-  // task-notifications and coordinator instructions to a subagent, not user text.
+  // A prompt queued while the agent is busy, usually typed by the user. The other
+  // commandModes are task-notifications and coordinator instructions to a subagent.
   v.object({
     type: v.literal("attachment"),
     attachment: v.object({

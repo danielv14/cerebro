@@ -140,8 +140,8 @@ These are load-bearing. Violating one silently corrupts the archive.
 5. **Filter to `user` / `assistant` before dedup.** `classify` drops
    `file-history-snapshot`, `system`, etc. Some reuse other messages' UUIDs and
    would cause false collisions if inserted. The one non-message event let through
-   is a `queued_command` attachment with `commandMode: "prompt"` (what the user
-   types while the agent is busy), indexed as `user`; its UUIDs are its own.
+   is a `queued_command` attachment with `commandMode: "prompt"` (a prompt queued
+   while the agent is busy), indexed as `user`; its UUIDs are its own.
 6. **Attribute messages to the file's owning session id**, not the line's. For a
    top-level file that is its filename UUID; for a subagent file it is the parent
    session (the enclosing `<uuid>` directory), so sidechains fold into the parent.
