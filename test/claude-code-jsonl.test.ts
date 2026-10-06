@@ -217,6 +217,55 @@ describe("classify", () => {
     expect(classify({ type: "attachment", uuid: "x1" })).toEqual({ kind: "skip" });
   });
 
+  test("keeps a message the user queued while the agent was busy, in both prompt shapes", () => {
+    const queued = (prompt: unknown) =>
+      classify({
+        type: "attachment",
+        uuid: "q1",
+        sessionId: "S",
+        timestamp: "2026-09-29T10:41:03.812Z",
+        isSidechain: false,
+        attachment: { type: "queued_command", commandMode: "prompt", prompt },
+      });
+    const expected = {
+      kind: "message",
+      uuid: "q1",
+      sessionId: "S",
+      role: "user",
+      text: "run npm uninstall first",
+      ts: "2026-09-29T10:41:03.812Z",
+      model: null,
+    };
+    expect(queued("run npm uninstall first")).toMatchObject(expected);
+    expect(queued([{ type: "text", text: "run npm uninstall first" }])).toMatchObject(expected);
+  });
+
+  test("skips queued commands that are not user prompts", () => {
+    expect(
+      classify({
+        type: "attachment",
+        uuid: "q2",
+        attachment: {
+          type: "queued_command",
+          commandMode: "task-notification",
+          prompt: "<task-notification>done</task-notification>",
+        },
+      }),
+    ).toEqual({ kind: "skip" });
+    expect(
+      classify({
+        type: "attachment",
+        uuid: "q3",
+        isSidechain: true,
+        attachment: {
+          type: "queued_command",
+          prompt: "Instruction from the coordinator",
+          origin: { kind: "coordinator" },
+        },
+      }),
+    ).toEqual({ kind: "skip" });
+  });
+
   test("skips a non-object", () => {
     expect(classify(null)).toEqual({ kind: "skip" });
     expect(classify("string")).toEqual({ kind: "skip" });

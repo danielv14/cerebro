@@ -2,20 +2,35 @@ import * as v from "valibot";
 import { escapeLike } from "../like.ts";
 import { type Classified, parseLine } from "./adapter.ts";
 
-// Only `type`, `uuid` and `message` are load-bearing. The optional scalars stay
+// Only `type`, `uuid` and the content field are load-bearing. The optional scalars stay
 // `unknown` (coerced below) so a changed field type in an evolving log defaults
 // that field instead of failing the variant and dropping the message.
+const MessageFieldsSchema = v.object({
+  uuid: v.string(),
+  parentUuid: v.optional(v.unknown()),
+  sessionId: v.optional(v.unknown()),
+  timestamp: v.optional(v.unknown()),
+  cwd: v.optional(v.unknown()),
+  gitBranch: v.optional(v.unknown()),
+  isSidechain: v.optional(v.unknown()),
+});
+
 const EventSchema = v.variant("type", [
   v.object({
     type: v.picklist(["user", "assistant"]),
-    uuid: v.string(),
     message: v.object({ content: v.unknown(), model: v.optional(v.unknown()) }),
-    parentUuid: v.optional(v.unknown()),
-    sessionId: v.optional(v.unknown()),
-    timestamp: v.optional(v.unknown()),
-    cwd: v.optional(v.unknown()),
-    gitBranch: v.optional(v.unknown()),
-    isSidechain: v.optional(v.unknown()),
+    ...MessageFieldsSchema.entries,
+  }),
+  // What the user types while the agent is busy. The other commandModes are
+  // task-notifications and coordinator instructions to a subagent, not user text.
+  v.object({
+    type: v.literal("attachment"),
+    attachment: v.object({
+      type: v.literal("queued_command"),
+      commandMode: v.literal("prompt"),
+      prompt: v.unknown(),
+    }),
+    ...MessageFieldsSchema.entries,
   }),
   v.object({
     type: v.literal("custom-title"),
@@ -120,6 +135,17 @@ export const flattenContent = (content: unknown): string => {
 const asStringOrNull = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 
+const messageEnvelope = (event: v.InferOutput<typeof MessageFieldsSchema>) => ({
+  kind: "message" as const,
+  uuid: event.uuid,
+  parentUuid: asStringOrNull(event.parentUuid),
+  sessionId: asStringOrNull(event.sessionId),
+  ts: asStringOrNull(event.timestamp),
+  cwd: asStringOrNull(event.cwd),
+  gitBranch: asStringOrNull(event.gitBranch),
+  isSidechain: event.isSidechain === true,
+});
+
 // Dropping non-message events before dedup is essential (invariant #5):
 // file-history-snapshot and friends reuse other messages' UUIDs.
 export const classify = (raw: unknown): Classified => {
@@ -131,19 +157,19 @@ export const classify = (raw: unknown): Classified => {
     case "user":
     case "assistant":
       return {
-        kind: "message",
-        uuid: event.uuid,
-        parentUuid: asStringOrNull(event.parentUuid),
-        sessionId: asStringOrNull(event.sessionId),
+        ...messageEnvelope(event),
         role: event.type,
         text: flattenContent(event.message.content),
-        ts: asStringOrNull(event.timestamp),
-        cwd: asStringOrNull(event.cwd),
-        gitBranch: asStringOrNull(event.gitBranch),
-        isSidechain: event.isSidechain === true,
         // "<synthetic>" is Claude Code's stamp on interrupted/API-error turns; no
         // model served those, so they must not become the session's model.
         model: event.message.model === "<synthetic>" ? null : asStringOrNull(event.message.model),
+      };
+    case "attachment":
+      return {
+        ...messageEnvelope(event),
+        role: "user",
+        text: flattenContent(event.attachment.prompt),
+        model: null,
       };
     case "custom-title":
       return event.customTitle
