@@ -7,8 +7,8 @@ and [scheduling.md](scheduling.md) for the scheduled catch-up job.
 
 cerebro picks the summary model by transcript size. Small threads (the common
 case) use `claude-haiku-5-5`: summarizing is mechanical compress-and-tag work, and
-Haiku is the cheapest model at $0.10/$0.50 per million tokens up to 100k tokens of
-prompt. Threads above the threshold escalate to `claude-sonnet-5-5` ($2/$10) in a
+Haiku is the cheapest model: $0.10/$0.50 per million tokens up to 100k tokens of
+prompt, $0.50/$2.50 above. Threads above the threshold escalate to `claude-sonnet-5-5` ($2/$10) in a
 single call, so a 400-600k-token thread is summarized whole by the stronger model
 rather than cut short or summarized in pieces.
 
@@ -28,15 +28,17 @@ budget was derived in.
 
 The cap comes from a token budget, not the raw window size. `claude -p` adds its
 tool definitions and CLAUDE.md files to every call (~40k tokens measured on Claude
-Code 2.1.294), so the cap reserves 60k tokens of the 1M window and
-treats the rest (about 1.9M bytes at 2 bytes per token; the 5.x tokenizer
-measured 2.1-2.4 on real transcripts) as the transcript budget.
+Code 2.1.294) and needs room for the response, so the cap reserves 100k tokens of
+the 1M window. The rest is the transcript budget: about 1.8M bytes at 2 bytes per
+token, where the 5.x tokenizer measured 2.1-2.4 on real transcripts.
 Override via `CEREBRO_DIGEST_MODEL` (small model, default `claude-haiku-5-5`),
 `CEREBRO_DIGEST_MODEL_LARGE` (large model, default `claude-sonnet-5-5`), and
 `CEREBRO_DIGEST_HAIKU_MAX_CHARS` (escalation threshold in bytes, default 330000)
 in the hook's environment. A large-model override with a 200k window, such as
 plain `claude-sonnet-4-6`, needs the `[1m]` suffix to get the 1M variant, or a
-giant thread fails with "Prompt is too long".
+giant thread fails with "Prompt is too long". A small-model override with a 200k
+window, such as `claude-haiku-4-5`, also needs a lower threshold: 330000 bytes
+can reach 165k tokens, which with the overhead overflows 200k.
 
 Each model call also carries a timeout: a hung `claude -p` would otherwise hang
 `digest run` (and every drain behind it) forever. After

@@ -6,6 +6,7 @@ import {
   DIGEST_PROMPT,
   type DigestModelConfig,
   pickDigestModel,
+  wrapTranscript,
 } from "./prompt.ts";
 import { countStaleThreads, staleThreads } from "./stale.ts";
 import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
@@ -27,13 +28,8 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
-// claude -p puts an argv prompt ahead of stdin. Behind a long transcript that
-// ends mid-conversation, the 5.x models then answer its last turn instead of
-// summarizing, so the prompt goes in as the system prompt and the transcript is
-// fenced off with the request after it.
-const wrapTranscript = (input: string): string =>
-  `<transcript>\n${input}\n</transcript>\n\nWrite the summary of the transcript above, following the instructions in the system prompt.\n`;
-
+// An argv prompt lands ahead of stdin, and behind a long transcript the 5.x
+// models answer its last turn instead; see docs/digest.md.
 // --no-session-persistence keeps Claude Code from writing this one-shot into
 // ~/.claude/projects, where the indexer would pick it up as a bogus session.
 export const createClaudeSummarizer =

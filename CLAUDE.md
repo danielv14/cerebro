@@ -112,7 +112,7 @@ timeout and binary path travel down as arguments.
 
 When you touch `src/digest`, check `DEFAULT_DIGEST_MODELS` against the current
 Haiku and Sonnet. A model change is more than an id swap: verify it with one large
-and one small real thread through `digest run` on a copy of the archive (see #227,
+and one small real thread through `digest run` against a copy of the archive in a throwaway `CEREBRO_DB` (see #227,
 where the window, the tokenizer and prompt delivery all moved with the ids).
 
 ## What earns a new command, flag or doc page

@@ -26,21 +26,22 @@ Write in the session's dominant language (Swedish or English). Be terse. Output 
 // so the cap keeps headroom instead of overflowing on a dense thread.
 const BYTES_PER_TOKEN = 2;
 
-// claude -p adds ~40k tokens of measured fixed overhead (tools, CLAUDE.md);
-// without this reserve a thread that fits on size still fails with
-// "Prompt is too long".
-const RESERVED_CONTEXT_TOKENS = 60_000;
+// claude -p adds ~40k tokens of measured overhead (tools, CLAUDE.md) and needs
+// response room; without this reserve a thread that fits on size still fails
+// with "Prompt is too long".
+const RESERVED_CONTEXT_TOKENS = 100_000;
 
 const MODEL_CONTEXT_TOKENS = 1_000_000;
 
 export const DIGEST_INPUT_MAX_BYTES =
   (MODEL_CONTEXT_TOKENS - RESERVED_CONTEXT_TOKENS) * BYTES_PER_TOKEN;
 
-// Both default models take the full 1M window, so this is a quality line, not a
-// context limit: the routing the old 200k Haiku forced. Haiku 5.5 was measured
-// fine near it, but on a ~1M-token thread it answered the transcript instead of
-// summarizing it.
+// A quality line, not a context limit: both default models take 1M, but Haiku
+// 5.5 answered a ~1M-token transcript instead of summarizing it.
 const DEFAULT_ESCALATION_BYTES = 330_000;
+
+export const wrapTranscript = (transcript: string): string =>
+  `<transcript>\n${transcript}\n</transcript>\n\nWrite the summary of the transcript above, following the instructions in the system prompt.\n`;
 
 export interface DigestModelConfig {
   small: string;
