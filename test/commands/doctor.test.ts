@@ -225,6 +225,7 @@ describe("runDoctor", () => {
         resolveGit: () => ({ root: null, remote: null }),
         adapters: env.adapters,
         progress: () => {},
+        warn: () => {},
       })
       .lines!.find((line) => line.startsWith("Threads:"));
     expect(threadsLine).toBe("Threads:          1 (1 summarized, 1 stale)");

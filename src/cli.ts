@@ -202,6 +202,7 @@ export const runCli = (
     resolveGit,
     adapters,
     progress: io.log,
+    warn: io.error,
   };
 
   const emit = (output: CommandOutput): void => {

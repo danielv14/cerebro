@@ -14,6 +14,7 @@ export interface CommandContext<A> {
   // Emits NOW, before the command returns: digest drain makes model calls over
   // minutes, and buffering would make a hung call look like a slow one.
   progress: (line: string) => void;
+  warn: (line: string) => void;
 }
 
 export interface CommandInput<A> extends CommandContext<A> {
