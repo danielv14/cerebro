@@ -40,7 +40,7 @@ export interface HitFilters extends ThreadScope {
   prose?: boolean;
 }
 
-const hitPredicates = (filters: HitFilters): { sql: string; params: (string | number)[] }[] => {
+const hitPredicates = (filters: HitFilters): { where: string; params: (string | number)[] } => {
   const out: { sql: string; params: (string | number)[] }[] = threadScope(filters, {
     root: "s.root_session_id",
     projectPath: "t.project_path",
@@ -52,7 +52,10 @@ const hitPredicates = (filters: HitFilters): { sql: string; params: (string | nu
     // on purpose.
     out.push({ sql: `NOT ${isToolText("m.text")}`, params: [] });
   }
-  return out;
+  return {
+    where: out.map((filter) => `AND ${filter.sql}`).join(" "),
+    params: out.flatMap((filter) => filter.params),
+  };
 };
 
 export interface RankedHitWindow {
@@ -86,17 +89,12 @@ export const rankedMessageHits = (
     SELECT ${messageHitColumns}
     ${messageHitJoins}
     WHERE messages_fts MATCH ?
-    ${filters.map((filter) => `AND ${filter.sql}`).join("\n    ")}
+    ${filters.where}
     ORDER BY bm25(messages_fts)
     LIMIT ?`;
   return db
     .query(sql)
-    .all(
-      window.snippetTokens,
-      match,
-      ...filters.flatMap((filter) => filter.params),
-      window.limit,
-    ) as RankedMessageHit[];
+    .all(window.snippetTokens, match, ...filters.params, window.limit) as RankedMessageHit[];
 };
 
 // bm25() cannot be called inside a window function, so the CTE materializes it
@@ -114,7 +112,7 @@ export const rankedMessageHitsPerThread = (
       SELECT m.id AS message_id, s.root_session_id AS id, bm25(messages_fts) AS score
       ${messageHitJoins}
       WHERE messages_fts MATCH ?
-      ${filters.map((filter) => `AND ${filter.sql}`).join("\n      ")}
+      ${filters.where}
     ),
     ranked AS (
       SELECT message_id, score,
@@ -125,7 +123,7 @@ export const rankedMessageHitsPerThread = (
     WHERE rn = 1
     ORDER BY score, message_id
     LIMIT ?`)
-    .all(match, ...filters.flatMap((filter) => filter.params), window.limit) as {
+    .all(match, ...filters.params, window.limit) as {
     message_id: number;
   }[];
   if (best.length === 0) return [];
@@ -139,51 +137,7 @@ export const rankedMessageHitsPerThread = (
     AND messages_fts.rowid IN (${ids.map(() => "?").join(", ")})`)
     .all(window.snippetTokens, match, ...ids) as RankedMessageHit[];
   const byId = new Map(hits.map((hit) => [hit.message_id, hit]));
-  return ids.map((id) => byId.get(id)!);
-};
-
-const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
-  const byThread = new Map<string, { hit: T; rank: number }>();
-  hits.forEach((hit) => {
-    const hitRank = rank(hit);
-    const existing = byThread.get(hit.id);
-    if (!existing || hitRank < existing.rank) byThread.set(hit.id, { hit, rank: hitRank });
-  });
-  return [...byThread.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
-};
-
-const WINDOW_GROWTH = 4;
-const WINDOW_ROUNDS = 3;
-
-export interface DedupedWindow<T> {
-  fetch: (size: number) => T[];
-  targetThreads: number;
-  minRows: number;
-  rowsPerThread: number;
-  grow?: boolean;
-  rank: (hit: T) => number;
-}
-
-export const dedupedHitWindow = <T extends { id: string }>({
-  fetch,
-  targetThreads,
-  minRows,
-  rowsPerThread,
-  grow = true,
-  rank,
-}: DedupedWindow<T>): T[] => {
-  const rounds = grow ? WINDOW_ROUNDS : 0;
-  let size = Math.max(minRows, targetThreads * rowsPerThread);
-  let rows = fetch(size);
-  let kept = bestHitPerThread(rows, rank);
-  for (
-    let round = 0;
-    round < rounds && kept.length < targetThreads && rows.length >= size;
-    round++
-  ) {
-    size *= WINDOW_GROWTH;
-    rows = fetch(size);
-    kept = bestHitPerThread(rows, rank);
-  }
-  return kept;
+  // An index --rebuild between the two queries can change a kept row so it no
+  // longer matches.
+  return ids.flatMap((id) => byId.get(id) ?? []);
 };

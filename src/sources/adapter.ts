@@ -27,9 +27,14 @@ export type Classified =
       model: string | null;
     }
   | { kind: "title"; sessionId: string | null; title: string; priority: number }
-  // For doctor's inventory of skipped lines: lineKind names the variant, payload
-  // is the line without the envelope fields every line repeats.
-  | { kind: "skip"; lineKind: string; payload: unknown };
+  | { kind: "skip"; raw: unknown };
+
+export interface SkippedLine {
+  // The variant, as finely as the source can tell them apart.
+  lineKind: string;
+  // The line minus the envelope fields every line repeats.
+  payload: unknown;
+}
 
 export interface SourceAdapter {
   // Never rename an id once sessions carry it: the migration backfill only heals
@@ -39,6 +44,8 @@ export interface SourceAdapter {
   // A missing or unreadable root returns [] rather than throwing.
   discover: () => SessionFile[];
   classifyLines: (lines: string[]) => Generator<Classified>;
+  // Only doctor --full calls this, so the indexer never pays for it.
+  describeSkipped: (raw: unknown) => SkippedLine;
 }
 
 // `undefined` (never a valid JSON value) on parse failure, so a malformed line is

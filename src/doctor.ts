@@ -219,9 +219,10 @@ const skippedLineKinds = (adapters: SourceAdapter[]): SkippedKind[] => {
       }
       for (const line of adapter.classifyLines(content.split("\n"))) {
         if (line.kind !== "skip") continue;
-        const text = longestString(line.payload);
-        const seen = byKind.get(line.lineKind);
-        if (!seen) byKind.set(line.lineKind, { count: 1, text });
+        const { lineKind, payload } = adapter.describeSkipped(line.raw);
+        const text = longestString(payload);
+        const seen = byKind.get(lineKind);
+        if (!seen) byKind.set(lineKind, { count: 1, text });
         else {
           seen.count++;
           if (text.length > seen.text.length) seen.text = text;

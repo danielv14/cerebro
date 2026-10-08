@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseLine } from "../src/sources/adapter.ts";
-import { classify, flattenContent } from "../src/sources/claude-code-jsonl.ts";
+import { classify, describeSkipped, flattenContent } from "../src/sources/claude-code-jsonl.ts";
 
 describe("parseLine", () => {
   test("parses valid JSON object", () => {
@@ -271,8 +271,8 @@ describe("classify", () => {
 
   test("names a skipped line's kind by its type, refined by the field that tells variants apart", () => {
     const kindOf = (raw: unknown) => {
-      const classified = classify(raw);
-      return classified.kind === "skip" ? classified.lineKind : classified.kind;
+      expect(classify(raw).kind).toBe("skip");
+      return describeSkipped(raw).lineKind;
     };
     expect(kindOf({ type: "file-history-snapshot", uuid: "u1" })).toBe("file-history-snapshot");
     expect(kindOf({ type: "system", subtype: "turn_duration" })).toBe("system:turn_duration");

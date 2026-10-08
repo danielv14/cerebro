@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { escapeLike } from "../like.ts";
-import { type Classified, parseLine } from "./adapter.ts";
+import { type Classified, parseLine, type SkippedLine } from "./adapter.ts";
 
 // Only `type`, `uuid` and the content field are load-bearing. The optional scalars stay
 // `unknown` (coerced below) so a changed field type in an evolving log defaults
@@ -155,8 +155,7 @@ const LineKindSchema = v.object({
   ),
 });
 
-// The line's type, refined by the field that tells its variants apart.
-export const lineKind = (raw: unknown): string => {
+const lineKind = (raw: unknown): string => {
   const parsed = v.safeParse(LineKindSchema, raw);
   if (!parsed.success) return "(not an object)";
   const { type, subtype, attachment } = parsed.output;
@@ -192,11 +191,12 @@ const withoutEnvelope = (raw: unknown): unknown =>
     ? Object.fromEntries(Object.entries(raw).filter(([key]) => !ENVELOPE_KEYS.has(key)))
     : raw;
 
-const skip = (raw: unknown): Classified => ({
-  kind: "skip",
+export const describeSkipped = (raw: unknown): SkippedLine => ({
   lineKind: lineKind(raw),
   payload: withoutEnvelope(raw),
 });
+
+const skip = (raw: unknown): Classified => ({ kind: "skip", raw });
 
 // Dropping non-message events before dedup is essential (invariant #5):
 // file-history-snapshot and friends reuse other messages' UUIDs.

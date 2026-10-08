@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
-import { dedupedHitWindow } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { search } from "../src/search.ts";
@@ -13,120 +12,6 @@ import {
   userMsg,
   writeSession,
 } from "./fixtures.ts";
-
-describe("dedupedHitWindow", () => {
-  const fetcher = (rows: { id: string }[], asked: number[]) => (size: number) => {
-    asked.push(size);
-    return rows.slice(0, size);
-  };
-
-  const byOrder = (): ((hit: { id: string }) => number) => {
-    let order = 0;
-    return () => order++;
-  };
-
-  const chatty = (roots: number, perRoot: number): { id: string }[] =>
-    Array.from({ length: roots }, (_, root) =>
-      Array.from({ length: perRoot }, () => ({ id: `R${root}` })),
-    ).flat();
-
-  test("sizes the first fetch off the target root count, floored at minRows", () => {
-    const asked: number[] = [];
-    const spec = {
-      fetch: fetcher(chatty(40, 1), asked),
-      minRows: 80,
-      rowsPerThread: 20,
-      rank: byOrder(),
-    };
-    dedupedHitWindow({ ...spec, targetThreads: 3 });
-    dedupedHitWindow({ ...spec, targetThreads: 20 });
-    // 3 * 20 is under the floor, 20 * 20 is over it.
-    expect(asked).toEqual([80, 400]);
-  });
-
-  test("keeps the lowest-ranked hit per root and returns them best-first", () => {
-    const rows = [
-      { id: "A", tag: "a-worse", rank: 5 },
-      { id: "B", tag: "b", rank: 3 },
-      { id: "A", tag: "a-best", rank: 1 },
-    ];
-    const kept = dedupedHitWindow({
-      fetch: () => rows,
-      targetThreads: 2,
-      minRows: 10,
-      rowsPerThread: 1,
-      rank: (hit) => hit.rank,
-    });
-    expect(kept.map((hit) => hit.tag)).toEqual(["a-best", "b"]);
-  });
-
-  test("stops after one fetch when the first window already holds the target", () => {
-    const asked: number[] = [];
-    const kept = dedupedHitWindow({
-      fetch: fetcher(chatty(8, 10), asked),
-      targetThreads: 3,
-      minRows: 80,
-      rowsPerThread: 20,
-      rank: byOrder(),
-    });
-    expect(asked).toEqual([80]);
-    expect(kept).toHaveLength(8);
-  });
-
-  test("grows geometrically until the window holds the target roots", () => {
-    const asked: number[] = [];
-    const kept = dedupedHitWindow({
-      fetch: fetcher(chatty(20, 10), asked),
-      targetThreads: 10,
-      minRows: 10,
-      rowsPerThread: 1,
-      rank: byOrder(),
-    });
-    // Ten rows per root, so 10 rows hold 1 root, 40 hold 4, and 160 hold 16, past the 10 asked for.
-    expect(asked).toEqual([10, 40, 160]);
-    expect(kept).toHaveLength(16);
-  });
-
-  test("caps the growth rounds rather than fetching forever", () => {
-    const asked: number[] = [];
-    dedupedHitWindow({
-      fetch: fetcher(chatty(1, 100_000), asked),
-      targetThreads: 5,
-      minRows: 10,
-      rowsPerThread: 1,
-      rank: byOrder(),
-    });
-    expect(asked).toEqual([10, 40, 160, 640]);
-  });
-
-  test("stops when a partial window proves there are no deeper rows", () => {
-    const asked: number[] = [];
-    dedupedHitWindow({
-      fetch: fetcher(chatty(2, 10), asked),
-      targetThreads: 5,
-      minRows: 80,
-      rowsPerThread: 1,
-      rank: byOrder(),
-    });
-    expect(asked).toEqual([80]);
-  });
-
-  test("answers out of the first fetch when the caller turns growth off", () => {
-    const asked: number[] = [];
-    // Exactly 80 rows over 2 roots: a full window holding fewer roots than asked for, which is the
-    // one shape that sends the growth rounds off.
-    const kept = dedupedHitWindow({
-      fetch: fetcher(chatty(2, 40), asked),
-      targetThreads: 5,
-      minRows: 80,
-      rowsPerThread: 1,
-      grow: false,
-      rank: byOrder(),
-    });
-    expect(asked).toEqual([80]);
-    expect(kept).toHaveLength(2);
-  });
-});
 
 describe("search and relevant agree on thread rollup metadata (#119/#127)", () => {
   let env: TempClaude;

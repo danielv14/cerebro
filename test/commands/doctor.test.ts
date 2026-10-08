@@ -231,6 +231,7 @@ describe("runDoctor", () => {
     expect(threadsLine).toBe("Threads:          1 (1 summarized, 1 stale)");
     expect(byKey(doctor(), "digest").detail).toBe("1/1 threads summarized, 1 stale");
   });
+
   test("--full lists the line kinds the indexer skipped, with a count and a sample each", () => {
     writeSession(env.projects, "-repo", "S", [
       userMsg("S", "u1", "hello"),

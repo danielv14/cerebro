@@ -93,9 +93,10 @@ and `test/sources.test.ts` has a fake adapter driven end to end as a template.
 6. **Tolerant parsing.** The log format will evolve under you, and a parser that
    throws loses whole files. Validate with Valibot the way `claude-code-jsonl.ts`
    does, fold whatever is searchable into `text`, and drop the rest. A dropped
-   line is still a `skip` with a `lineKind` (the variant, as fine as the source
-   can tell them apart) and its `payload` minus per-line envelope fields, so
-   `doctor --full` can list what a source never indexes.
+   line is a `skip` that carries the parsed line, and `describeSkipped` names
+   its kind and strips the per-line envelope, so `doctor --full` can list what a
+   source never indexes. Only doctor calls it, which keeps that work off the
+   indexer's path.
 7. **Tool blocks in the shared tag format.** A tool call or result folded into
    `text` opens with `[tool_` (`[tool_use:<name>] <json>`, `[tool_result] …`,
    `[tool_result:error] …`), and prose never does. `isToolText` tells tool
@@ -332,8 +333,8 @@ that layer's to own.
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per
 thread", and the two repeatedly disagreed about the same thread. The join and
-the hit filters live here once; a caller keeps only its ranking and its own
-result shape.
+the hit filters live here once. Each caller dedupes on its own rank: `search` on
+bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
 
 - `escapeLike` (in `src/like.ts`) escapes user-supplied LIKE fragments; every
   LIKE built from user input pairs it with an explicit `ESCAPE '\'`.
@@ -358,16 +359,6 @@ result shape.
   best row per thread, and a second query computes snippets for the kept rows
   only. It replaced a top-N window that re-ran the whole query up to three times
   with a 4x larger window whenever one long thread owned the top matches.
-- `dedupedHitWindow` is `relevant`'s raw-tier window: fetch
-  `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
-  thread by the caller's rank, and grow the window geometrically (x4, up to 3
-  rounds) only when it was exhausted, meaning fewer distinct threads than asked
-  for AND a full window came back. Growth re-fetches one deep window rather than
-  paging: `ORDER BY bm25 LIMIT n` uses a bounded top-N sorter, so a deeper n is
-  nearly free while every extra page re-ranks the whole match set. `relevant`
-  keeps this window because its default limit answers out of the first fetch, so
-  it only pays for growth when a caller raises `--limit`.
-
 ## Search (`src/search.ts`)
 
 `search` owns the command's policy (the sanitized retry, the result shape) and
@@ -423,12 +414,17 @@ a much stronger cross-repo match stays reachable. The boost needs an explicit
 `--cwd`: `relevant` does not adopt the invoking directory, so a manual call ranks
 the same wherever it is typed.
 
-The raw tier's window is deduped on the tier's own decayed-and-boosted rank (not
-on bm25), so the hit kept per thread is the one it actually ranks on. Growth is
-off at the default limit of 3: the first window holds far more than three threads
-unless the archive has barely any matches at all, and that is the one case a
-deeper fetch cannot fix. A caller that raises `--limit` has traded latency for
-coverage and gets the growth rounds.
+The raw tier's window (`dedupedHitWindow`) is deduped on the tier's own
+decayed-and-boosted rank (not on bm25), so the hit kept per thread is the one it
+actually ranks on. It fetches `max(minRows, targetThreads * rowsPerThread)` top
+rows and grows the window geometrically (x4, up to 3 rounds) only when it was
+exhausted, meaning fewer distinct threads than asked for AND a full window came
+back. Growth re-fetches one deep window rather than paging: `ORDER BY bm25 LIMIT
+n` uses a bounded top-N sorter, so a deeper n is nearly free while every extra
+page re-ranks the whole match set. Growth is off at the default limit of 3: the
+first window holds far more than three threads unless the archive has barely any
+matches at all, and that is the one case a deeper fetch cannot fix. A caller that
+raises `--limit` has traded latency for coverage and gets the growth rounds.
 
 ## Digest (`src/digest/`)
 

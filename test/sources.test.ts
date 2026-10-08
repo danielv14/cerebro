@@ -28,7 +28,7 @@ const oneMsg = (sessionId: string) => [userMsg(sessionId, "u1", "work")];
 const FAKE_PROVIDER = "fake-agent";
 
 const classifyFakeLine = (raw: unknown): Classified => {
-  const skip: Classified = { kind: "skip", lineKind: "fake", payload: raw };
+  const skip: Classified = { kind: "skip", raw };
   if (typeof raw !== "object" || raw === null) return skip;
   const event = raw as Record<string, unknown>;
   if (event.who !== "human" && event.who !== "bot") return skip;
@@ -80,6 +80,7 @@ const makeFakeAdapter = (root: string): SourceAdapter => ({
       yield classifyFakeLine(parsed);
     }
   },
+  describeSkipped: (raw) => ({ lineKind: "fake", payload: raw }),
 });
 
 const writeFakeSession = (root: string, sessionId: string, lines: unknown[]): string => {

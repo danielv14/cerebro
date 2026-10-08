@@ -255,8 +255,6 @@ describe("query (populated archive)", () => {
   });
 
   const chattyThreadAndOthers = () => {
-    // CHATTY owns the top 2100 matches, more than any fixed window the old regrowing
-    // search started from.
     writeSession(
       env.projects,
       "-repo",
@@ -279,7 +277,6 @@ describe("query (populated archive)", () => {
   test("deduped search finds the threads under one that owns the top matches, in one ranking query (#226)", () => {
     chattyThreadAndOthers();
     let hits: SearchHit[] = [];
-    // The ranking query plus the snippet query for the kept rows.
     const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
       hits = search(db, "limiter", 5);
     });
@@ -325,6 +322,20 @@ describe("query (populated archive)", () => {
     });
     expect(hits).toEqual(["CHATTY", "OTHER1", "OTHER2"]);
     expect(queries).toBe(3);
+  });
+
+  test("deduped search applies --role and --prose inside the ranking query", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "limiter limiter limiter", { timestamp: ts(0) }),
+      assistantMsg("S", "a1", "limiter", { parentUuid: "u1", timestamp: ts(1) }),
+      userMsg("S", "u2", "[tool_result] limiter limiter limiter limiter", {
+        parentUuid: "a1",
+        timestamp: ts(2),
+      }),
+    ]);
+    runIndex(db, { adapters: env.adapters });
+    expect(search(db, "limiter", 5, { role: "assistant" }).map((hit) => hit.ordinal)).toEqual([2]);
+    expect(search(db, "limiter", 5, { prose: true }).map((hit) => hit.ordinal)).toEqual([1]);
   });
 
   test("search returns no hits when a malformed query sanitizes to nothing matchable", () => {
