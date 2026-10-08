@@ -12,6 +12,8 @@ export const readStdin = (): string => {
   }
 };
 
+const AMBIGUOUS_LISTED = 10;
+
 export const resolveSession = (db: Database, idOrPrefix: string): string | null => {
   const exact = db
     .query("SELECT session_id FROM sessions WHERE session_id = ?")
@@ -19,14 +21,16 @@ export const resolveSession = (db: Database, idOrPrefix: string): string | null 
   if (exact) return exact.session_id;
 
   const matches = db
-    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' ESCAPE '\\' LIMIT 10")
-    .all(escapeLike(idOrPrefix)) as { session_id: string }[];
+    .query("SELECT session_id FROM sessions WHERE session_id LIKE ? || '%' ESCAPE '\\' LIMIT ?")
+    .all(escapeLike(idOrPrefix), AMBIGUOUS_LISTED + 1) as { session_id: string }[];
 
   if (matches.length === 0) return null;
   if (matches.length > 1) {
+    const listed = matches.slice(0, AMBIGUOUS_LISTED);
+    const count = matches.length > AMBIGUOUS_LISTED ? `${AMBIGUOUS_LISTED}+` : `${matches.length}`;
     throw new Error(
-      `Ambiguous session prefix "${idOrPrefix}" matches ${matches.length}: ` +
-        matches.map((m) => m.session_id.slice(0, 12)).join(", "),
+      `Ambiguous session prefix "${idOrPrefix}" matches ${count}: ` +
+        listed.map((m) => m.session_id.slice(0, 12)).join(", "),
     );
   }
   return matches[0]!.session_id;

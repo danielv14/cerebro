@@ -690,6 +690,16 @@ describe("query (populated archive)", () => {
     expect(() => resolveSession(db, "abc")).toThrow(/[Aa]mbiguous/);
   });
 
+  test("resolveSession reports an exact count up to 10 matches and 10+ past it (#231)", () => {
+    const sessionIds = Array.from({ length: 11 }, (_, i) => `abc${String(i).padStart(2, "0")}-x`);
+    for (const sessionId of sessionIds)
+      writeSession(env.projects, "-repo", sessionId, [userMsg(sessionId, `u-${sessionId}`, "a")]);
+    runIndex(db, { adapters: env.adapters });
+
+    expect(() => resolveSession(db, "abc0")).toThrow(/matches 10: /);
+    expect(() => resolveSession(db, "abc")).toThrow(/matches 10\+: (abc\d\d-x, ){9}abc\d\d-x$/);
+  });
+
   test("resolveSession treats LIKE wildcards in a prefix literally (#48)", () => {
     writeSession(env.projects, "-repo", "abc12345-aaaa", [userMsg("abc12345-aaaa", "u1", "a")]);
     runIndex(db, { adapters: env.adapters });
