@@ -8,7 +8,9 @@ code.
 ## Stack
 
 - Bun >= 1.2.6 (the digest timeout rides on Bun.spawnSync timeout/exitedDueToTimeout,
-  added in 1.2.6), `import { Database } from "bun:sqlite"` (synchronous API). Two small
+  added in 1.2.6). CI runs on 1.2.6 and on latest, and `@types/bun` is pinned to
+  1.2.6 so typecheck rejects APIs newer than the floor; raise both with the
+  `engines` field. `import { Database } from "bun:sqlite"` (synchronous API). Two small
   pure-JS runtime dependencies: `stopword` (relevance stopword filtering) and
   `valibot` (runtime validation at the I/O boundaries; see the I/O-boundary rule
   below). Dev deps are types only plus Biome (lint + format). Do not add native or
