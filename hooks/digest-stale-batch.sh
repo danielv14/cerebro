@@ -40,4 +40,12 @@ trap 'rmdir "$LOCK" 2>/dev/null' EXIT
   while IFS= read -r line; do log "$line"; done
 
 "$CEREBRO" maintain 2>&1 | while IFS= read -r line; do log "$line"; done
+
+# Truncate in place rather than mv, so the clear hook's detached summary, which may
+# still hold digest.log open, keeps appending to the same file. A line the clear hook
+# appends between tail and the rewrite is lost; the lock does not cover that hook.
+for file in "$LOG_DIR/index.log" "$LOG"; do
+  [ -s "$file" ] || continue
+  trimmed="$(tail -n 5000 "$file")" && printf '%s\n' "$trimmed" > "$file"
+done
 exit 0
