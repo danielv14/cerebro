@@ -328,9 +328,9 @@ that layer's to own.
 
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per
-thread", and the two repeatedly disagreed about the same thread. The join, the
-dedup and the window growth live here once; a caller keeps only its ranking
-function, the size of its first fetch and its own result shape.
+thread", and the two repeatedly disagreed about the same thread. The join and
+the hit filters live here once; a caller keeps only its ranking and its own
+result shape.
 
 - `escapeLike` (in `src/like.ts`) escapes user-supplied LIKE fragments; every
   LIKE built from user input pairs it with an explicit `ESCAPE '\'`.
@@ -349,27 +349,31 @@ function, the size of its first fetch and its own result shape.
   repo), plus the matched message's own git branch, which `search` shows instead
   of the thread's. It throws on a malformed MATCH so each caller keeps its own
   fallback.
-- `dedupedHitWindow` implements the shared window policy: fetch
+- `rankedMessageHitsPerThread` is `search`'s best hit per thread in one ranking
+  query: a `MATERIALIZED` CTE computes `bm25()` per match (it cannot be called
+  inside a window function), `ROW_NUMBER() OVER (PARTITION BY root ...)` keeps the
+  best row per thread, and a second query computes snippets for the kept rows
+  only. It replaced a top-N window that re-ran the whole query up to three times
+  with a 4x larger window whenever one long thread owned the top matches.
+- `dedupedHitWindow` is `relevant`'s raw-tier window: fetch
   `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
-  thread, and grow the window geometrically (x4, up to 3 rounds) only when it was
-  genuinely exhausted, meaning fewer distinct threads than asked for AND a full
-  window came back. A fixed window is not enough because one chatty thread can own
-  every row in it and starve the threads below. Growth re-fetches one deep window
-  rather than paging: `ORDER BY bm25 LIMIT n` uses a bounded top-N sorter, so a
-  deeper n is nearly free while every extra page re-ranks the whole match set.
-  Callers on a latency path can disable growth and answer out of the first fetch.
+  thread by the caller's rank, and grow the window geometrically (x4, up to 3
+  rounds) only when it was exhausted, meaning fewer distinct threads than asked
+  for AND a full window came back. Growth re-fetches one deep window rather than
+  paging: `ORDER BY bm25 LIMIT n` uses a bounded top-N sorter, so a deeper n is
+  nearly free while every extra page re-ranks the whole match set. `relevant`
+  keeps this window because its default limit answers out of the first fetch, so
+  it only pays for growth when a caller raises `--limit`.
 
 ## Search (`src/search.ts`)
 
-`search` owns the command's policy (window sizing, the sanitized retry, the
-result shape) and no SQL at all: it names `HitFilters` and the FTS module builds
-the query.
+`search` owns the command's policy (the sanitized retry, the result shape) and
+no SQL at all: it names `HitFilters` and the FTS module builds the query.
 
 User queries pass to MATCH verbatim so power users can use FTS5 operators; on a
 syntax error the query is retried once as a sanitized phrase query of the bare
-tokens (the retry wraps the whole window, because a query FTS5 accepted once stays
-valid at every window size). Results are deduplicated to the best hit per thread
-by default; `--all` disables that.
+tokens. Results are deduplicated to the best hit per thread by default; `--all`
+disables that.
 
 Filter semantics worth knowing:
 

@@ -8,7 +8,7 @@ import { searchSummaries, writeSummary } from "../src/digest/store.ts";
 import { toMatchQuery } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
-import { search } from "../src/search.ts";
+import { type SearchHit, search } from "../src/search.ts";
 import { stats } from "../src/stats.ts";
 import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
 import {
@@ -254,40 +254,43 @@ describe("query (populated archive)", () => {
     expect(search(db, "limiter", 10, { all: true, prose: true })).toHaveLength(1);
   });
 
-  test("deduped search looks past a chatty thread that dominates the ranked hits", () => {
-    // A 200-row window would starve OTHER; the 2000-row over-fetch surfaces it in one fetch,
-    // without growing.
-    const chatty = Array.from({ length: 210 }, (_, i) =>
-      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
-        timestamp: ts(i),
-        parentUuid: i === 0 ? null : `c${i - 1}`,
-      }),
+  const chattyThreadAndOthers = () => {
+    // CHATTY owns the top 2100 matches, more than any fixed window the old regrowing
+    // search started from.
+    writeSession(
+      env.projects,
+      "-repo",
+      "CHATTY",
+      Array.from({ length: 2100 }, (_, i) =>
+        userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
+          timestamp: ts(i),
+          parentUuid: i === 0 ? null : `c${i - 1}`,
+        }),
+      ),
     );
-    writeSession(env.projects, "-repo", "CHATTY", chatty);
-    writeSession(env.projects, "-repo", "OTHER", [
-      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(1000) }),
-    ]);
+    for (const id of ["OTHER1", "OTHER2"]) {
+      writeSession(env.projects, "-repo", id, [
+        userMsg(id, `${id}-1`, `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
+      ]);
+    }
     runIndex(db, { adapters: env.adapters });
-    const hits = search(db, "limiter", 5);
-    expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+  };
+
+  test("deduped search finds the threads under one that owns the top matches, in one ranking query (#226)", () => {
+    chattyThreadAndOthers();
+    let hits: SearchHit[] = [];
+    // The ranking query plus the snippet query for the kept rows.
+    const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
+      hits = search(db, "limiter", 5);
+    });
+    expect(hits.map((hit) => hit.session_id)).toEqual(["CHATTY", "OTHER1", "OTHER2"]);
+    expect(hits[0]!.snippet).toContain("[limiter]");
+    expect(queries).toBe(2);
   });
 
-  test("deduped search grows the over-fetch window when the first one is exhausted (#81)", () => {
-    // A chatty thread wider than the initial 2000-row window owns every row of the
-    // first fetch, so the deeper re-fetch (window *= 4) is the only way OTHER surfaces.
-    const chatty = Array.from({ length: 2100 }, (_, i) =>
-      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
-        timestamp: ts(i),
-        parentUuid: i === 0 ? null : `c${i - 1}`,
-      }),
-    );
-    writeSession(env.projects, "-repo", "CHATTY", chatty);
-    writeSession(env.projects, "-repo", "OTHER", [
-      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
-    ]);
-    runIndex(db, { adapters: env.adapters });
-    const hits = search(db, "limiter", 2);
-    expect(hits.map((h) => h.session_id).sort()).toEqual(["CHATTY", "OTHER"]);
+  test("deduped search applies the limit after keeping one hit per thread", () => {
+    chattyThreadAndOthers();
+    expect(search(db, "limiter", 2).map((hit) => hit.session_id)).toEqual(["CHATTY", "OTHER1"]);
   });
 
   test("search hits carry the thread ordinal matching show's numbering (#58)", () => {
@@ -313,28 +316,14 @@ describe("query (populated archive)", () => {
     expect(hits.map((h) => h.session_id)).toEqual(["S"]);
   });
 
-  test("search resolves the sanitized fallback once and reuses it when the window grows", () => {
-    // The chatty thread is wider than the first 2000-row window, so OTHER only
-    // surfaces after a growth round, and the query is malformed so the first fetch
-    // pays a throwing MATCH plus the sanitized retry. The deeper round must reuse
-    // that decision: three hit queries in total, not four.
-    const chatty = Array.from({ length: 2100 }, (_, i) =>
-      userMsg("CHATTY", `c${i}`, "limiter limiter limiter", {
-        timestamp: ts(i),
-        parentUuid: i === 0 ? null : `c${i - 1}`,
-      }),
-    );
-    writeSession(env.projects, "-repo", "CHATTY", chatty);
-    writeSession(env.projects, "-repo", "OTHER", [
-      userMsg("OTHER", "o1", `limiter ${"filler ".repeat(80)}`, { timestamp: ts(5000) }),
-    ]);
-    runIndex(db, { adapters: env.adapters });
-
+  test("deduped search falls back to the sanitized query once (#226)", () => {
+    chattyThreadAndOthers();
     let hits: string[] = [];
+    // One throwing MATCH, then the ranking and snippet queries on the sanitized one.
     const queries = countQueriesMatching(db, "messages_fts MATCH", () => {
-      hits = search(db, 'limiter"', 2).map((hit) => hit.session_id);
+      hits = search(db, 'limiter"', 5).map((hit) => hit.session_id);
     });
-    expect(hits.sort()).toEqual(["CHATTY", "OTHER"]);
+    expect(hits).toEqual(["CHATTY", "OTHER1", "OTHER2"]);
     expect(queries).toBe(3);
   });
 

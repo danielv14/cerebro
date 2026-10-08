@@ -20,6 +20,11 @@ describe("dedupedHitWindow", () => {
     return rows.slice(0, size);
   };
 
+  const byOrder = (): ((hit: { id: string }) => number) => {
+    let order = 0;
+    return () => order++;
+  };
+
   const chatty = (roots: number, perRoot: number): { id: string }[] =>
     Array.from({ length: roots }, (_, root) =>
       Array.from({ length: perRoot }, () => ({ id: `R${root}` })),
@@ -27,27 +32,16 @@ describe("dedupedHitWindow", () => {
 
   test("sizes the first fetch off the target root count, floored at minRows", () => {
     const asked: number[] = [];
-    const spec = { fetch: fetcher(chatty(40, 1), asked), minRows: 80, rowsPerThread: 20 };
+    const spec = {
+      fetch: fetcher(chatty(40, 1), asked),
+      minRows: 80,
+      rowsPerThread: 20,
+      rank: byOrder(),
+    };
     dedupedHitWindow({ ...spec, targetThreads: 3 });
     dedupedHitWindow({ ...spec, targetThreads: 20 });
     // 3 * 20 is under the floor, 20 * 20 is over it.
     expect(asked).toEqual([80, 400]);
-  });
-
-  test("keeps the first hit per root in the incoming order by default", () => {
-    const rows = [
-      { id: "A", tag: "a1" },
-      { id: "B", tag: "b1" },
-      { id: "A", tag: "a2" },
-      { id: "C", tag: "c1" },
-    ];
-    const kept = dedupedHitWindow({
-      fetch: () => rows,
-      targetThreads: 3,
-      minRows: 10,
-      rowsPerThread: 1,
-    });
-    expect(kept.map((hit) => hit.tag)).toEqual(["a1", "b1", "c1"]);
   });
 
   test("keeps the lowest-ranked hit per root and returns them best-first", () => {
@@ -73,6 +67,7 @@ describe("dedupedHitWindow", () => {
       targetThreads: 3,
       minRows: 80,
       rowsPerThread: 20,
+      rank: byOrder(),
     });
     expect(asked).toEqual([80]);
     expect(kept).toHaveLength(8);
@@ -85,6 +80,7 @@ describe("dedupedHitWindow", () => {
       targetThreads: 10,
       minRows: 10,
       rowsPerThread: 1,
+      rank: byOrder(),
     });
     // Ten rows per root, so 10 rows hold 1 root, 40 hold 4, and 160 hold 16, past the 10 asked for.
     expect(asked).toEqual([10, 40, 160]);
@@ -98,6 +94,7 @@ describe("dedupedHitWindow", () => {
       targetThreads: 5,
       minRows: 10,
       rowsPerThread: 1,
+      rank: byOrder(),
     });
     expect(asked).toEqual([10, 40, 160, 640]);
   });
@@ -109,6 +106,7 @@ describe("dedupedHitWindow", () => {
       targetThreads: 5,
       minRows: 80,
       rowsPerThread: 1,
+      rank: byOrder(),
     });
     expect(asked).toEqual([80]);
   });
@@ -123,6 +121,7 @@ describe("dedupedHitWindow", () => {
       minRows: 80,
       rowsPerThread: 1,
       grow: false,
+      rank: byOrder(),
     });
     expect(asked).toEqual([80]);
     expect(kept).toHaveLength(2);

@@ -61,6 +61,20 @@ export interface RankedHitWindow {
   filters?: HitFilters;
 }
 
+const messageHitJoins = `
+    FROM messages_fts
+    JOIN messages m ON m.id = messages_fts.rowid
+    JOIN sessions s ON s.session_id = m.session_id
+    LEFT JOIN threads t ON t.id = s.root_session_id`;
+
+const messageHitColumns = `
+    m.id AS message_id, m.session_id, m.ts, m.role,
+    s.root_session_id AS id,
+    s.git_branch AS session_git_branch,
+    snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
+    bm25(messages_fts) AS score,
+    t.last_ts, t.git_root, t.project_path`;
+
 // Throws on a malformed MATCH so each caller keeps its own fallback.
 export const rankedMessageHits = (
   db: Database,
@@ -69,16 +83,8 @@ export const rankedMessageHits = (
 ): RankedMessageHit[] => {
   const filters = hitPredicates(window.filters ?? {});
   const sql = `
-    SELECT m.id AS message_id, m.session_id, m.ts, m.role,
-           s.root_session_id AS id,
-           s.git_branch AS session_git_branch,
-           snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
-           bm25(messages_fts) AS score,
-           t.last_ts, t.git_root, t.project_path
-    FROM messages_fts
-    JOIN messages m ON m.id = messages_fts.rowid
-    JOIN sessions s ON s.session_id = m.session_id
-    LEFT JOIN threads t ON t.id = s.root_session_id
+    SELECT ${messageHitColumns}
+    ${messageHitJoins}
     WHERE messages_fts MATCH ?
     ${filters.map((filter) => `AND ${filter.sql}`).join("\n    ")}
     ORDER BY bm25(messages_fts)
@@ -93,13 +99,53 @@ export const rankedMessageHits = (
     ) as RankedMessageHit[];
 };
 
-const bestHitPerThread = <T extends { id: string }>(
-  hits: T[],
-  rank: (hit: T, index: number) => number = (_, index) => index,
-): T[] => {
+// bm25() cannot be called inside a window function, so the CTE materializes it
+// first. Snippets are computed for the kept rows only, in a second query.
+// Throws on a malformed MATCH, like rankedMessageHits.
+export const rankedMessageHitsPerThread = (
+  db: Database,
+  match: string,
+  window: RankedHitWindow,
+): RankedMessageHit[] => {
+  const filters = hitPredicates(window.filters ?? {});
+  const best = db
+    .query(`
+    WITH matched AS MATERIALIZED (
+      SELECT m.id AS message_id, s.root_session_id AS id, bm25(messages_fts) AS score
+      ${messageHitJoins}
+      WHERE messages_fts MATCH ?
+      ${filters.map((filter) => `AND ${filter.sql}`).join("\n      ")}
+    ),
+    ranked AS (
+      SELECT message_id, score,
+             ROW_NUMBER() OVER (PARTITION BY id ORDER BY score, message_id) AS rn
+      FROM matched
+    )
+    SELECT message_id FROM ranked
+    WHERE rn = 1
+    ORDER BY score, message_id
+    LIMIT ?`)
+    .all(match, ...filters.flatMap((filter) => filter.params), window.limit) as {
+    message_id: number;
+  }[];
+  if (best.length === 0) return [];
+
+  const ids = best.map((row) => row.message_id);
+  const hits = db
+    .query(`
+    SELECT ${messageHitColumns}
+    ${messageHitJoins}
+    WHERE messages_fts MATCH ?
+    AND messages_fts.rowid IN (${ids.map(() => "?").join(", ")})`)
+    .all(window.snippetTokens, match, ...ids) as RankedMessageHit[];
+  const byId = new Map(hits.map((hit) => [hit.message_id, hit]));
+  return ids.map((id) => byId.get(id)!);
+};
+
+const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
   const byThread = new Map<string, { hit: T; rank: number }>();
-  hits.forEach((hit, index) => {
-    const hitRank = rank(hit, index);
+  hits.forEach((hit) => {
+    const hitRank = rank(hit);
     const existing = byThread.get(hit.id);
     if (!existing || hitRank < existing.rank) byThread.set(hit.id, { hit, rank: hitRank });
   });
@@ -115,7 +161,7 @@ export interface DedupedWindow<T> {
   minRows: number;
   rowsPerThread: number;
   grow?: boolean;
-  rank?: (hit: T, index: number) => number;
+  rank: (hit: T) => number;
 }
 
 export const dedupedHitWindow = <T extends { id: string }>({
