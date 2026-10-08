@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { join } from "node:path";
 import type { SessionFile, SourceAdapter } from "./adapter.ts";
-import { classifyLines } from "./claude-code-jsonl.ts";
+import { classifyLines, describeSkipped } from "./claude-code-jsonl.ts";
 
 export const CLAUDE_CODE_PROVIDER = "claude-code";
 
@@ -80,4 +80,5 @@ export const createClaudeCodeAdapter = (projectsRoot: string): SourceAdapter => 
   id: CLAUDE_CODE_PROVIDER,
   discover: () => discoverSessionFiles(projectsRoot),
   classifyLines,
+  describeSkipped,
 });

@@ -31,6 +31,15 @@ export const doctorReport = (
     const remedy = check.remedy ? `  -> ${check.remedy}` : "";
     lines.push(`  ${MARKER[check.status]}  ${check.label.padEnd(18)}${check.detail}${remedy}`);
   }
+  if (report.skipped) {
+    const kindWidth = Math.max(0, ...report.skipped.map((skipped) => skipped.kind.length));
+    lines.push("", "Skipped by the indexer");
+    for (const skipped of report.skipped) {
+      lines.push(
+        `  ${String(skipped.count).padStart(7)}  ${skipped.kind.padEnd(kindWidth)}  ${skipped.sample}`,
+      );
+    }
+  }
   const failed = report.checks.filter((c) => c.status === "fail").length;
   const warned = report.checks.filter((c) => c.status === "warn").length;
   lines.push(

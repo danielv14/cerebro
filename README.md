@@ -48,6 +48,8 @@ cerebro show <session-id> [--full] [--range A..B] [--grep T]
 cerebro stats                               # archive counts
 cerebro skills [--since D] [--limit N]      # how often each skill was invoked
 cerebro doctor [--full]                     # read-only health report (docs/operations.md)
+                                            #   --full: the thorough integrity check, and
+                                            #   the line kinds the indexer skips
 cerebro version                             # build identity of this binary
 cerebro backup [--to <path>] [--keep N]     # snapshot the database (docs/operations.md)
 cerebro maintain                            # compact the search indexes and tidy the database

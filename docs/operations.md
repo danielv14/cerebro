@@ -68,8 +68,22 @@ repairs anything; each finding names the command that does.
 
 ```sh
 cerebro doctor            # quick integrity check, the everyday form
-cerebro doctor --full     # the thorough integrity check (slower on a large archive)
+cerebro doctor --full     # the thorough integrity check, plus the line kinds the indexer skips
 cerebro doctor --json     # the same checks as structured rows
+```
+
+`--full` also reads every transcript and lists what the indexer skipped, grouped
+by line kind with a count and a sample of each kind's longest text. The list is
+a full inventory, bookkeeping included, so read it for a kind that recurs often
+with long text a person typed: that one may deserve indexing. Samples are taken
+verbatim from transcripts, so they can show anything a session saw, secrets
+included. The list never affects the exit code.
+
+```
+Skipped by the indexer
+    40883  attachment:total_tokens_reminder             <system-reminder> <total_tokens>15000000 tokens left</total_tokens> </system-rem…
+      290  attachment:queued_command:task-notification  <system-reminder> [SYSTEM NOTIFICATION - NOT USER INPUT] This is an automated ba…
+      175  system:away_summary                          Second opinion on the layout refactor: the grid solution with named tracks is …
 ```
 
 The exit code is 1 only on a hard failure (corruption, or a database schema this

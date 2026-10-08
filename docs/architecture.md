@@ -92,7 +92,11 @@ and `test/sources.test.ts` has a fake adapter driven end to end as a template.
    fabricate links.
 6. **Tolerant parsing.** The log format will evolve under you, and a parser that
    throws loses whole files. Validate with Valibot the way `claude-code-jsonl.ts`
-   does, fold whatever is searchable into `text`, and drop the rest.
+   does, fold whatever is searchable into `text`, and drop the rest. A dropped
+   line is a `skip` that carries the parsed line, and `describeSkipped` names
+   its kind and strips the per-line envelope, so `doctor --full` can list what a
+   source never indexes. Only doctor calls it, which keeps that work off the
+   indexer's path.
 7. **Tool blocks in the shared tag format.** A tool call or result folded into
    `text` opens with `[tool_` (`[tool_use:<name>] <json>`, `[tool_result] …`,
    `[tool_result:error] …`), and prose never does. `isToolText` tells tool
@@ -328,9 +332,9 @@ that layer's to own.
 
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per
-thread", and the two repeatedly disagreed about the same thread. The join, the
-dedup and the window growth live here once; a caller keeps only its ranking
-function, the size of its first fetch and its own result shape.
+thread", and the two repeatedly disagreed about the same thread. The join and
+the hit filters live here once. Each caller dedupes on its own rank: `search` on
+bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
 
 - `escapeLike` (in `src/like.ts`) escapes user-supplied LIKE fragments; every
   LIKE built from user input pairs it with an explicit `ESCAPE '\'`.
@@ -349,27 +353,21 @@ function, the size of its first fetch and its own result shape.
   repo), plus the matched message's own git branch, which `search` shows instead
   of the thread's. It throws on a malformed MATCH so each caller keeps its own
   fallback.
-- `dedupedHitWindow` implements the shared window policy: fetch
-  `max(minRows, targetThreads * rowsPerThread)` top rows, keep the best hit per
-  thread, and grow the window geometrically (x4, up to 3 rounds) only when it was
-  genuinely exhausted, meaning fewer distinct threads than asked for AND a full
-  window came back. A fixed window is not enough because one chatty thread can own
-  every row in it and starve the threads below. Growth re-fetches one deep window
-  rather than paging: `ORDER BY bm25 LIMIT n` uses a bounded top-N sorter, so a
-  deeper n is nearly free while every extra page re-ranks the whole match set.
-  Callers on a latency path can disable growth and answer out of the first fetch.
-
+- `rankedMessageHitsPerThread` is `search`'s best hit per thread in one ranking
+  query: a `MATERIALIZED` CTE computes `bm25()` per match (it cannot be called
+  inside a window function), `ROW_NUMBER() OVER (PARTITION BY root ...)` keeps the
+  best row per thread, and a second query computes snippets for the kept rows
+  only. It replaced a top-N window that re-ran the whole query up to three times
+  with a 4x larger window whenever one long thread owned the top matches.
 ## Search (`src/search.ts`)
 
-`search` owns the command's policy (window sizing, the sanitized retry, the
-result shape) and no SQL at all: it names `HitFilters` and the FTS module builds
-the query.
+`search` owns the command's policy (the sanitized retry, the result shape) and
+no SQL at all: it names `HitFilters` and the FTS module builds the query.
 
 User queries pass to MATCH verbatim so power users can use FTS5 operators; on a
 syntax error the query is retried once as a sanitized phrase query of the bare
-tokens (the retry wraps the whole window, because a query FTS5 accepted once stays
-valid at every window size). Results are deduplicated to the best hit per thread
-by default; `--all` disables that.
+tokens. Results are deduplicated to the best hit per thread by default; `--all`
+disables that.
 
 Filter semantics worth knowing:
 
@@ -416,12 +414,17 @@ a much stronger cross-repo match stays reachable. The boost needs an explicit
 `--cwd`: `relevant` does not adopt the invoking directory, so a manual call ranks
 the same wherever it is typed.
 
-The raw tier's window is deduped on the tier's own decayed-and-boosted rank (not
-on bm25), so the hit kept per thread is the one it actually ranks on. Growth is
-off at the default limit of 3: the first window holds far more than three threads
-unless the archive has barely any matches at all, and that is the one case a
-deeper fetch cannot fix. A caller that raises `--limit` has traded latency for
-coverage and gets the growth rounds.
+The raw tier's window (`dedupedHitWindow`) is deduped on the tier's own
+decayed-and-boosted rank (not on bm25), so the hit kept per thread is the one it
+actually ranks on. It fetches `max(minRows, targetThreads * rowsPerThread)` top
+rows and grows the window geometrically (x4, up to 3 rounds) only when it was
+exhausted, meaning fewer distinct threads than asked for AND a full window came
+back. Growth re-fetches one deep window rather than paging: `ORDER BY bm25 LIMIT
+n` uses a bounded top-N sorter, so a deeper n is nearly free while every extra
+page re-ranks the whole match set. Growth is off at the default limit of 3: the
+first window holds far more than three threads unless the archive has barely any
+matches at all, and that is the one case a deeper fetch cannot fix. A caller that
+raises `--limit` has traded latency for coverage and gets the growth rounds.
 
 ## Digest (`src/digest/`)
 
@@ -521,7 +524,14 @@ not trustworthy on an archive that is the only copy of deleted sessions. Only
 as a cron guard without going red on warnings; "unknown" is what a check degrades
 to when its input is unreadable, each check independently. `quick_check` is the
 default integrity form because `integrity_check` walks every page and is slow on a
-large archive. The deployed-drift check spawns the deployed binary's `version` and
+large archive. `--full` also reads every transcript through its adapter and
+lists the line kinds the indexer skips, with a count and a sample from each
+kind's longest text. That is how a new user-relevant event gets noticed: #223
+was 431 queued prompts dropped for months. It runs on demand rather than as a
+tally kept by the indexer, because a full scan costs a few seconds, needs no
+schema, cannot double-count across `--full` and `--rebuild`, and covers files
+read before the feature existed. The listing never touches the exit code. The
+deployed-drift check spawns the deployed binary's `version` and
 compares build stamps, which is why `version` must answer without opening the
 archive.
 

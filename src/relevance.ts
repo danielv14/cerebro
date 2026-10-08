@@ -1,13 +1,53 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
-import {
-  dedupedHitWindow,
-  type RankedHit,
-  type RankedMessageHit,
-  rankedMessageHits,
-  toMatchQuery,
-} from "./fts.ts";
+import { type RankedHit, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
+
+const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
+  const byThread = new Map<string, { hit: T; rank: number }>();
+  hits.forEach((hit) => {
+    const hitRank = rank(hit);
+    const existing = byThread.get(hit.id);
+    if (!existing || hitRank < existing.rank) byThread.set(hit.id, { hit, rank: hitRank });
+  });
+  return [...byThread.values()].sort((a, b) => a.rank - b.rank).map((entry) => entry.hit);
+};
+
+const WINDOW_GROWTH = 4;
+const WINDOW_ROUNDS = 3;
+
+export interface DedupedWindow<T> {
+  fetch: (size: number) => T[];
+  targetThreads: number;
+  minRows: number;
+  rowsPerThread: number;
+  grow?: boolean;
+  rank: (hit: T) => number;
+}
+
+export const dedupedHitWindow = <T extends { id: string }>({
+  fetch,
+  targetThreads,
+  minRows,
+  rowsPerThread,
+  grow = true,
+  rank,
+}: DedupedWindow<T>): T[] => {
+  const rounds = grow ? WINDOW_ROUNDS : 0;
+  let size = Math.max(minRows, targetThreads * rowsPerThread);
+  let rows = fetch(size);
+  let kept = bestHitPerThread(rows, rank);
+  for (
+    let round = 0;
+    round < rounds && kept.length < targetThreads && rows.length >= size;
+    round++
+  ) {
+    size *= WINDOW_GROWTH;
+    rows = fetch(size);
+    kept = bestHitPerThread(rows, rank);
+  }
+  return kept;
+};
 
 // bm25 is negative (lower = better); a decay factor in (0,1] shrinks an old hit's
 // magnitude toward 0, ranking it worse.

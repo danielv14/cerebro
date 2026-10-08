@@ -49,7 +49,8 @@ Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
   --full          index: ignore cursors and re-read everything (dedup skips known
                   messages, so stored text is never touched); show: print full text;
-                  doctor: the complete integrity_check instead of quick_check
+                  doctor: the complete integrity_check instead of quick_check,
+                  plus the line kinds the indexer skips
   --rebuild       index: like --full, but also re-flatten the stored text of every
                   message still on disk (needed after a flattening/parser change;
                   messages whose source file is deleted are kept untouched)
