@@ -196,6 +196,27 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(1);
   });
 
+  test("index sends a skipped file to stderr and keeps the summary on stdout (#230)", () => {
+    const badPath = writeSession(env.projects, "-repo", "BAD", [userMsg("BAD", "b1", "hidden")]);
+    writeSession(env.projects, "-repo", "OK", [userMsg("OK", "u1", "still indexed")]);
+    const [inner] = env.adapters;
+    const racing = {
+      ...inner!,
+      discover: () => {
+        const files = inner!.discover();
+        fs.rmSync(badPath);
+        return files;
+      },
+    };
+
+    const cap = makeIO();
+    cli(["index"], cap.io, memDb, { adapters: [racing] });
+    expect(cap.errs).toHaveLength(1);
+    expect(cap.errs[0]).toContain(`skipped ${badPath}`);
+    expect(cap.logs).toEqual(["Indexed 1 new message(s) (1/2 files touched)."]);
+    expect(cap.exitCode).toBe(0);
+  });
+
   test("--limit must be a positive integer", () => {
     const cap = makeIO();
     cli(["search", "foo", "--limit", "0"], cap.io, () => memDb());

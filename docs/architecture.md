@@ -559,6 +559,8 @@ are the two builders, and `test/cli.test.ts` pins the per-command option tables.
 - `progress` emits before the command returns, for the long-running commands whose
   only witness is a log file someone tails (`digest drain` makes up to N model
   calls over minutes); buffering would make a hung call look like a slow one.
+  `warn` emits the same way but to stderr, so a scripted run can tell a warning
+  (an unreadable session file during `index`) from the result.
 - `version` is db-less on purpose: doctor's drift check spawns the deployed
   binary's `version`, and that answer must not depend on whether its archive is
   readable.

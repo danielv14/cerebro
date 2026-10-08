@@ -78,3 +78,7 @@ the end, so a stuck model call is visible while it is happening). Skips are coun
 apart from failures, because `digest.log` is the only place to see whether the model
 itself is broken. A plain `cron` entry that runs the same script works just as well on
 Linux.
+
+Each run ends by trimming `digest.log` and `index.log` to their last 5000 lines. The
+`/clear` hook appends to both files too, and a line it writes during the trim can be
+lost.
