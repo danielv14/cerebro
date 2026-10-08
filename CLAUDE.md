@@ -8,7 +8,9 @@ code.
 ## Stack
 
 - Bun >= 1.2.6 (the digest timeout rides on Bun.spawnSync timeout/exitedDueToTimeout,
-  added in 1.2.6), `import { Database } from "bun:sqlite"` (synchronous API). Two small
+  added in 1.2.6). CI runs on 1.2.6 and on latest, and `@types/bun` is pinned to
+  1.2.6 so typecheck rejects APIs newer than the floor; raise the matrix entry
+  and the pin together with `engines`. `import { Database } from "bun:sqlite"` (synchronous API). Two small
   pure-JS runtime dependencies: `stopword` (relevance stopword filtering) and
   `valibot` (runtime validation at the I/O boundaries; see the I/O-boundary rule
   below). Dev deps are types only plus Biome (lint + format). Do not add native or
@@ -45,7 +47,7 @@ code.
 ## Developing and testing
 
 - Typecheck: `bun run typecheck` (must stay green before you finish).
-- Lint + format: `bun run check` (read-only, the same `biome ci` CI runs) or
+- Lint + format: `bun run check` (read-only `biome ci`, the command CI runs) or
   `bun run check:fix` to apply. Config in `biome.json`: `noNonNullAssertion` is off
   (the code uses `!` deliberately). The codebase carries no `biome-ignore` escapes;
   the JSONL parser is validated with Valibot rather than narrowing `any`. Keep it clean.

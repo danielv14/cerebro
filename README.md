@@ -258,8 +258,8 @@ bun run check:fix   # apply lint fixes + formatting
 
 The suite runs against an in-memory SQLite database plus temp fixture session
 files, handed to the code as an adapter list rather than steered through the
-environment, never the real archive. CI runs `biome ci`,
-typecheck, tests and a compile build on every PR.
+environment, never the real archive. CI runs `bun run check`,
+typecheck, tests and a compile build on every PR, on Bun 1.2.6 and on the latest Bun.
 
 `CLAUDE.md` has the working rules and the archive invariants, and
 [docs/architecture.md](docs/architecture.md) explains how the modules fit
