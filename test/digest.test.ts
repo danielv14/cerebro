@@ -103,12 +103,11 @@ describe("pickDigestModel (size -> model tiering)", () => {
 });
 
 describe("digestConfigFromEnv", () => {
-  test("defaults to the token-derived threshold", () => {
-    // (SMALL_MODEL_CONTEXT_TOKENS 200k - RESERVED_CONTEXT_TOKENS 90k) * BYTES_PER_TOKEN 3.
+  test("defaults to the Claude 5.5 pair and the escalation threshold", () => {
     expect(digestConfigFromEnv({})).toEqual({
       models: {
-        small: "claude-haiku-4-5",
-        large: "claude-sonnet-4-6[1m]",
+        small: "claude-haiku-5-5",
+        large: "claude-sonnet-5-5",
         thresholdBytes: 330_000,
       },
       timeoutMs: 600_000,
@@ -116,8 +115,8 @@ describe("digestConfigFromEnv", () => {
     });
   });
 
-  test("a dense thread that overflowed Haiku now escalates", () => {
-    expect(pickDigestModel(535_524, digestConfigFromEnv({}).models)).toBe("claude-sonnet-4-6[1m]");
+  test("a dense thread above the threshold escalates", () => {
+    expect(pickDigestModel(535_524, digestConfigFromEnv({}).models)).toBe("claude-sonnet-5-5");
   });
 
   test("env vars override each field", () => {
