@@ -45,7 +45,7 @@ code.
 ## Developing and testing
 
 - Typecheck: `bun run typecheck` (must stay green before you finish).
-- Lint + format: `bun run check` (read-only, the same `biome ci` CI runs) or
+- Lint + format: `bun run check` (read-only `biome ci`, the command CI runs) or
   `bun run check:fix` to apply. Config in `biome.json`: `noNonNullAssertion` is off
   (the code uses `!` deliberately). The codebase carries no `biome-ignore` escapes;
   the JSONL parser is validated with Valibot rather than narrowing `any`. Keep it clean.
