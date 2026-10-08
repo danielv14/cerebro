@@ -199,8 +199,8 @@ describe("createClaudeSummarizer", () => {
     return path;
   };
 
-  test("passes the transcript on stdin and the prompt as an argument", () => {
-    fakeClaude('printf "stdin:%s args:%s model:%s" "$(cat)" "$5" "$4"');
+  test("passes the prompt as the system prompt and the fenced transcript on stdin", () => {
+    fakeClaude('printf "%s|%s|%s|%s" "$4" "$5" "$6" "$(cat)"');
     const result = createClaudeSummarizer(config())({
       input: "TRANSCRIPT",
       model: "some-model",
@@ -208,7 +208,9 @@ describe("createClaudeSummarizer", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.text).toBe("stdin:TRANSCRIPT args:PROMPT model:some-model");
+    const [model, flag, systemPrompt, stdin] = result.text.split("|");
+    expect([model, flag, systemPrompt]).toEqual(["some-model", "--system-prompt", "PROMPT"]);
+    expect(stdin).toStartWith("<transcript>\nTRANSCRIPT\n</transcript>\n\nWrite the summary");
   });
 
   test("reports a non-zero exit as a failure and keeps the stderr reason", () => {

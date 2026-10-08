@@ -110,6 +110,11 @@ environment: `src/digest/config.ts` resolves `CEREBRO_DIGEST_*` and
 `CEREBRO_CLAUDE_BIN` into a `DigestConfig` once at the CLI edge, and the tiering,
 timeout and binary path travel down as arguments.
 
+When you touch `src/digest`, check `DEFAULT_DIGEST_MODELS` against the current
+Haiku and Sonnet. A model change is more than an id swap: verify it with one large
+and one small real thread through `digest run` against a copy of the archive in a throwaway `CEREBRO_DB` (see #227,
+where the window, the tokenizer and prompt delivery all moved with the ids).
+
 ## What earns a new command, flag or doc page
 
 A new command, digest action or flag needs a concrete occasion where you or the

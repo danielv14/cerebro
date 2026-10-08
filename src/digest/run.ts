@@ -6,6 +6,7 @@ import {
   DIGEST_PROMPT,
   type DigestModelConfig,
   pickDigestModel,
+  wrapTranscript,
 } from "./prompt.ts";
 import { countStaleThreads, staleThreads } from "./stale.ts";
 import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
@@ -27,6 +28,8 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
+// An argv prompt lands ahead of stdin, and behind a long transcript the 5.x
+// models answer its last turn instead; see docs/digest.md.
 // --no-session-persistence keeps Claude Code from writing this one-shot into
 // ~/.claude/projects, where the indexer would pick it up as a bogus session.
 export const createClaudeSummarizer =
@@ -34,9 +37,9 @@ export const createClaudeSummarizer =
   ({ input, model, prompt }) => {
     try {
       const proc = Bun.spawnSync(
-        [bin, "-p", "--no-session-persistence", "--model", model, prompt],
+        [bin, "-p", "--no-session-persistence", "--model", model, "--system-prompt", prompt],
         {
-          stdin: Buffer.from(input, "utf8"),
+          stdin: Buffer.from(wrapTranscript(input), "utf8"),
           stdout: "pipe",
           stderr: "pipe",
           timeout: timeoutMs,

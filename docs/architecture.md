@@ -435,10 +435,10 @@ never summarizes on its own initiative; the hooks decide when.
 - **`prompt.ts`** owns the summarization contract: the prompt, its version (bump
   it to invalidate existing summaries; `staleThreads` then re-surfaces them), the
   size-to-model tiering and the transcript rendering. cerebro has no tokenizer,
-  so transcripts are sized in bytes at a conservative 3 bytes/token; the budget
-  reserves ~90k tokens for `claude -p`'s own system prompt, tools and the
-  response (a measured overflow showed ~77k tokens of fixed non-transcript
-  overhead). `buildDigestInput` renders a thread verbatim below budget; above it
+  so transcripts are sized in bytes at a conservative 2 bytes/token (the 5.x
+  tokenizer measured 2.1-2.4); the budget reserves 100k tokens for the tools and
+  CLAUDE.md files `claude -p` adds (~40k tokens measured) plus the response.
+  `buildDigestInput` renders a thread verbatim below budget; above it
   every message is kept but each body is capped to the fair share found by a
   binary-search water-fill, so short steering messages stay whole while the
   longest essays are trimmed first. The numbers and env overrides are in

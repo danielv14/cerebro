@@ -22,26 +22,26 @@ Last line: a single line beginning "Keywords:" with a compact comma-separated li
 
 Write in the session's dominant language (Swedish or English). Be terse. Output only the summary itself: no preamble, no heading, no sign-off, no markdown formatting.`;
 
-// 3 errs low (real transcripts run ~3.5-4 bytes/token) so the tiering keeps
-// headroom instead of overflowing on a dense thread.
-const BYTES_PER_TOKEN = 3;
+// The 5.x tokenizer measured 2.1-2.4 bytes/token on real transcripts; 2 errs low
+// so the cap keeps headroom instead of overflowing on a dense thread.
+const BYTES_PER_TOKEN = 2;
 
-// claude -p adds ~77k tokens of measured fixed overhead (system prompt, tools,
-// response room); without this reserve a thread that fits on size still fails
+// claude -p adds ~40k tokens of measured overhead (tools, CLAUDE.md) and needs
+// response room; without this reserve a thread that fits on size still fails
 // with "Prompt is too long".
-const RESERVED_CONTEXT_TOKENS = 90_000;
+const RESERVED_CONTEXT_TOKENS = 100_000;
 
-const SMALL_MODEL_CONTEXT_TOKENS = 200_000;
-const LARGE_MODEL_CONTEXT_TOKENS = 1_000_000;
+const MODEL_CONTEXT_TOKENS = 1_000_000;
 
-const transcriptByteBudget = (contextTokens: number): number =>
-  Math.max(0, contextTokens - RESERVED_CONTEXT_TOKENS) * BYTES_PER_TOKEN;
+export const DIGEST_INPUT_MAX_BYTES =
+  (MODEL_CONTEXT_TOKENS - RESERVED_CONTEXT_TOKENS) * BYTES_PER_TOKEN;
 
-const DEFAULT_HAIKU_MAX_BYTES = transcriptByteBudget(SMALL_MODEL_CONTEXT_TOKENS);
+// A quality line, not a context limit: both default models take 1M, but Haiku
+// 5.5 answered a ~1M-token transcript instead of summarizing it.
+const DEFAULT_ESCALATION_BYTES = 330_000;
 
-// Final backstop so even the 1M model never overflows; pickDigestModel is the
-// primary size control.
-export const DIGEST_INPUT_MAX_BYTES = transcriptByteBudget(LARGE_MODEL_CONTEXT_TOKENS);
+export const wrapTranscript = (transcript: string): string =>
+  `<transcript>\n${transcript}\n</transcript>\n\nWrite the summary of the transcript above, following the instructions in the system prompt.\n`;
 
 export interface DigestModelConfig {
   small: string;
@@ -50,11 +50,9 @@ export interface DigestModelConfig {
 }
 
 export const DEFAULT_DIGEST_MODELS: DigestModelConfig = {
-  small: "claude-haiku-4-5",
-  // The [1m] suffix is what actually buys the 1M window; without it the model
-  // answers on 200k and a large thread overflows.
-  large: "claude-sonnet-4-6[1m]",
-  thresholdBytes: DEFAULT_HAIKU_MAX_BYTES,
+  small: "claude-haiku-5-5",
+  large: "claude-sonnet-5-5",
+  thresholdBytes: DEFAULT_ESCALATION_BYTES,
 };
 
 export const pickDigestModel = (byteCount: number, models: DigestModelConfig): string =>

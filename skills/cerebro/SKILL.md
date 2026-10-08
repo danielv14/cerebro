@@ -402,7 +402,7 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app  [never summarized; settling, drai
 
 ```
 $ cerebro digest run a1b2c3d4
-Summarized a1b2c3d4: 48213 bytes -> claude-haiku-4-5, 612 chars.
+Summarized a1b2c3d4: 48213 bytes -> claude-haiku-5-5, 612 chars.
 ```
 
 ```
@@ -439,11 +439,10 @@ The transcript handed to the model is size-bounded so it fits in a single model 
 Short threads go in verbatim; a giant thread is trimmed (water-fill: short messages are
 kept whole, the longest essays are trimmed first) so it cannot overflow even a 1M context.
 cerebro picks the model from the transcript size it measured when rendering.
-Small threads -> `claude-haiku-4-5` (cheapest, the common case), oversized
--> `claude-sonnet-4-6[1m]` in one shot (1M context, flat pricing, no long-context premium),
-so that a thread of 400-600k tokens is summarized whole instead of truncated. The `[1m]`
-suffix is required: that is how Claude Code picks the 1M variant; without it `claude -p`
-gets the default 200k window and a giant thread still fails with "Prompt is too long".
+Small threads -> `claude-haiku-5-5` (cheapest, the common case), oversized
+-> `claude-sonnet-5-5` in one shot, so that a thread of 400-600k tokens is summarized
+whole by the stronger model instead of truncated. Both have a 1M context in `claude -p`
+without a `[1m]` suffix.
 The threshold and the model names can be overridden via `CEREBRO_DIGEST_MODEL`,
 `CEREBRO_DIGEST_MODEL_LARGE` and `CEREBRO_DIGEST_HAIKU_MAX_CHARS`.
 

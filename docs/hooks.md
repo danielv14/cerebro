@@ -59,8 +59,9 @@ The background summary spawns `claude -p --no-session-persistence` (override the
 with `CEREBRO_CLAUDE_BIN`), so the summarization
 call itself never writes a transcript into `~/.claude/projects` for the indexer to pick
 up as a bogus session. As a backstop the indexer also skips any transcript whose first
-turn is the digest prompt, so even a digest run that predates this (or one written some
-other way) never enters the archive.
+turn is the digest prompt, so a digest run that predates this never enters the archive.
+Runs since the switch to `--system-prompt` open with the fenced transcript instead and
+would not match; `--no-session-persistence` is what keeps them out.
 
 ## Why there is no per-prompt injection hook
 

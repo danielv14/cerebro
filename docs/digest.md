@@ -35,7 +35,10 @@ cerebro digest drain --limit 8       # the stalest N, newest first
 ```
 
 It spawns `claude -p --no-session-persistence` with the model the size tiering
-picked, hands it the transcript on stdin, and stores the result only if the call
+picked, passes the digest prompt as `--system-prompt` and the transcript on stdin
+(fenced in `<transcript>` tags with the request after it; an argv prompt lands
+ahead of stdin, and behind a long transcript the 5.x models then answer its last
+turn instead of summarizing), and stores the result only if the call
 succeeded and the output looks like an actual summary rather than an error
 message or a fragment. Nothing is stored on failure, so the thread stays stale
 and a later `drain` retries it: 6 hours after the first failure, doubling per
