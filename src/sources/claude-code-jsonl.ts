@@ -146,11 +146,63 @@ const messageEnvelope = (event: v.InferOutput<typeof MessageFieldsSchema>) => ({
   isSidechain: event.isSidechain === true,
 });
 
+const LineKindSchema = v.object({
+  type: v.optional(v.unknown()),
+  subtype: v.optional(v.unknown()),
+  attachment: v.fallback(
+    v.optional(v.object({ type: v.optional(v.unknown()), commandMode: v.optional(v.unknown()) })),
+    undefined,
+  ),
+});
+
+// The line's type, refined by the field that tells its variants apart.
+export const lineKind = (raw: unknown): string => {
+  const parsed = v.safeParse(LineKindSchema, raw);
+  if (!parsed.success) return "(not an object)";
+  const { type, subtype, attachment } = parsed.output;
+  const parts = [asStringOrNull(type) ?? "(no type)"];
+  if (type === "system") parts.push(asStringOrNull(subtype) ?? "");
+  if (type === "attachment") {
+    parts.push(asStringOrNull(attachment?.type) ?? "");
+    if (attachment?.type === "queued_command")
+      parts.push(asStringOrNull(attachment.commandMode) ?? "");
+  }
+  return parts.filter(Boolean).join(":");
+};
+
+// Only shapes doctor's sample text; a key missing here makes a sample worse, never
+// the index.
+const ENVELOPE_KEYS = new Set([
+  "uuid",
+  "parentUuid",
+  "logicalParentUuid",
+  "sessionId",
+  "timestamp",
+  "cwd",
+  "gitBranch",
+  "isSidechain",
+  "userType",
+  "entrypoint",
+  "version",
+  "slug",
+]);
+
+const withoutEnvelope = (raw: unknown): unknown =>
+  typeof raw === "object" && raw !== null && !Array.isArray(raw)
+    ? Object.fromEntries(Object.entries(raw).filter(([key]) => !ENVELOPE_KEYS.has(key)))
+    : raw;
+
+const skip = (raw: unknown): Classified => ({
+  kind: "skip",
+  lineKind: lineKind(raw),
+  payload: withoutEnvelope(raw),
+});
+
 // Dropping non-message events before dedup is essential (invariant #5):
 // file-history-snapshot and friends reuse other messages' UUIDs.
 export const classify = (raw: unknown): Classified => {
   const parsed = v.safeParse(EventSchema, raw);
-  if (!parsed.success) return { kind: "skip" };
+  if (!parsed.success) return skip(raw);
   const event = parsed.output;
 
   switch (event.type) {
@@ -174,14 +226,14 @@ export const classify = (raw: unknown): Classified => {
     case "custom-title":
       return event.customTitle
         ? { kind: "title", sessionId: event.sessionId, title: event.customTitle, priority: 3 }
-        : { kind: "skip" };
+        : skip(raw);
     case "ai-title":
       return event.aiTitle
         ? { kind: "title", sessionId: event.sessionId, title: event.aiTitle, priority: 2 }
-        : { kind: "skip" };
+        : skip(raw);
     case "summary":
       return event.summary
         ? { kind: "title", sessionId: event.sessionId, title: event.summary, priority: 1 }
-        : { kind: "skip" };
+        : skip(raw);
   }
 };

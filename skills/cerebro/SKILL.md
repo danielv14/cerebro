@@ -297,7 +297,10 @@ binary has drifted from the repo, and whether the hooks are wired in `settings.j
 never repairs anything; it points out the command that does. Exit 1 only on a hard
 failure (corruption, or a schema this build cannot read), so a warning like a digest
 backlog does not turn it red. `--full` runs the complete `integrity_check` instead of
-`quick_check`. `version` prints just the build identity, which is what makes the drift
+`quick_check`, and also reads every transcript to list what the indexer skips: each line
+kind with a count and a sample of its longest text (`skipped` in `--json`). Use it to judge
+whether a kind that recurs with long, user-typed text ought to be indexed; the list never
+changes the exit code. `version` prints just the build identity, which is what makes the drift
 check possible.
 
 ```
@@ -322,6 +325,17 @@ Archive
 
 Hooks
   ok    SessionEnd        index + summarize on /clear
+
+All checks passed, 1 warning(s).
+```
+
+```
+$ cerebro doctor --full
+...
+Skipped by the indexer
+    40883  attachment:total_tokens_reminder             <system-reminder> <total_tokens>15000000 tokens left</total_tokens> </system-rem…
+      290  attachment:queued_command:task-notification  <system-reminder> [SYSTEM NOTIFICATION - NOT USER INPUT] This is an automated ba…
+       27  attachment:queued_command                    <system-reminder> The coordinator sent a message while you…
 
 All checks passed, 1 warning(s).
 ```

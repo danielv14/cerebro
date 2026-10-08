@@ -47,9 +47,17 @@ const defineCheck = (identity: Pick<Check, "key" | "group" | "label">): CheckOut
   };
 };
 
+export interface SkippedKind {
+  kind: string;
+  count: number;
+  sample: string;
+}
+
 export interface DoctorReport {
   build: BuildStamp;
   checks: Check[];
+  // Informational only, never part of `ok`; present under --full.
+  skipped?: SkippedKind[];
   ok: boolean;
 }
 
@@ -183,6 +191,53 @@ const hookWiring = (path: string): Check => {
     : check.warn("not wired to cerebro", "add a SessionEnd hook (see README, Automation)");
 };
 
+const longestString = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return "";
+  let longest = "";
+  for (const child of Object.values(value)) {
+    const text = longestString(child);
+    if (text.length > longest.length) longest = text;
+  }
+  return longest;
+};
+
+const SAMPLE_CHARS = 80;
+
+// Reads every transcript, which is why it waits for --full. The sample comes from
+// the kind's longest text, since a kind that carries long text is the one that
+// might deserve indexing.
+const skippedLineKinds = (adapters: SourceAdapter[]): SkippedKind[] => {
+  const byKind = new Map<string, { count: number; text: string }>();
+  for (const adapter of adapters) {
+    for (const file of adapter.discover()) {
+      let content: string;
+      try {
+        content = readFileSync(file.path, "utf8");
+      } catch {
+        continue;
+      }
+      for (const line of adapter.classifyLines(content.split("\n"))) {
+        if (line.kind !== "skip") continue;
+        const text = longestString(line.payload);
+        const seen = byKind.get(line.lineKind);
+        if (!seen) byKind.set(line.lineKind, { count: 1, text });
+        else {
+          seen.count++;
+          if (text.length > seen.text.length) seen.text = text;
+        }
+      }
+    }
+  }
+  return [...byKind]
+    .map(([kind, { count, text }]) => {
+      const flat = text.replace(/\s+/g, " ").trim();
+      const sample = flat.length > SAMPLE_CHARS ? `${flat.slice(0, SAMPLE_CHARS)}…` : flat;
+      return { kind, count, sample };
+    })
+    .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind));
+};
+
 export interface DoctorOptions {
   deployedBinary: string;
   settingsFile: string;
@@ -192,10 +247,11 @@ export interface DoctorOptions {
 
 export const runDoctor = (db: Database, dbPath: string, opts: DoctorOptions): DoctorReport => {
   const build = buildStamp();
+  const full = opts.full ?? false;
   const checks: Check[] = [
     deployedDrift(build, opts.deployedBinary),
     schemaCheck(db),
-    integrityCheck(db, opts.full ?? false),
+    integrityCheck(db, full),
     ftsCheck(db, "messages_fts"),
     ftsCheck(db, "summaries_fts"),
     walSize(dbPath),
@@ -204,5 +260,10 @@ export const runDoctor = (db: Database, dbPath: string, opts: DoctorOptions): Do
     digestCoverage(db),
     hookWiring(opts.settingsFile),
   ];
-  return { build, checks, ok: !checks.some((c) => c.status === "fail") };
+  return {
+    build,
+    checks,
+    ...(full ? { skipped: skippedLineKinds(opts.adapters) } : {}),
+    ok: !checks.some((c) => c.status === "fail"),
+  };
 };

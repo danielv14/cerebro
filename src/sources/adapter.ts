@@ -27,7 +27,9 @@ export type Classified =
       model: string | null;
     }
   | { kind: "title"; sessionId: string | null; title: string; priority: number }
-  | { kind: "skip" };
+  // For doctor's inventory of skipped lines: lineKind names the variant, payload
+  // is the line without the envelope fields every line repeats.
+  | { kind: "skip"; lineKind: string; payload: unknown };
 
 export interface SourceAdapter {
   // Never rename an id once sessions carry it: the migration backfill only heals

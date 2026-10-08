@@ -92,7 +92,10 @@ and `test/sources.test.ts` has a fake adapter driven end to end as a template.
    fabricate links.
 6. **Tolerant parsing.** The log format will evolve under you, and a parser that
    throws loses whole files. Validate with Valibot the way `claude-code-jsonl.ts`
-   does, fold whatever is searchable into `text`, and drop the rest.
+   does, fold whatever is searchable into `text`, and drop the rest. A dropped
+   line is still a `skip` with a `lineKind` (the variant, as fine as the source
+   can tell them apart) and its `payload` minus per-line envelope fields, so
+   `doctor --full` can list what a source never indexes.
 7. **Tool blocks in the shared tag format.** A tool call or result folded into
    `text` opens with `[tool_` (`[tool_use:<name>] <json>`, `[tool_result] …`,
    `[tool_result:error] …`), and prose never does. `isToolText` tells tool
@@ -525,7 +528,14 @@ not trustworthy on an archive that is the only copy of deleted sessions. Only
 as a cron guard without going red on warnings; "unknown" is what a check degrades
 to when its input is unreadable, each check independently. `quick_check` is the
 default integrity form because `integrity_check` walks every page and is slow on a
-large archive. The deployed-drift check spawns the deployed binary's `version` and
+large archive. `--full` also reads every transcript through its adapter and
+lists the line kinds the indexer skips, with a count and a sample from each
+kind's longest text. That is how a new user-relevant event gets noticed: #223
+was 431 queued prompts dropped for months. It runs on demand rather than as a
+tally kept by the indexer, because a full scan costs a few seconds, needs no
+schema, cannot double-count across `--full` and `--rebuild`, and covers files
+read before the feature existed. The listing never touches the exit code. The
+deployed-drift check spawns the deployed binary's `version` and
 compares build stamps, which is why `version` must answer without opening the
 archive.
 

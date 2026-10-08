@@ -231,6 +231,42 @@ describe("runDoctor", () => {
     expect(threadsLine).toBe("Threads:          1 (1 summarized, 1 stale)");
     expect(byKey(doctor(), "digest").detail).toBe("1/1 threads summarized, 1 stale");
   });
+  test("--full lists the line kinds the indexer skipped, with a count and a sample each", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "hello"),
+      { type: "file-history-snapshot", messageId: "u1" },
+      {
+        type: "attachment",
+        uuid: "a1",
+        cwd: "/a/very/long/working/directory/that/is/not/the/sample/text",
+        attachment: { type: "queued_command", commandMode: "task-notification", prompt: "done" },
+      },
+      {
+        type: "attachment",
+        uuid: "a2",
+        attachment: {
+          type: "queued_command",
+          commandMode: "task-notification",
+          prompt: `finished\n${"x".repeat(100)}`,
+        },
+      },
+      { type: "attachment", uuid: "a3", attachment: { type: "date", date: "Thursday 2026-10-08" } },
+    ]);
+    runIndex(db, { adapters: env.adapters });
+
+    expect(doctor().skipped).toBeUndefined();
+    const report = doctor({ full: true });
+    expect(report.ok).toBe(true);
+    expect(report.skipped).toEqual([
+      {
+        kind: "attachment:queued_command:task-notification",
+        count: 2,
+        sample: `finished ${"x".repeat(71)}…`,
+      },
+      { kind: "attachment:date", count: 1, sample: "Thursday 2026-10-08" },
+      { kind: "file-history-snapshot", count: 1, sample: "file-history-snapshot" },
+    ]);
+  });
 });
 
 describe("doctorReport", () => {
@@ -264,6 +300,27 @@ describe("doctorReport", () => {
       "Database",
       "  ok    schema            v4 (current)",
       "  warn  wal               90000000 bytes  -> cerebro maintain",
+      "",
+      "All checks passed, 1 warning(s).",
+    ]);
+  });
+
+  test("lists skipped line kinds after the checks without counting them in the verdict", () => {
+    const lines = doctorReport(
+      {
+        ...report,
+        skipped: [
+          { kind: "attachment:date", count: 1200, sample: "2026-10-08" },
+          { kind: "mode", count: 3, sample: "normal" },
+        ],
+      },
+      "/tmp/archive.sqlite",
+      null,
+    );
+    expect(lines.slice(-5)).toEqual([
+      "Skipped by the indexer",
+      "     1200  attachment:date  2026-10-08",
+      "        3  mode             normal",
       "",
       "All checks passed, 1 warning(s).",
     ]);

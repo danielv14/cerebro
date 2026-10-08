@@ -126,8 +126,8 @@ describe("classify", () => {
   });
 
   test("drops a user/assistant event with no uuid or no message", () => {
-    expect(classify({ type: "user", message: { content: "x" } })).toEqual({ kind: "skip" });
-    expect(classify({ type: "assistant", uuid: "a1" })).toEqual({ kind: "skip" });
+    expect(classify({ type: "user", message: { content: "x" } })).toMatchObject({ kind: "skip" });
+    expect(classify({ type: "assistant", uuid: "a1" })).toMatchObject({ kind: "skip" });
   });
 
   test("classifies a message with every optional field missing as nulls + isSidechain false", () => {
@@ -189,10 +189,10 @@ describe("classify", () => {
   });
 
   test("skips an unknown event type so an evolving log format never crashes indexing", () => {
-    expect(classify({ type: "tool-call-record", uuid: "x1", message: { content: "x" } })).toEqual({
-      kind: "skip",
-    });
-    expect(classify({ type: "x-future-event" })).toEqual({ kind: "skip" });
+    expect(
+      classify({ type: "tool-call-record", uuid: "x1", message: { content: "x" } }),
+    ).toMatchObject({ kind: "skip" });
+    expect(classify({ type: "x-future-event" })).toMatchObject({ kind: "skip" });
   });
 
   test("title precedence: custom (3) > ai (2) > summary (1)", () => {
@@ -212,9 +212,9 @@ describe("classify", () => {
   });
 
   test("drops non-message bookkeeping events that may reuse UUIDs", () => {
-    expect(classify({ type: "file-history-snapshot", uuid: "u1" })).toEqual({ kind: "skip" });
-    expect(classify({ type: "system", uuid: "s1", content: "x" })).toEqual({ kind: "skip" });
-    expect(classify({ type: "attachment", uuid: "x1" })).toEqual({ kind: "skip" });
+    expect(classify({ type: "file-history-snapshot", uuid: "u1" })).toMatchObject({ kind: "skip" });
+    expect(classify({ type: "system", uuid: "s1", content: "x" })).toMatchObject({ kind: "skip" });
+    expect(classify({ type: "attachment", uuid: "x1" })).toMatchObject({ kind: "skip" });
   });
 
   test("keeps a message the user queued while the agent was busy, in both prompt shapes", () => {
@@ -254,7 +254,7 @@ describe("classify", () => {
           prompt: "<task-notification>done</task-notification>",
         },
       }),
-    ).toEqual({ kind: "skip" });
+    ).toMatchObject({ kind: "skip" });
     expect(
       classify({
         type: "attachment",
@@ -266,11 +266,35 @@ describe("classify", () => {
           origin: { kind: "coordinator" },
         },
       }),
-    ).toEqual({ kind: "skip" });
+    ).toMatchObject({ kind: "skip" });
+  });
+
+  test("names a skipped line's kind by its type, refined by the field that tells variants apart", () => {
+    const kindOf = (raw: unknown) => {
+      const classified = classify(raw);
+      return classified.kind === "skip" ? classified.lineKind : classified.kind;
+    };
+    expect(kindOf({ type: "file-history-snapshot", uuid: "u1" })).toBe("file-history-snapshot");
+    expect(kindOf({ type: "system", subtype: "turn_duration" })).toBe("system:turn_duration");
+    expect(kindOf({ type: "system" })).toBe("system");
+    expect(kindOf({ type: "attachment", attachment: { type: "date" } })).toBe("attachment:date");
+    expect(
+      kindOf({
+        type: "attachment",
+        attachment: { type: "queued_command", commandMode: "task-notification", prompt: "x" },
+      }),
+    ).toBe("attachment:queued_command:task-notification");
+    expect(
+      kindOf({ type: "attachment", attachment: { type: "queued_command", prompt: "x" } }),
+    ).toBe("attachment:queued_command");
+    expect(kindOf({ type: "attachment", attachment: "not an object" })).toBe("attachment");
+    expect(kindOf({ type: "user", message: { content: "no uuid" } })).toBe("user");
+    expect(kindOf({ uuid: "u1" })).toBe("(no type)");
+    expect(kindOf(null)).toBe("(not an object)");
   });
 
   test("skips a non-object", () => {
-    expect(classify(null)).toEqual({ kind: "skip" });
-    expect(classify("string")).toEqual({ kind: "skip" });
+    expect(classify(null)).toMatchObject({ kind: "skip" });
+    expect(classify("string")).toMatchObject({ kind: "skip" });
   });
 });
