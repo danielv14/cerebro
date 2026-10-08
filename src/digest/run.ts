@@ -27,6 +27,13 @@ export interface SummarizeResult {
 
 export type Summarizer = (request: SummarizeRequest) => SummarizeResult;
 
+// claude -p puts an argv prompt ahead of stdin. Behind a long transcript that
+// ends mid-conversation, the 5.x models then answer its last turn instead of
+// summarizing, so the prompt goes in as the system prompt and the transcript is
+// fenced off with the request after it.
+const wrapTranscript = (input: string): string =>
+  `<transcript>\n${input}\n</transcript>\n\nWrite the summary of the transcript above, following the instructions in the system prompt.\n`;
+
 // --no-session-persistence keeps Claude Code from writing this one-shot into
 // ~/.claude/projects, where the indexer would pick it up as a bogus session.
 export const createClaudeSummarizer =
@@ -34,9 +41,9 @@ export const createClaudeSummarizer =
   ({ input, model, prompt }) => {
     try {
       const proc = Bun.spawnSync(
-        [bin, "-p", "--no-session-persistence", "--model", model, prompt],
+        [bin, "-p", "--no-session-persistence", "--model", model, "--system-prompt", prompt],
         {
-          stdin: Buffer.from(input, "utf8"),
+          stdin: Buffer.from(wrapTranscript(input), "utf8"),
           stdout: "pipe",
           stderr: "pipe",
           timeout: timeoutMs,
