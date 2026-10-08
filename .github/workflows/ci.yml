@@ -16,6 +16,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         bun-version: ["1.2.6", latest]
     steps:
