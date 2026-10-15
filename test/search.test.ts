@@ -727,7 +727,7 @@ describe("query (populated archive)", () => {
     expect(search(db, "branchy", 10, { branch: "myXapp" }).length).toBe(1);
   });
 
-  test("sessions and stats agree that a subagent-only stub is not a deleted source (#45, #220)", () => {
+  test("sessions and stats agree on which sessions have a deleted source (#45, #220, #239)", () => {
     // A parent stub created purely from a subagent file: source_file is NULL, but
     // nothing was ever deleted.
     writeSubagent(env.projects, "-repo", "STUB", "agent-1", [
@@ -748,6 +748,11 @@ describe("query (populated archive)", () => {
     runIndex(db, { adapters: env.adapters });
     expect(stats(db).deletedSources).toBe(1);
     expect(deletedInListing()).toEqual(["REAL"]);
+
+    // A hook binary built before #220 flagged the stub itself; both views must count it.
+    db.run("UPDATE sessions SET body_available = 0 WHERE session_id = 'STUB'");
+    expect(stats(db).deletedSources).toBe(2);
+    expect(deletedInListing().sort()).toEqual(["REAL", "STUB"]);
   });
 
   test("search and sessions select the same threads for one --project and --branch (#218)", () => {

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { escapeLike } from "./like.ts";
-import { isToolText } from "./sources/claude-code-jsonl.ts";
+import { isToolText } from "./sources/adapter.ts";
 
 const THREAD_MEMBERSHIP =
   "session_id IN (SELECT session_id FROM sessions WHERE root_session_id = ?)";

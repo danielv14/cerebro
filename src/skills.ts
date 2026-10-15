@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { escapeLike } from "./like.ts";
-import { isToolText, toolUseTag } from "./sources/claude-code-jsonl.ts";
+import { isToolText, toolUseTag } from "./sources/adapter.ts";
 import { archiveSpan } from "./stats.ts";
 
 const SLASH_OPEN = "<command-name>";
