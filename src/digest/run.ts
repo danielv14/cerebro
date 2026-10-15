@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { rootOf, threadLastTs, threadMessages } from "../thread.ts";
+import { rootMessages, rootOf, threadLastTs } from "../thread.ts";
 import type { DigestConfig } from "./config.ts";
 import {
   buildDigestInput,
@@ -74,15 +74,17 @@ export const createClaudeSummarizer =
     }
   };
 
-export interface DigestOutcome {
-  status: "summarized" | "skipped" | "failed";
-  root: string;
-  reason?: string;
-  model?: string;
-  bytes?: number;
-  chars?: number;
-  fatal?: boolean;
-}
+export type DigestOutcome =
+  | { status: "summarized"; root: string; model: string; bytes: number; chars: number }
+  | { status: "skipped"; root: string; reason: string }
+  | {
+      status: "failed";
+      root: string;
+      reason: string;
+      model?: string;
+      bytes?: number;
+      fatal?: true;
+    };
 
 export interface DigestOptions {
   summarize: Summarizer;
@@ -96,7 +98,7 @@ export interface DigestOptions {
 
 export const runDigest = (db: Database, sessionId: string, opts: DigestOptions): DigestOutcome => {
   const root = rootOf(db, sessionId);
-  const input = buildDigestInput(threadMessages(db, sessionId));
+  const input = buildDigestInput(rootMessages(db, root));
   // Captured with the transcript, not after the model returns: anything indexed
   // during the minutes-long call must stay stale.
   const coversLastTs = threadLastTs(db, root);
@@ -120,7 +122,7 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
     return { status: "failed", root, reason, model, bytes };
   }
 
-  writeSummary(db, sessionId, result.text, model, coversLastTs);
+  writeSummary(db, root, result.text, model, coversLastTs);
   return { status: "summarized", root, model, bytes, chars: result.text.length };
 };
 
@@ -135,13 +137,9 @@ export interface DrainResult {
   heldBack: number;
 }
 
-export interface DrainOptions {
-  summarize: Summarizer;
-  models: DigestModelConfig;
-  onStart?: (count: number) => void;
-  onThreadStart?: (about: { root: string; bytes: number; model: string }) => void;
+export interface DrainOptions extends DigestOptions {
+  onDrainStart?: (count: number) => void;
   onOutcome?: (outcome: DigestOutcome) => void;
-  clock?: () => number;
 }
 
 export const runDrain = (db: Database, limit: number, opts: DrainOptions): DrainResult => {
@@ -154,22 +152,18 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
     skipped: 0,
     heldBack: threads.length === 0 ? countStaleThreads(db) : 0,
   };
-  if (threads.length > 0) opts.onStart?.(threads.length);
+  if (threads.length > 0) opts.onDrainStart?.(threads.length);
   for (const thread of threads) {
     let outcome: DigestOutcome;
     try {
-      outcome = runDigest(db, thread.id, {
-        summarize: opts.summarize,
-        models: opts.models,
-        onStart: opts.onThreadStart,
-        clock,
-      });
+      outcome = runDigest(db, thread.id, { ...opts, clock });
     } catch (error) {
-      outcome = { status: "failed", root: thread.id, reason: (error as Error).message };
+      const reason = (error as Error).message;
+      outcome = { status: "failed", root: thread.id, reason };
       // A throw that repeats would otherwise take this thread's slot on every drain;
       // one from a locked or broken database fails the record too, and changes nothing.
       try {
-        recordDigestFailure(db, thread.id, outcome.reason!, clock());
+        recordDigestFailure(db, thread.id, reason, clock());
       } catch {}
     }
     opts.onOutcome?.(outcome);
@@ -177,7 +171,7 @@ export const runDrain = (db: Database, limit: number, opts: DrainOptions): Drain
     if (outcome.status === "summarized") result.summarized++;
     else if (outcome.status === "skipped") result.skipped++;
     else result.failed++;
-    if (outcome.fatal) {
+    if (outcome.status === "failed" && outcome.fatal) {
       result.aborted = outcome.reason;
       break;
     }

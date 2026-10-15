@@ -194,9 +194,8 @@ export interface ThreadMessage {
   is_sidechain: number;
 }
 
-export const threadMessages = (db: Database, sessionId: string): ThreadMessage[] => {
-  const root = rootOf(db, sessionId);
-  return db
+export const rootMessages = (db: Database, root: string): ThreadMessage[] =>
+  db
     .query(
       `SELECT m.role, m.ts, m.text, m.session_id, m.is_sidechain
        FROM messages m
@@ -204,7 +203,9 @@ export const threadMessages = (db: Database, sessionId: string): ThreadMessage[]
        ORDER BY ${THREAD_MESSAGE_ORDER}`,
     )
     .all(root) as ThreadMessage[];
-};
+
+export const threadMessages = (db: Database, sessionId: string): ThreadMessage[] =>
+  rootMessages(db, rootOf(db, sessionId));
 
 const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
 const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;

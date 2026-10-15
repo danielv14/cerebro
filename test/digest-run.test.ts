@@ -68,17 +68,29 @@ describe("runDigest", () => {
     const { summarize, calls } = fakeSummarizer();
     const outcome = runDigest(db, "SESS", { summarize, models });
 
-    expect(outcome.status).toBe("summarized");
+    if (outcome.status !== "summarized") throw new Error(`not summarized: ${outcome.reason}`);
     expect(outcome.root).toBe("SESS");
     expect(outcome.chars).toBe(GOOD_SUMMARY.length);
     expect(outcome.bytes).toBeGreaterThan(0);
     expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
-    expect(getSummary(db, "SESS")?.model).toBe(outcome.model!);
+    expect(getSummary(db, "SESS")?.model).toBe(outcome.model);
 
     expect(calls.length).toBe(1);
     expect(calls[0]!.input).toContain("how do I tune the limiter");
     expect(calls[0]!.prompt).toContain("You are summarizing a single Claude Code session");
-    expect(calls[0]!.model).toBe(outcome.model!);
+    expect(calls[0]!.model).toBe(outcome.model);
+  });
+
+  test("attributes a resume's summary to the thread root", () => {
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    runIndex(db, { adapters: env.adapters });
+    const { summarize } = fakeSummarizer();
+
+    expect(runDigest(db, "RESUME", { summarize, models }).root).toBe("SESS");
+    expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
+    expect(staleThreads(db, { limit: 10 })).toEqual([]);
   });
 
   test("a thread with no messages is skipped, never summarized as empty", () => {
@@ -88,8 +100,7 @@ describe("runDigest", () => {
     const { summarize, calls } = fakeSummarizer();
     const outcome = runDigest(db, "EMPTY", { summarize, models });
 
-    expect(outcome.status).toBe("skipped");
-    expect(outcome.reason).toBe("nothing to summarize");
+    expect(outcome).toMatchObject({ status: "skipped", reason: "nothing to summarize" });
     expect(calls).toEqual([]);
     expect(getSummary(db, "EMPTY")).toBeNull();
   });
@@ -98,8 +109,7 @@ describe("runDigest", () => {
     const { summarize } = fakeSummarizer({ ok: false, text: "", detail: "claude exited 1" });
     const outcome = runDigest(db, "SESS", { summarize, models });
 
-    expect(outcome.status).toBe("failed");
-    expect(outcome.reason).toBe("claude exited 1");
+    expect(outcome).toMatchObject({ status: "failed", reason: "claude exited 1" });
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
@@ -117,8 +127,10 @@ describe("runDigest", () => {
     const { summarize } = fakeSummarizer({ text: "Prompt is too long: 213000 tokens" });
     const outcome = runDigest(db, "SESS", { summarize, models });
 
-    expect(outcome.status).toBe("failed");
-    expect(outcome.reason).toContain("rejected");
+    expect(outcome).toMatchObject({
+      status: "failed",
+      reason: expect.stringContaining("rejected"),
+    });
     expect(getSummary(db, "SESS")).toBeNull();
   });
 
@@ -137,8 +149,7 @@ describe("runDigest", () => {
     });
     const outcome = runDigest(db, "SESS", { summarize, models });
 
-    expect(outcome.status).toBe("failed");
-    expect(outcome.fatal).toBe(true);
+    expect(outcome).toMatchObject({ status: "failed", fatal: true });
   });
 
   test("stamps the last_ts the transcript covered, not the one at store time", () => {
@@ -318,7 +329,7 @@ describe("runDrain", () => {
     expect(result.failed).toBe(1);
     expect(result.summarized).toBe(2);
     expect(result.aborted).toBeUndefined();
-    expect(result.outcomes[0]!.reason).toContain("timed out");
+    expect(result.outcomes[0]).toMatchObject({ reason: expect.stringContaining("timed out") });
     expect(staleThreads(db, { limit: 10 }).length).toBe(1); // the timed-out thread is retried later
   });
 
@@ -334,7 +345,9 @@ describe("runDrain", () => {
     expect(result.outcomes.length).toBe(3);
     expect(result.summarized).toBe(2);
     expect(result.failed).toBe(1);
-    expect(result.outcomes[0]!.reason).toContain("something unexpected");
+    expect(result.outcomes[0]).toMatchObject({
+      reason: expect.stringContaining("something unexpected"),
+    });
   });
 
   test("a skipped thread is counted apart from a failure", () => {

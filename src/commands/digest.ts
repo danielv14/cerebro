@@ -192,8 +192,9 @@ export const digestCommand: CommandGroup = {
         const cap = args.limit ?? DEFAULT_DRAIN_LIMIT;
         const result = runDrain(db, cap, {
           ...digestPipeline(digestConfigFromEnv()),
-          onStart: (count) => progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
-          onThreadStart: (about) => progress(digestStartLine(about)),
+          onDrainStart: (count) =>
+            progress(`Draining up to ${cap} stale thread(s): ${count} to do.`),
+          onStart: (about) => progress(digestStartLine(about)),
           onOutcome: (outcome) => progress(digestOutcomeLine(outcome)),
         });
         return {
