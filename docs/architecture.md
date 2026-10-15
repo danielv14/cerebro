@@ -58,10 +58,11 @@ whole turn. `flattenContent` renders block arrays as greppable text: prose and
 thinking pass through, while tool blocks get a compact tag and a size cap, because
 tool plumbing dominates transcript bytes and ages worst and the head of the
 payload already carries the searchable identifiers. Errors are exempt, a truncated
-stack trace being useless. `toolUseTag` is exported so `skills` derives its marker
-from the flattener instead of duplicating the string, and `isToolText` is the one
-SQL predicate for "this text is flattened tool output", used by `search --prose`,
-`skills` and the opening-prompt ranking.
+stack trace being useless. The tag itself belongs to the contract, not the
+adapter: `adapter.ts` defines `toolUseTag`, which the flattener emits and `skills`
+derives its marker from, and `isToolText`, the one SQL predicate for "this text
+is flattened tool output", used by `search --prose`, `skills` and the
+opening-prompt ranking.
 
 ### What a new adapter must guarantee
 
@@ -137,6 +138,12 @@ until an `index --full` re-harvests it for files still on disk.
   so rewording it hides existing digest transcripts from a `--full` re-read
   unless the check keeps recognizing the old wording too. Adding a second adapter
   is what makes the wording wrong, so do it then.
+- `threadOpeningPrompt` ranks user turns by Claude Code transcript markers: a
+  slash-command turn (`<command-name>` / `<command-args>`) yields its arguments,
+  and a skill body (`Base directory for this skill:`) or an interrupt marker
+  (`[Request interrupted`) is never picked when a real prompt exists. Another
+  source's equivalents fall through as ordinary prose until the ranking learns
+  them.
 
 ## Scan layer (`src/scan.ts`)
 

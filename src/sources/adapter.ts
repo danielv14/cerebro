@@ -1,3 +1,5 @@
+import { escapeLike } from "../like.ts";
+
 export interface SessionFile {
   path: string;
   // "subagent" folds into the parent session named by sessionId.
@@ -57,3 +59,13 @@ export const parseLine = (line: string): unknown => {
     return undefined;
   }
 };
+
+// Every tool block opens with this, and the source-agnostic queries (search
+// --prose, skills, the opening prompt) tell tool output from prose by it alone.
+export const TOOL_TAG_OPEN = "[tool_";
+
+export const toolUseTag = (name: string): string => `${TOOL_TAG_OPEN}use:${name}]`;
+
+// `column` is a codebase literal, never user input.
+export const isToolText = (column: string): string =>
+  `${column} LIKE '${escapeLike(TOOL_TAG_OPEN)}%' ESCAPE '\\'`;

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eng, removeStopwords, swe } from "stopword";
-import { isToolText } from "./sources/claude-code-jsonl.ts";
+import { isToolText } from "./sources/adapter.ts";
 import { type ThreadScope, threadScope } from "./thread.ts";
 
 // A quoted FTS5 string is always valid syntax, whatever the token holds.

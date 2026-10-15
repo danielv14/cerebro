@@ -1,6 +1,11 @@
 import * as v from "valibot";
-import { escapeLike } from "../like.ts";
-import { type Classified, parseLine, type SkippedLine } from "./adapter.ts";
+import {
+  type Classified,
+  parseLine,
+  type SkippedLine,
+  TOOL_TAG_OPEN,
+  toolUseTag,
+} from "./adapter.ts";
 
 // Only `type`, `uuid` and the content field are load-bearing. The optional scalars stay
 // `unknown` (coerced below) so a changed field type in an evolving log defaults
@@ -81,16 +86,6 @@ const capToolText = (rendered: string): string =>
   rendered.length <= TOOL_TEXT_CAP
     ? rendered
     : `${rendered.slice(0, TOOL_TEXT_CAP)} [+${rendered.length - TOOL_TEXT_CAP} chars truncated]`;
-
-// Every tool block opens with this, and the source-agnostic queries (search
-// --prose, skills, the opening prompt) tell tool output from prose by it alone.
-const TOOL_TAG_OPEN = "[tool_";
-
-export const toolUseTag = (name: string): string => `${TOOL_TAG_OPEN}use:${name}]`;
-
-// `column` is a codebase literal, never user input.
-export const isToolText = (column: string): string =>
-  `${column} LIKE '${escapeLike(TOOL_TAG_OPEN)}%' ESCAPE '\\'`;
 
 export const flattenContent = (content: unknown): string => {
   if (typeof content === "string") return content;
