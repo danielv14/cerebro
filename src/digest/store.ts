@@ -34,8 +34,15 @@ export const writeSummary = (
   summary: string,
   model: string | null = null,
   coversLastTs?: string | null,
+): string => writeRootSummary(db, rootOf(db, sessionId), summary, model, coversLastTs);
+
+export const writeRootSummary = (
+  db: Database,
+  root: string,
+  summary: string,
+  model: string | null = null,
+  coversLastTs?: string | null,
 ): string => {
-  const root = rootOf(db, sessionId);
   const sourceLastTs = coversLastTs === undefined ? threadLastTs(db, root) : coversLastTs;
 
   db.query(
