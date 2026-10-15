@@ -81,6 +81,18 @@ describe("runDigest", () => {
     expect(calls[0]!.model).toBe(outcome.model);
   });
 
+  test("attributes a resume's summary to the thread root", () => {
+    writeSession(env.projects, "-repo", "RESUME", [
+      userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
+    ]);
+    runIndex(db, { adapters: env.adapters });
+    const { summarize } = fakeSummarizer();
+
+    expect(runDigest(db, "RESUME", { summarize, models }).root).toBe("SESS");
+    expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
+    expect(staleThreads(db, { limit: 10 })).toEqual([]);
+  });
+
   test("a thread with no messages is skipped, never summarized as empty", () => {
     db.run(
       "INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('EMPTY', 'EMPTY', 0)",

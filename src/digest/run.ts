@@ -9,7 +9,7 @@ import {
   wrapTranscript,
 } from "./prompt.ts";
 import { countStaleThreads, staleThreads } from "./stale.ts";
-import { recordDigestFailure, rejectSummaryReason, writeRootSummary } from "./store.ts";
+import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
 
 export interface SummarizeRequest {
   input: string;
@@ -122,7 +122,7 @@ export const runDigest = (db: Database, sessionId: string, opts: DigestOptions):
     return { status: "failed", root, reason, model, bytes };
   }
 
-  writeRootSummary(db, root, result.text, model, coversLastTs);
+  writeSummary(db, root, result.text, model, coversLastTs);
   return { status: "summarized", root, model, bytes, chars: result.text.length };
 };
 

@@ -335,22 +335,6 @@ describe("digest (summaries layer)", () => {
     expect(searchSummaries(db, "knex").map((h) => h.id)).toEqual(["S"]);
   });
 
-  test("writeSummary attributes a resume's summary to the thread root", () => {
-    writeSession(env.projects, "-repo", "ORIG", [
-      userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
-      assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
-    ]);
-    writeSession(env.projects, "-repo", "RESUME", [
-      userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
-    ]);
-    runIndex(db, { adapters: env.adapters });
-
-    const root = writeSummary(db, "RESUME", "Thread summary. Keywords: start, more");
-    expect(root).toBe("ORIG");
-    expect(getSummary(db, "ORIG")!.summary).toContain("Thread summary");
-    expect(staleThreads(db).length).toBe(0);
-  });
-
   test("searchSummaries ranks by topic, brackets the match, and ignores stopword queries", () => {
     writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
     writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b", { timestamp: ts(10) })]);

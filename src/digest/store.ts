@@ -30,19 +30,11 @@ export const rejectSummaryReason = (text: string): string | null => {
 
 export const writeSummary = (
   db: Database,
-  sessionId: string,
-  summary: string,
-  model: string | null = null,
-  coversLastTs?: string | null,
-): string => writeRootSummary(db, rootOf(db, sessionId), summary, model, coversLastTs);
-
-export const writeRootSummary = (
-  db: Database,
   root: string,
   summary: string,
   model: string | null = null,
   coversLastTs?: string | null,
-): string => {
+): void => {
   const sourceLastTs = coversLastTs === undefined ? threadLastTs(db, root) : coversLastTs;
 
   db.query(
@@ -56,8 +48,6 @@ export const writeRootSummary = (
        source_last_ts = excluded.source_last_ts`,
   ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), sourceLastTs);
   db.query("DELETE FROM digest_failures WHERE root_session_id = ?").run(root);
-
-  return root;
 };
 
 // The first retry lands on the reconciler's next 6-hourly run; each further

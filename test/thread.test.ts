@@ -301,7 +301,7 @@ describe("thread (identity + membership)", () => {
 
     test("a summary's coverage point is the threads view's last_ts (#214)", () => {
       seedThread();
-      writeSummary(db, "RESUME", "Summary of the whole thread. Keywords: start");
+      writeSummary(db, "ORIG", "Summary of the whole thread. Keywords: start");
       const view = db.query("SELECT last_ts FROM threads WHERE id = 'ORIG'").get() as {
         last_ts: string;
       };
