@@ -98,10 +98,10 @@ export interface DigestOptions {
 
 export const runDigest = (db: Database, sessionId: string, opts: DigestOptions): DigestOutcome => {
   const root = rootOf(db, sessionId);
-  const input = buildDigestInput(rootMessages(db, root));
-  // Captured with the transcript, not after the model returns: anything indexed
-  // during the minutes-long call must stay stale.
+  // Read before the transcript, not after it or after the model returns: a
+  // message indexed in between must leave the thread stale, never covered unseen.
   const coversLastTs = threadLastTs(db, root);
+  const input = buildDigestInput(rootMessages(db, root));
   // Never summarize an empty render: the prompt would answer with the no-content
   // form and storing it would permanently mark the thread summarized-and-fresh.
   if (input.length === 0) return { status: "skipped", root, reason: "nothing to summarize" };
