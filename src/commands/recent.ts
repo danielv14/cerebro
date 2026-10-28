@@ -24,7 +24,7 @@ export const recentBlock = (
 const repoName = (repo: GitInfo, cwd: string): string =>
   repo.remote
     ? (repo.remote
-        .replace(/(\.git)?\/*$/, "")
+        .replace(/\/*(\.git)?\/*$/, "")
         .split(/[/:]/)
         .pop() ?? repo.remote)
     : projectName(repo.root ?? cwd);
