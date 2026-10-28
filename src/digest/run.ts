@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { rootMessages, rootOf, threadLastTs } from "../thread.ts";
+import { rootMessages, threadLastTs } from "../thread.ts";
 import type { DigestConfig } from "./config.ts";
 import {
   buildDigestInput,
@@ -96,8 +96,7 @@ export interface DigestOptions {
   clock?: () => number;
 }
 
-export const runDigest = (db: Database, sessionId: string, opts: DigestOptions): DigestOutcome => {
-  const root = rootOf(db, sessionId);
+export const runDigest = (db: Database, root: string, opts: DigestOptions): DigestOutcome => {
   // Read before the transcript, not after it or after the model returns: a
   // message indexed in between must leave the thread stale, never covered unseen.
   const coversLastTs = threadLastTs(db, root);

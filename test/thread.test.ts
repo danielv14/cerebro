@@ -11,10 +11,10 @@ import {
   countThreads,
   messageOrdinal,
   relinkThreads,
+  rootMessages,
   rootOf,
   threadIdentity,
   threadLastTs,
-  threadMessages,
   threadOpeningPrompt,
 } from "../src/thread.ts";
 import {
@@ -187,13 +187,11 @@ describe("thread (identity + membership)", () => {
     });
   });
 
-  describe("threadMessages", () => {
+  describe("rootMessages", () => {
     test("returns the whole thread (root + resume + folded subagent turns), ordered by ts then id", () => {
       seedThread();
-      const fromRoot = threadMessages(db, "ORIG");
-      const fromResume = threadMessages(db, "RESUME");
+      const fromRoot = rootMessages(db, "ORIG");
 
-      expect(fromRoot).toEqual(fromResume);
       expect(fromRoot.map((m) => m.text)).toEqual([
         "start",
         "ok",
@@ -207,7 +205,7 @@ describe("thread (identity + membership)", () => {
 
     test("returns an empty array for an unknown id", () => {
       seedThread();
-      expect(threadMessages(db, "does-not-exist")).toEqual([]);
+      expect(rootMessages(db, "does-not-exist")).toEqual([]);
     });
   });
 
@@ -314,7 +312,7 @@ describe("thread (identity + membership)", () => {
   });
 
   describe("messageOrdinal", () => {
-    test("matches the position in threadMessages' (ts, id) order across the whole thread", () => {
+    test("matches the position in rootMessages' (ts, id) order across the whole thread", () => {
       seedThread();
       const rows = db
         .query(

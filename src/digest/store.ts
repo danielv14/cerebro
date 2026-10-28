@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { type RankedHit, toMatchQuery } from "../fts.ts";
-import { attachThreadIdentity, rootOf, type ThreadIdentity, threadLastTs } from "../thread.ts";
+import { attachThreadIdentity, type ThreadIdentity, threadLastTs } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Anchored at the start of the text, where CLI/API failures announce themselves;
@@ -125,10 +125,8 @@ export interface StoredSummary {
   source_last_ts: string | null;
 }
 
-export const getSummary = (db: Database, sessionId: string): StoredSummary | null =>
-  db
-    .query("SELECT * FROM summaries WHERE root_session_id = ?")
-    .get(rootOf(db, sessionId)) as StoredSummary | null;
+export const getSummary = (db: Database, root: string): StoredSummary | null =>
+  db.query("SELECT * FROM summaries WHERE root_session_id = ?").get(root) as StoredSummary | null;
 
 // LEFT JOIN so a summary whose sessions rows are gone still returns its snippet.
 export const searchSummaryRoots = (
