@@ -314,8 +314,13 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
   means the thread on every hit shape and every listing row; the message's own
   rowid is `message_id`.
 - **`messageOrdinal`** computes a message's 1-based position with ROW_NUMBER over
-  the exact ORDER BY that `threadMessages` sorts with, owned next to it so
+  the exact ORDER BY that `rootMessages` sorts with, owned next to it so
   search's `#N` ordinals and `show`'s numbering share one definition.
+- **`rootOf` runs once, at the command edge.** `resolveThread` in
+  `src/commands/helpers.ts` turns a typed id or prefix into its thread root, and
+  everything below (`rootMessages`, `getSummary`, `runDigest`) takes that root. A
+  resume id therefore prints as the root in `show`, `digest show` and `digest run`,
+  the same id `sessions` lists.
 - **`relinkThreads`** builds thread identity across resumes: a resume's first
   main-chain message has a `parentUuid` owned by an earlier session, and chaining
   those parents up gives each thread's root. Sidechain rows are excluded (the

@@ -1,8 +1,8 @@
 import { oneLine, shortId, shortTime } from "../render.ts";
-import { type ThreadMessage, threadMessages } from "../thread.ts";
+import { rootMessages, type ThreadMessage } from "../thread.ts";
 import { CliError, flag, messageRange, type OptionTable, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
-import { resolveOrThrow } from "./helpers.ts";
+import { resolveThread } from "./helpers.ts";
 
 const threadHeader = (sessionId: string, count: number): string =>
   `Thread ${shortId(sessionId)}  ${count} message(s)\n`;
@@ -96,16 +96,16 @@ const options = {
 export const showCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {
-    const sessionId = resolveOrThrow(db, rest[0], "show");
-    const messages = threadMessages(db, sessionId);
+    const root = resolveThread(db, rest[0], "show");
+    const messages = rootMessages(db, root);
 
     if (args.grep !== undefined) {
       if (args.full || args.range)
         throw new CliError("show: --grep cannot be combined with --full or --range");
       const matches = grepMessages(messages, args.grep);
       return {
-        json: { id: sessionId, total: messages.length, matches },
-        lines: showGrep(sessionId, matches, { needle: args.grep, total: messages.length }),
+        json: { id: root, total: messages.length, matches },
+        lines: showGrep(root, matches, { needle: args.grep, total: messages.length }),
       };
     }
 
@@ -123,13 +123,13 @@ export const showCommand = defineCommand({
       slice = messages.slice(from - 1, Math.min(args.range.to, messages.length));
     }
 
-    const json = { id: sessionId, total: messages.length, from, messages: slice };
+    const json = { id: root, total: messages.length, from, messages: slice };
     if (args.range) {
-      return { json, lines: showRange(sessionId, slice, { from, total: messages.length }) };
+      return { json, lines: showRange(root, slice, { from, total: messages.length }) };
     }
     return {
       json,
-      lines: args.full ? showFull(sessionId, messages) : showOutline(sessionId, messages),
+      lines: args.full ? showFull(root, messages) : showOutline(root, messages),
     };
   },
 });

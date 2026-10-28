@@ -10,7 +10,7 @@ import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { type SearchHit, search } from "../src/search.ts";
 import { stats } from "../src/stats.ts";
-import { countThreads, listThreads, recentThreads, rootOf, threadMessages } from "../src/thread.ts";
+import { countThreads, listThreads, recentThreads, rootMessages, rootOf } from "../src/thread.ts";
 import {
   assistantMsg,
   countQueriesMatching,
@@ -538,7 +538,7 @@ describe("query (populated archive)", () => {
     expect(countThreads(db)).toBe(1);
     expect(stats(db).threads).toBe(1);
     expect(resolveSession(db, "EMPTY")).toBe("EMPTY");
-    expect(threadMessages(db, "EMPTY")).toEqual([]);
+    expect(rootMessages(db, "EMPTY")).toEqual([]);
   });
 
   test("zero-message threads stay out of recentThreads and the stats project rollup (#83)", () => {
