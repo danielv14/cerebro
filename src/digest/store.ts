@@ -130,8 +130,7 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
-// throws on a malformed MATCH so each caller keeps its own fallback.
+// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet.
 export const searchSummaryRoots = (
   db: Database,
   match: string,
@@ -161,13 +160,7 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
   const match = toMatchQuery(query);
   if (!match) return [];
 
-  let rows: RankedHit[];
-  try {
-    rows = searchSummaryRoots(db, match, limit, 12);
-  } catch {
-    return [];
-  }
-
+  const rows = searchSummaryRoots(db, match, limit, 12);
   return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
     ...identity,
     snippet: hit.snippet,
