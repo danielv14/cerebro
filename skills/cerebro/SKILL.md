@@ -159,8 +159,9 @@ a1b2c3d4  2026-02-12 16:48   162 msgs  my-app @feat/dark-mode
 
 ### `cerebro recent [--cwd P] [--days D] [--limit N]`
 The latest threads for one repo (default: the current directory, 14 days, 5 threads),
-scoped on the git root. Each thread is shown with its opening prompt. Good for getting
-oriented in what has happened in a repo lately.
+scoped on the repo: its git remote, so its worktrees count too, or the git root
+for a repo without a remote. Each thread is shown with its opening prompt. Good for
+getting oriented in what has happened in a repo lately.
 
 ```
 $ cerebro recent --limit 2
@@ -177,9 +178,9 @@ Pull prior context: cerebro show <id>  |  cerebro search "<terms>"
 Past threads most relevant to a prompt (FTS, bm25; Swedish and English stopwords are
 filtered out). The ranking is recency-weighted: the bm25 score decays with the thread's
 age (90-day half-life), so on an equivalent text match the fresher work wins (`search`
-is pure bm25). Threads in the same repo as `--cwd` (the git root, otherwise the exact
-project path) additionally get their score multiplied by 1.5 in both tiers, worth
-roughly two months of freshness. It is a boost, never a filter: a clearly stronger match
+is pure bm25). Threads in the same repo as `--cwd` (same remote or git root,
+otherwise the exact project path) additionally get their score multiplied by 1.5 in
+both tiers, worth roughly two months of freshness. It is a boost, never a filter: a clearly stronger match
 in another repo still shows up, which is the point for shared infrastructure. Without
 `--cwd` everything is ranked globally. Each hit
 has a title, an opening prompt and a matching snippet. Default 3. Good when you want to

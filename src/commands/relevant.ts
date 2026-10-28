@@ -38,7 +38,7 @@ export const relevantCommand = defineCommand({
     // a manual `relevant "..."` must rank globally.
     const cwd = args.cwd || null;
     const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
-      repoRoot: resolveGit(cwd).root,
+      repo: resolveGit(cwd),
       cwd,
     });
     return {

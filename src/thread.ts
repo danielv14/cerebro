@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { GitInfo } from "./git.ts";
 import { escapeLike } from "./like.ts";
 import { isToolText } from "./sources/adapter.ts";
 
@@ -23,6 +24,7 @@ const THREADS_VIEW_COLUMN_EXPRS: [name: string, expr: string][] = [
   ["sessions_in_thread", "COUNT(*)"],
   ["project_path", rootPreferring("project_path")],
   ["git_root", rootPreferring("git_root")],
+  ["git_remote", rootPreferring("git_remote")],
   ["git_branch", rootPreferring("git_branch")],
   ["provider", rootPreferring("provider")],
   ["model", rootPreferring("model")],
@@ -47,8 +49,8 @@ export const threadsViewIsCurrent = (db: Database): boolean => {
   return columns.map((column) => column.name).join(",") === THREADS_VIEW_COLUMNS;
 };
 
-// git_root is in the view but deliberately not projected: recent filters on it,
-// no listing shows it.
+// git_root and git_remote are in the view but deliberately not projected: recent
+// filters on them, no listing shows them.
 const THREAD_ROW_COLUMNS =
   "id, last_ts, first_ts, msgs, sessions_in_thread, project_path, git_branch, provider, model, " +
   "title, body_available";
@@ -123,17 +125,32 @@ export const listThreads = (
   return latestThreads(db, conditions, params, opts.limit ?? 30);
 };
 
+// The remote is what a worktree shares with its main checkout; git_root is each
+// worktree's own path. A repo without a remote can only match on git_root.
+const repoCondition = (
+  repo: GitInfo | undefined,
+  cwd: string | undefined,
+): { sql: string; params: string[] } | null => {
+  if (repo?.root && repo.remote) {
+    return { sql: "(git_remote = ? OR git_root = ?)", params: [repo.remote, repo.root] };
+  }
+  if (repo?.root) return { sql: "git_root = ?", params: [repo.root] };
+  if (cwd) return { sql: "project_path = ?", params: [cwd] };
+  return null;
+};
+
 export const recentThreads = (
   db: Database,
-  opts: { repoRoot?: string | null; cwd?: string; since: string; limit?: number },
+  opts: { repo?: GitInfo; cwd?: string; since: string; limit?: number },
 ): ThreadRow[] => {
-  const repo = opts.repoRoot
-    ? { sql: "git_root = ?", param: opts.repoRoot }
-    : opts.cwd
-      ? { sql: "project_path = ?", param: opts.cwd }
-      : null;
+  const repo = repoCondition(opts.repo, opts.cwd);
   if (!repo) return [];
-  return latestThreads(db, ["last_ts >= ?", repo.sql], [opts.since, repo.param], opts.limit ?? 5);
+  return latestThreads(
+    db,
+    ["last_ts >= ?", repo.sql],
+    [opts.since, ...repo.params],
+    opts.limit ?? 5,
+  );
 };
 
 export interface ThreadIdentity {
