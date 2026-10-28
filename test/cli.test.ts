@@ -464,9 +464,15 @@ describe("runCli", () => {
 
   test("search falls back to the sanitized phrase on malformed FTS syntax (#248)", () => {
     writeSession(env.projects, "-repo", "SESS", [
-      userMsg("SESS", "u1", "a limiter question", { timestamp: ts(0) }),
+      userMsg("SESS", "u1", "near limiter question x", { timestamp: ts(0) }),
     ]);
-    for (const query of ['limiter"', "limiter(", "limiter.question"]) {
+    for (const query of [
+      'limiter"',
+      "limiter(",
+      "limiter.question",
+      "NEAR(limiter question, x)",
+      `${"(".repeat(300)}limiter`,
+    ]) {
       const cap = makeIO();
       cli(["search", query, "--json"], cap.io, seeded());
       expect(JSON.parse(cap.logs.join("\n"))[0].session_id).toBe("SESS");

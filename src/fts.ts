@@ -15,13 +15,21 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map(quoteFtsToken).join(" OR ");
 };
 
-// The errors FTS5 raises while parsing a MATCH string. "no such column" is also
-// what a schema mismatch raises; that one fails again on the retry and propagates.
-const FTS_SYNTAX_ERROR =
-  /^(fts5: syntax error|no such column|unterminated string|unknown special query)/;
+// "no such column" is also what a schema mismatch raises; that one fails again on
+// the retry and propagates.
+// A bare "fts5" prefix is too wide: index corruption is reported under it too.
+const FTS_SYNTAX_ERRORS = [
+  "fts5: syntax error",
+  "fts5: parser stack overflow",
+  "fts5 expression tree is too large",
+  "expected integer",
+  "no such column",
+  "unterminated string",
+  "unknown special query",
+];
 
 const isFtsSyntaxError = (error: unknown): boolean =>
-  error instanceof Error && FTS_SYNTAX_ERROR.test(error.message);
+  error instanceof Error && FTS_SYNTAX_ERRORS.some((prefix) => error.message.startsWith(prefix));
 
 export const withSanitizedFallback = <T>(query: string, run: (match: string) => T[]): T[] => {
   try {
