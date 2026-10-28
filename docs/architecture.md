@@ -462,7 +462,10 @@ never summarizes on its own initiative; the hooks decide when.
   `buildDigestInput` renders a thread verbatim below budget; above it
   every message is kept but each body is capped to the fair share found by a
   binary-search water-fill, so short steering messages stay whole while the
-  longest essays are trimmed first. The numbers and env overrides are in
+  longest essays are trimmed first. Headers are never trimmed, so when they alone
+  would take more than half the budget (tens of thousands of messages) the oldest
+  messages are dropped whole and counted in a leading line; the tail is what a
+  summary of a long session most needs. The numbers and env overrides are in
   [digest-model-tiering.md](digest-model-tiering.md).
 - **`stale.ts`** owns the staleness predicate (never summarized, summarized by an
   older prompt version, a summary with no coverage point because it was moved onto

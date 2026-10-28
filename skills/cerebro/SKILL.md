@@ -438,7 +438,8 @@ the thread stale so the reconciler retries it.
 
 The transcript handed to the model is size-bounded so it fits in a single model context.
 Short threads go in verbatim; a giant thread is trimmed (water-fill: short messages are
-kept whole, the longest essays are trimmed first) so it cannot overflow even a 1M context.
+kept whole, the longest essays are trimmed first, and a thread of tens of thousands of
+messages also drops its oldest ones) so it cannot overflow even a 1M context.
 cerebro picks the model from the transcript size it measured when rendering.
 Small threads -> `claude-haiku-5-5` (cheapest, the common case), oversized
 -> `claude-sonnet-5-5` in one shot, so that a thread of 400-600k tokens is summarized

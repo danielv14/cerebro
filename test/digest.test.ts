@@ -195,6 +195,37 @@ describe("buildDigestInput (size-bounded transcript)", () => {
     expect(out).toContain("truncated for digest");
   });
 
+  test("stays within budget for tens of thousands of short messages", () => {
+    const messages = Array.from({ length: 45_000 }, (_unused, i) =>
+      msg(i % 2 === 0 ? "user" : "assistant", `turn ${i} `.repeat(20)),
+    );
+    const out = buildDigestInput(messages, 1_000_000);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(1_000_000);
+    expect(out).toMatch(/^\[\d+ older message\(s\) dropped for digest\]/);
+    expect(out).toContain("turn 44999 ");
+  });
+
+  test("stays within budget when the dropped-messages line is what tips it over", () => {
+    const messages = Array.from({ length: 40_000 }, () => msg("user", ""));
+    for (let budget = 1_479_970; budget < 1_480_000; budget++) {
+      expect(Buffer.byteLength(buildDigestInput(messages, budget), "utf8")).toBeLessThanOrEqual(
+        budget,
+      );
+    }
+  });
+
+  test("stays within budget when the fair share is smaller than the truncation note", () => {
+    const messages = Array.from({ length: 10 }, () => ({
+      ...msg("user", "z".repeat(100_000)),
+      ts: null,
+    }));
+    const budget = 400;
+    const out = buildDigestInput(messages, budget);
+
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(budget);
+  });
+
   test("handles an empty thread", () => {
     expect(buildDigestInput([])).toBe("");
   });
