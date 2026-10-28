@@ -473,9 +473,10 @@ never summarizes on its own initiative; the hooks decide when.
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage
   contract itself refuses error-shaped or fragment-length text. `writeSummary`
-  stamps `source_last_ts` from when the transcript was rendered, not when the
-  model returned: a call takes minutes, and messages indexed in between must stay
-  stale rather than be marked covered by a summary that never saw them.
+  stamps `source_last_ts` as read just before the transcript, not when the model
+  returned: a call takes minutes, and messages indexed in between must stay stale
+  rather than be marked covered by a summary that never saw them. Reading it after
+  the transcript would reopen the same gap for an index commit between the reads.
   `searchSummaryRoots` owns the summaries_fts query shape, shared by `relevant`'s
   summary tier and `digest search`. `digest_failures` records a thread's failed
   attempts: a deterministic failure (a rejected output, an overflow) used to be

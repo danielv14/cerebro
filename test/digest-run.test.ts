@@ -93,6 +93,32 @@ describe("runDigest", () => {
     expect(staleThreads(db, { limit: 10 })).toEqual([]);
   });
 
+  test("a message indexed right after the transcript read stays uncovered", () => {
+    const real = db.query.bind(db);
+    db.query = ((sql: string) => {
+      const statement = real(sql);
+      if (!sql.includes("ORDER BY ts, id")) return statement;
+      const readTranscript = statement.all.bind(statement);
+      statement.all = ((...params: Parameters<typeof readTranscript>) => {
+        const rows = readTranscript(...params);
+        Reflect.deleteProperty(db, "query");
+        writeSession(env.projects, "-repo", "LATE", [
+          userMsg("LATE", "u9", "a late turn", { parentUuid: "a1", timestamp: ts(9) }),
+        ]);
+        runIndex(db, { adapters: env.adapters });
+        return rows;
+      }) as typeof statement.all;
+      return statement;
+    }) as typeof db.query;
+
+    const { summarize, calls } = fakeSummarizer();
+    runDigest(db, "SESS", { summarize, models });
+
+    expect(calls[0]!.input).not.toContain("a late turn");
+    expect(getSummary(db, "SESS")?.source_last_ts).toBe(ts(1));
+    expect(staleThreads(db, { limit: 10 }).map((thread) => thread.id)).toEqual(["SESS"]);
+  });
+
   test("a thread with no messages is skipped, never summarized as empty", () => {
     db.run(
       "INSERT INTO sessions (session_id, root_session_id, msg_count) VALUES ('EMPTY', 'EMPTY', 0)",
