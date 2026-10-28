@@ -373,7 +373,8 @@ bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
   with a 4x larger window whenever one long thread owned the top matches.
 ## Search (`src/search.ts`)
 
-`search` owns the command's result shape and no SQL at all: it names `HitFilters` and the FTS module builds the query.
+`search` owns the command's result shape and no SQL at all: it names
+`HitFilters` and the FTS module builds the query.
 
 User queries pass to MATCH verbatim so power users can use FTS5 operators; on a
 syntax error the query is retried once through `withSanitizedFallback`, every

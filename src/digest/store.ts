@@ -130,8 +130,7 @@ export const getSummary = (db: Database, sessionId: string): StoredSummary | nul
     .query("SELECT * FROM summaries WHERE root_session_id = ?")
     .get(rootOf(db, sessionId)) as StoredSummary | null;
 
-// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet;
-// throws on a malformed MATCH so each caller keeps its own fallback.
+// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet.
 export const searchSummaryRoots = (
   db: Database,
   match: string,
