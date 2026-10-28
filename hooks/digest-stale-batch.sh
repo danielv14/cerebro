@@ -19,17 +19,32 @@ log() { printf '%s %s\n' "$(date '+[stale %F %T]')" "$*" >> "$LOG"; }
 
 # find -mmin +N behaves the same on BSD (macOS) and GNU; the lock dir's mtime is its
 # creation time and never changes during a run, so it reads as the run's age.
-if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin "+$LOCK_STALE_MIN" 2>/dev/null)" ]; then
-  log "breaking stale lock older than ${LOCK_STALE_MIN}m ($LOCK)"
-  rmdir "$LOCK" 2>/dev/null || true
+is_stale() {
+  [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin "+$LOCK_STALE_MIN" 2>/dev/null)" ]
+}
+
+# Breaking runs under its own mutex and re-checks staleness inside it: two runs that both
+# saw the stale lock would otherwise each remove it, the second removing the fresh lock
+# the first had just taken. A break mutex left by a killed run would block every later
+# break, so it ages out the same way.
+is_stale "$LOCK.break" && rmdir "$LOCK.break" 2>/dev/null
+if is_stale "$LOCK" && mkdir "$LOCK.break" 2>/dev/null; then
+  if is_stale "$LOCK"; then
+    log "breaking stale lock older than ${LOCK_STALE_MIN}m ($LOCK)"
+    rm -rf "$LOCK"
+  fi
+  rmdir "$LOCK.break"
 fi
 
 if ! mkdir "$LOCK" 2>/dev/null; then
   log "another batch holds the lock ($LOCK), skipping this run"
   exit 0
 fi
-# A hard SIGKILL skips this trap, which is what the staleness check above backstops.
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+echo $$ > "$LOCK/owner"
+# Only remove the lock this run owns: a run that outlived the staleness window has had its
+# lock broken and retaken by another. A hard SIGKILL skips this trap, which is what the
+# staleness check above backstops.
+trap '[ "$(cat "$LOCK/owner" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"' EXIT
 
 { date "+[stale-hook %F %T]"; "$CEREBRO" index; } >> "$LOG_DIR/index.log" 2>&1
 

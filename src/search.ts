@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import {
   type HitFilters,
-  quoteFtsToken,
   type RankedMessageHit,
   rankedMessageHits,
   rankedMessageHitsPerThread,
+  withSanitizedFallback,
 } from "./fts.ts";
 import { attachThreadIdentity, messageOrdinal } from "./thread.ts";
 
@@ -46,14 +46,7 @@ export const search = (
       : rankedMessageHitsPerThread(db, match, window);
   };
 
-  let kept: RankedMessageHit[];
-  try {
-    kept = collect(query);
-  } catch {
-    const sanitized = query.split(/\s+/).filter(Boolean).map(quoteFtsToken).join(" ");
-    if (!sanitized) return [];
-    kept = collect(sanitized);
-  }
+  const kept = withSanitizedFallback(query, collect);
 
   // A search hit is a message, so it shows the message's own ts and branch and
   // leaves the thread's last_ts out.
