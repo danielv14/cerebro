@@ -22,7 +22,13 @@ export const recentBlock = (
 
 const options = {
   cwd: text(),
-  days: numeric({ min: 0, minExclusive: true, label: "a positive number" }),
+  // The same five-digit ceiling as --since, so the cutoff stays inside Date's range.
+  days: numeric({
+    min: 0,
+    minExclusive: true,
+    max: 99_999,
+    label: "a positive number up to 99999",
+  }),
   limit: positiveInt(),
   json: flag(),
 } satisfies OptionTable;
