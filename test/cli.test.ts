@@ -7,7 +7,8 @@ import { buildParserOptions, type CliEnv, type CliIO, commands, runCli } from ".
 import { flag, positiveInt, text } from "../src/commands/args.ts";
 import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest/store.ts";
+import { staleThreads } from "../src/digest/stale.ts";
+import { getSummary, writeSummary } from "../src/digest/store.ts";
 import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
@@ -958,11 +959,19 @@ describe("runCli", () => {
         userMsg("RESUME", "u2", "more", { parentUuid: "u1", timestamp: ts(1) }),
       ]);
       fakeClaude('echo "Tuned the limiter in cerebro. Keywords: limiter"');
+      const archive = join(binDir, "archive.sqlite");
       const cap = makeIO();
-      cli(["digest", "run", "RESUME"], cap.io, seeded());
+      cli(["digest", "run", "RESUME"], cap.io, () => {
+        const db = openDb(archive);
+        runIndex(db, { adapters: env.adapters });
+        return db;
+      });
 
       expect(cap.logs.join("\n")).toContain("Summarized ROOT");
-      expect(cap.exitCode).toBe(0);
+      const db = openDb(archive);
+      expect(getSummary(db, "ROOT")?.summary).toContain("Tuned the limiter");
+      expect(staleThreads(db, { limit: 10 })).toEqual([]);
+      db.close();
     });
 
     test("digest run exits 1 and says why when no summary was stored", () => {
