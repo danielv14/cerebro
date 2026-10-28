@@ -1,11 +1,11 @@
 import { oneLine, shortId, shortTime } from "../render.ts";
-import { type ThreadMessage, threadMessages } from "../thread.ts";
+import { rootMessages, type ThreadMessage } from "../thread.ts";
 import { CliError, flag, messageRange, type OptionTable, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
-import { resolveOrThrow } from "./helpers.ts";
+import { resolveThread } from "./helpers.ts";
 
-const threadHeader = (sessionId: string, count: number): string =>
-  `Thread ${shortId(sessionId)}  ${count} message(s)\n`;
+const threadHeader = (root: string, count: number): string =>
+  `Thread ${shortId(root)}  ${count} message(s)\n`;
 
 // The outline is capped at head + tail. The tail keeps its true ordinals so
 // the numbering stays identical to --range and search's #N.
@@ -17,8 +17,8 @@ const outlineLine = (message: ThreadMessage, ordinal: number): string => {
   return `${String(ordinal).padStart(3)}. ${message.role.padEnd(9)} ${shortTime(message.ts)}  ${marker}${oneLine(message.text, 110)}`;
 };
 
-export const showOutline = (sessionId: string, messages: ThreadMessage[]): string[] => {
-  const lines: string[] = [threadHeader(sessionId, messages.length)];
+export const showOutline = (root: string, messages: ThreadMessage[]): string[] => {
+  const lines: string[] = [threadHeader(root, messages.length)];
   const pushLines = (start: number, end: number) => {
     for (let i = start; i < end; i++) lines.push(outlineLine(messages[i]!, i + 1));
   };
@@ -41,19 +41,19 @@ const messageBlock = (message: ThreadMessage, label = ""): string[] => {
   return [`──── ${label}${message.role}${tag} · ${shortTime(message.ts)} ────`, message.text, ""];
 };
 
-export const showFull = (sessionId: string, messages: ThreadMessage[]): string[] => [
-  threadHeader(sessionId, messages.length),
+export const showFull = (root: string, messages: ThreadMessage[]): string[] => [
+  threadHeader(root, messages.length),
   ...messages.flatMap((message) => messageBlock(message)),
 ];
 
 export const showRange = (
-  sessionId: string,
+  root: string,
   slice: ThreadMessage[],
   opts: { from: number; total: number },
 ): string[] => {
   const to = opts.from + slice.length - 1;
   return [
-    `Thread ${shortId(sessionId)}  showing ${opts.from}..${to} of ${opts.total} message(s)\n`,
+    `Thread ${shortId(root)}  showing ${opts.from}..${to} of ${opts.total} message(s)\n`,
     ...slice.flatMap((message, i) => messageBlock(message, `#${opts.from + i} `)),
   ];
 };
@@ -72,15 +72,15 @@ export const grepMessages = (messages: ThreadMessage[], needle: string): GrepMat
 };
 
 export const showGrep = (
-  sessionId: string,
+  root: string,
   matches: GrepMatch[],
   opts: { needle: string; total: number },
 ): string[] => {
   if (matches.length === 0) {
-    return [`No message in thread ${shortId(sessionId)} contains "${opts.needle}".`];
+    return [`No message in thread ${shortId(root)} contains "${opts.needle}".`];
   }
   return [
-    `Thread ${shortId(sessionId)}  ${matches.length} of ${opts.total} message(s) contain "${opts.needle}"\n`,
+    `Thread ${shortId(root)}  ${matches.length} of ${opts.total} message(s) contain "${opts.needle}"\n`,
     ...matches.map((match) => outlineLine(match, match.ordinal)),
     "\nOpen one: cerebro show <id> --range <n>",
   ];
@@ -96,16 +96,16 @@ const options = {
 export const showCommand = defineCommand({
   options,
   run: ({ db, args, rest }) => {
-    const sessionId = resolveOrThrow(db, rest[0], "show");
-    const messages = threadMessages(db, sessionId);
+    const root = resolveThread(db, rest[0], "show");
+    const messages = rootMessages(db, root);
 
     if (args.grep !== undefined) {
       if (args.full || args.range)
         throw new CliError("show: --grep cannot be combined with --full or --range");
       const matches = grepMessages(messages, args.grep);
       return {
-        json: { id: sessionId, total: messages.length, matches },
-        lines: showGrep(sessionId, matches, { needle: args.grep, total: messages.length }),
+        json: { id: root, total: messages.length, matches },
+        lines: showGrep(root, matches, { needle: args.grep, total: messages.length }),
       };
     }
 
@@ -123,13 +123,13 @@ export const showCommand = defineCommand({
       slice = messages.slice(from - 1, Math.min(args.range.to, messages.length));
     }
 
-    const json = { id: sessionId, total: messages.length, from, messages: slice };
+    const json = { id: root, total: messages.length, from, messages: slice };
     if (args.range) {
-      return { json, lines: showRange(sessionId, slice, { from, total: messages.length }) };
+      return { json, lines: showRange(root, slice, { from, total: messages.length }) };
     }
     return {
       json,
-      lines: args.full ? showFull(sessionId, messages) : showOutline(sessionId, messages),
+      lines: args.full ? showFull(root, messages) : showOutline(root, messages),
     };
   },
 });

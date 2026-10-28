@@ -18,7 +18,7 @@ import {
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
 import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
-import { readStdin, resolveOrThrow } from "./helpers.ts";
+import { readStdin, resolveThread } from "./helpers.ts";
 
 const reasonLabel = (row: StaleThread): string => {
   switch (row.reason) {
@@ -90,8 +90,8 @@ export const digestShow = (summary: StoredSummary): string[] => {
   ];
 };
 
-export const noSummaryHint = (sessionId: string): string =>
-  `No summary yet for ${shortId(sessionId)}. Generate the backlog with: cerebro digest stale`;
+export const noSummaryHint = (root: string): string =>
+  `No summary yet for ${shortId(root)}. Generate the backlog with: cerebro digest stale`;
 
 export const digestOutcomeLine = (outcome: DigestOutcome): string => {
   const id = shortId(outcome.root);
@@ -173,7 +173,7 @@ export const digestCommand: CommandGroup = {
         if (args.stdin && !idArg) {
           throw new CliError("digest run: no session_id in the payload on stdin");
         }
-        const outcome = runDigest(db, resolveOrThrow(db, idArg ?? undefined, "digest run"), {
+        const outcome = runDigest(db, resolveThread(db, idArg ?? undefined, "digest run"), {
           ...digestPipeline(digestConfigFromEnv()),
           onStart: (about) => progress(digestStartLine(about)),
         });
@@ -223,12 +223,12 @@ export const digestCommand: CommandGroup = {
     show: defineCommand({
       options: { json: flag() } satisfies OptionTable,
       run: ({ db, rest }) => {
-        const sessionId = resolveOrThrow(db, rest[0], "digest show");
-        const summary = getSummary(db, sessionId);
+        const root = resolveThread(db, rest[0], "digest show");
+        const summary = getSummary(db, root);
         return {
           json: summary,
           lines: summary ? digestShow(summary) : [],
-          empty: noSummaryHint(sessionId),
+          empty: noSummaryHint(root),
         };
       },
     }),

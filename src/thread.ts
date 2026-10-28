@@ -221,9 +221,6 @@ export const rootMessages = (db: Database, root: string): ThreadMessage[] =>
     )
     .all(root) as ThreadMessage[];
 
-export const threadMessages = (db: Database, sessionId: string): ThreadMessage[] =>
-  rootMessages(db, rootOf(db, sessionId));
-
 const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
 const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
 

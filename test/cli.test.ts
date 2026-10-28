@@ -7,7 +7,8 @@ import { buildParserOptions, type CliEnv, type CliIO, commands, runCli } from ".
 import { flag, positiveInt, text } from "../src/commands/args.ts";
 import { type CommandNode, defineCommand, eachCommand } from "../src/commands/command.ts";
 import { openDb } from "../src/db.ts";
-import { writeSummary } from "../src/digest/store.ts";
+import { staleThreads } from "../src/digest/stale.ts";
+import { getSummary, writeSummary } from "../src/digest/store.ts";
 import type { GitInfo, GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
@@ -265,7 +266,7 @@ describe("runCli", () => {
     expect(help.exitCode).toBe(0);
   });
 
-  test("show without an id fails via the shared resolveOrThrow", () => {
+  test("show without an id fails via the shared resolveThread", () => {
     const cap = makeIO();
     cli(["show"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("show: missing <session-id>");
@@ -664,6 +665,49 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(0);
   });
 
+  describe("a resume id resolves to its thread root", () => {
+    beforeEach(() => {
+      writeSession(env.projects, "-repo", "ROOT", [
+        userMsg("ROOT", "u1", "start", { timestamp: ts(0) }),
+        assistantMsg("ROOT", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
+      ]);
+    });
+
+    test("show labels the thread with the root, in text and JSON", () => {
+      const text = makeIO();
+      cli(["show", "RESUME"], text.io, seeded());
+      expect(text.logs.join("\n")).toContain("Thread ROOT");
+
+      const json = makeIO();
+      cli(["show", "RESUME", "--json"], json.io, seeded());
+      expect(JSON.parse(json.logs.join("\n")).id).toBe("ROOT");
+    });
+
+    test("digest show finds the root's summary, in text and JSON", () => {
+      const withSummary = () => () => {
+        const db = seeded()();
+        writeSummary(db, "ROOT", "A stored summary. Keywords: work");
+        return db;
+      };
+      const text = makeIO();
+      cli(["digest", "show", "RESUME"], text.io, withSummary());
+      expect(text.logs.join("\n")).toContain("Summary for thread ROOT");
+
+      const json = makeIO();
+      cli(["digest", "show", "RESUME", "--json"], json.io, withSummary());
+      expect(JSON.parse(json.logs.join("\n")).root_session_id).toBe("ROOT");
+    });
+
+    test("the no-summary hint names the root", () => {
+      const cap = makeIO();
+      cli(["digest", "show", "RESUME"], cap.io, seeded());
+      expect(cap.logs.join("\n")).toContain("No summary yet for ROOT");
+    });
+  });
+
   test("digest show prints a stored summary", () => {
     writeSession(env.projects, "-repo", "SESS", [
       userMsg("SESS", "u1", "work", { timestamp: ts(0) }),
@@ -947,6 +991,29 @@ describe("runCli", () => {
 
       expect(cap.logs.join("\n")).toContain("Summarized SESS");
       expect(cap.exitCode).toBe(0);
+    });
+
+    test("digest run on a resume id summarizes its thread root", () => {
+      writeSession(env.projects, "-repo", "ROOT", [
+        userMsg("ROOT", "u1", "tuning the limiter", { timestamp: ts(0) }),
+      ]);
+      writeSession(env.projects, "-repo", "RESUME", [
+        userMsg("RESUME", "u2", "more", { parentUuid: "u1", timestamp: ts(1) }),
+      ]);
+      fakeClaude('echo "Tuned the limiter in cerebro. Keywords: limiter"');
+      const archive = join(binDir, "archive.sqlite");
+      const cap = makeIO();
+      cli(["digest", "run", "RESUME"], cap.io, () => {
+        const db = openDb(archive);
+        runIndex(db, { adapters: env.adapters });
+        return db;
+      });
+
+      expect(cap.logs.join("\n")).toContain("Summarized ROOT");
+      const db = openDb(archive);
+      expect(getSummary(db, "ROOT")?.summary).toContain("Tuned the limiter");
+      expect(staleThreads(db, { limit: 10 })).toEqual([]);
+      db.close();
     });
 
     test("digest run exits 1 and says why when no summary was stored", () => {

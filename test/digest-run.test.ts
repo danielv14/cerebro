@@ -81,18 +81,6 @@ describe("runDigest", () => {
     expect(calls[0]!.model).toBe(outcome.model);
   });
 
-  test("attributes a resume's summary to the thread root", () => {
-    writeSession(env.projects, "-repo", "RESUME", [
-      userMsg("RESUME", "u2", "more", { parentUuid: "a1", timestamp: ts(2) }),
-    ]);
-    runIndex(db, { adapters: env.adapters });
-    const { summarize } = fakeSummarizer();
-
-    expect(runDigest(db, "RESUME", { summarize, models }).root).toBe("SESS");
-    expect(getSummary(db, "SESS")?.summary).toBe(GOOD_SUMMARY);
-    expect(staleThreads(db, { limit: 10 })).toEqual([]);
-  });
-
   test("a message indexed right after the transcript read stays uncovered", () => {
     const real = db.query.bind(db);
     db.query = ((sql: string) => {

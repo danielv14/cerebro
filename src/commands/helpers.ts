@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { escapeLike } from "../like.ts";
+import { rootOf } from "../thread.ts";
 import { CliError } from "./args.ts";
 
 // Degrades to "" when there is no stdin (a closed fd 0 throws from readFileSync).
@@ -36,9 +37,9 @@ export const resolveSession = (db: Database, idOrPrefix: string): string | null 
   return matches[0]!.session_id;
 };
 
-export const resolveOrThrow = (db: Database, idArg: string | undefined, label: string): string => {
+export const resolveThread = (db: Database, idArg: string | undefined, label: string): string => {
   if (!idArg) throw new CliError(`${label}: missing <session-id>`);
   const sessionId = resolveSession(db, idArg);
   if (!sessionId) throw new CliError(`No session matching "${idArg}".`);
-  return sessionId;
+  return rootOf(db, sessionId);
 };
