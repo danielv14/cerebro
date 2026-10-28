@@ -224,15 +224,6 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(1);
   });
 
-  test("--days past the date range fails as a CliError, not Invalid Date", () => {
-    const cap = makeIO();
-    cli(["recent", "--days", "1e9"], cap.io, () => memDb());
-    expect(cap.errs.join("\n")).toContain(
-      '--days must be a positive number up to 99999 (got "1e9")',
-    );
-    expect(cap.exitCode).toBe(1);
-  });
-
   test("an unknown option exits 1 with a clean message, not a stack trace", () => {
     const cap = makeIO();
     cli(["search", "--nope"], cap.io, () => memDb());
@@ -805,6 +796,15 @@ describe("runCli", () => {
     const cap = makeIO();
     cli(["recent", "--cwd", "/repo", "--days", "0"], cap.io, () => memDb());
     expect(cap.errs.join("\n")).toContain("--days must be a positive number");
+    expect(cap.exitCode).toBe(1);
+  });
+
+  test("--days past the date range fails as a CliError, not Invalid Date", () => {
+    const cap = makeIO();
+    cli(["recent", "--days", "1e9"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain(
+      '--days must be a positive number up to 99999 (got "1e9")',
+    );
     expect(cap.exitCode).toBe(1);
   });
 
