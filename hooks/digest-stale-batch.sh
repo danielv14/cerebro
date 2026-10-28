@@ -19,15 +19,17 @@ log() { printf '%s %s\n' "$(date '+[stale %F %T]')" "$*" >> "$LOG"; }
 
 # find -mmin +N behaves the same on BSD (macOS) and GNU; the lock dir's mtime is its
 # creation time and never changes during a run, so it reads as the run's age.
-lock_is_stale() {
-  [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin "+$LOCK_STALE_MIN" 2>/dev/null)" ]
+is_stale() {
+  [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin "+$LOCK_STALE_MIN" 2>/dev/null)" ]
 }
 
 # Breaking runs under its own mutex and re-checks staleness inside it: two runs that both
 # saw the stale lock would otherwise each remove it, the second removing the fresh lock
-# the first had just taken.
-if lock_is_stale && mkdir "$LOCK.break" 2>/dev/null; then
-  if lock_is_stale; then
+# the first had just taken. A break mutex left by a killed run would block every later
+# break, so it ages out the same way.
+is_stale "$LOCK.break" && rmdir "$LOCK.break" 2>/dev/null
+if is_stale "$LOCK" && mkdir "$LOCK.break" 2>/dev/null; then
+  if is_stale "$LOCK"; then
     log "breaking stale lock older than ${LOCK_STALE_MIN}m ($LOCK)"
     rm -rf "$LOCK"
   fi
