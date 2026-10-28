@@ -862,6 +862,16 @@ describe("runCli", () => {
     // Without a remote there is nothing shared to match on, so two repos with no
     // remote must not merge into one.
     expect(recentIds("/checkout/other")).toEqual(["NOREMOTE"]);
+
+    const header = (cwd: string): string => {
+      const cap = makeIO();
+      cli(["recent", "--cwd", cwd], cap.io, seededInRepo(), { now: NOW, resolveGit });
+      return cap.logs[0]!;
+    };
+    expect(header("/worktrees/mine-feature")).toBe("Recent sessions in mine (last 14 days):");
+    expect(header("/worktrees/other-feature")).toBe(
+      "Recent sessions in other-feature (last 14 days):",
+    );
   });
 
   test("recent falls back to the invoked directory, and --cwd still wins (#125)", () => {
