@@ -39,8 +39,8 @@ export const recentCommand = defineCommand({
     const cwd = args.cwd || invokedIn;
     const days = args.days ?? 14;
     const since = new Date(now - days * 86_400_000).toISOString();
-    const repoRoot = resolveGit(cwd).root;
-    const threads = recentThreads(db, { repoRoot, cwd, since, limit: args.limit ?? 5 });
+    const repo = resolveGit(cwd);
+    const threads = recentThreads(db, { repo, cwd, since, limit: args.limit ?? 5 });
     const rows = threads.map((thread) => ({
       thread,
       opening: threadOpeningPrompt(db, thread.id),
@@ -48,7 +48,7 @@ export const recentCommand = defineCommand({
 
     return {
       json: rows.map(({ thread, opening }) => ({ ...thread, opening })),
-      lines: rows.length > 0 ? recentBlock(rows, { repoPath: repoRoot ?? cwd, days }) : [],
+      lines: rows.length > 0 ? recentBlock(rows, { repoPath: repo.root ?? cwd, days }) : [],
       empty: "No recent sessions for this repo.",
     };
   },

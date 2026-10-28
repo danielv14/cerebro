@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { THREADS_VIEW_DDL, threadsViewIsCurrent } from "./thread.ts";
 
 // Bump whenever SCHEMA or migrate() changes, the threads view DDL included.
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 // Per-connection, outside the version gate: busy_timeout/foreign_keys do not
 // persist, and journal_mode cannot be changed inside a transaction.

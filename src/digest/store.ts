@@ -142,7 +142,7 @@ export const searchSummaryRoots = (
       `SELECT s.root_session_id AS id,
               snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
               bm25(summaries_fts) AS score,
-              t.last_ts, t.git_root, t.project_path
+              t.last_ts, t.git_root, t.git_remote, t.project_path
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
        LEFT JOIN threads t ON t.id = s.root_session_id

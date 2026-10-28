@@ -331,8 +331,8 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 ## FTS layer (`src/fts.ts`)
 
 `RankedHit` is the one declared shape both relevance tiers rank against: thread
-id, snippet, bm25 score, and the three rollup columns the ranking reads
-(`last_ts`, `git_root`, `project_path`). `rankedMessageHits` here produces the
+id, snippet, bm25 score, and the rollup columns the ranking reads
+(`last_ts`, `git_root`, `git_remote`, `project_path`). `rankedMessageHits` here produces the
 message-FTS one and `searchSummaryRoots` in `src/digest/store.ts` the summary-FTS
 one. They stay two queries because the two FTS tables and their snippets differ,
 and the summary one lives under `digest/` because that table and its index are
@@ -420,8 +420,12 @@ multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0.
 deterministic text relevance, while the recall surface should favor fresh work.
 
 The same-repo boost (`repoBoost`, 1.5x) prefers threads in the repo the prompt
-was typed in, matched on the thread's git_root when the cwd is in a repo, else on
-exact project_path (the same pairing `recent` scopes by). 1.5x is worth roughly
+was typed in. When the cwd is in a repo, a thread matches on the same git remote
+or the same git_root, else on exact project_path (the same rule `recent` scopes
+by). The remote is what makes a worktree count as its repo: git_root is each
+worktree's own path, and the remote was stored on every row already, so no
+backfill was needed. A repo without a remote matches on git_root alone, so its
+worktrees stay separate; two remote-less repos must not merge on a shared NULL. 1.5x is worth roughly
 two months of recency at the 90-day half-life. It is a boost, never a filter, so
 a much stronger cross-repo match stays reachable. The boost needs an explicit
 `--cwd`: `relevant` does not adopt the invoking directory, so a manual call ranks
