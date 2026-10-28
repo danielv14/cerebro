@@ -12,4 +12,4 @@ export const wrapTranscript = (transcript: string): string =>
 // are still on disk.
 export const isDigestInput = (text: string): boolean =>
   text.startsWith(DIGEST_PROMPT_SIGNATURE) ||
-  (text.startsWith(TRANSCRIPT_OPEN) && text.endsWith(TRANSCRIPT_CLOSE));
+  (text.startsWith(TRANSCRIPT_OPEN) && text.trimEnd().endsWith(TRANSCRIPT_CLOSE.trimEnd()));

@@ -208,9 +208,9 @@ one working table grows forever. A pruned file that reappears is re-read from
 byte 0 and UUID dedup makes that a no-op.
 
 The `digest` verdict keeps cerebro's own headless `claude -p` summarization runs
-out of the archive: such a transcript opens with the wrapped transcript
-(`wrapTranscript`), or in older runs the digest prompt, as its first user message,
-and indexing it would feed prompt boilerplate back into search. New
+out of the archive: older runs' transcripts open with the digest prompt as the
+first user message, a persisted current run would open with `wrapTranscript`
+output, and indexing either would feed prompt boilerplate back into search. New
 digest runs pass `--no-session-persistence` and write no transcript at all; the
 guard covers transcripts already on disk. Detection only runs on reads starting at
 byte 0, and a detected file is flagged `is_digest` so it is never read again. A

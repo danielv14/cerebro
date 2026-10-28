@@ -156,8 +156,10 @@ describe("fileVerdict", () => {
   });
 
   test("a transcript opening with the wrapped digest input is a digest", () => {
-    const digest = [userMsg("S", "u1", wrapTranscript("──── user · 2026-01-01 ────\nhi\n"))];
-    expect(fileVerdict(scanned(digest), classifyLines)).toBe("digest");
+    const wrapped = wrapTranscript("──── user · 2026-01-01 ────\nhi\n");
+    for (const text of [wrapped, wrapped.trimEnd()]) {
+      expect(fileVerdict(scanned([userMsg("S", "u1", text)]), classifyLines)).toBe("digest");
+    }
   });
 
   test("the digest check only fires on a top-level read from byte 0", () => {
