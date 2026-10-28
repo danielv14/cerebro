@@ -40,9 +40,6 @@ export const DIGEST_INPUT_MAX_BYTES =
 // 5.5 answered a ~1M-token transcript instead of summarizing it.
 const DEFAULT_ESCALATION_BYTES = 330_000;
 
-export const wrapTranscript = (transcript: string): string =>
-  `<transcript>\n${transcript}\n</transcript>\n\nWrite the summary of the transcript above, following the instructions in the system prompt.\n`;
-
 export interface DigestModelConfig {
   small: string;
   large: string;

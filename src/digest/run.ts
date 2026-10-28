@@ -6,8 +6,8 @@ import {
   DIGEST_PROMPT,
   type DigestModelConfig,
   pickDigestModel,
-  wrapTranscript,
 } from "./prompt.ts";
+import { wrapTranscript } from "./signature.ts";
 import { countStaleThreads, staleThreads } from "./stale.ts";
 import { recordDigestFailure, rejectSummaryReason, writeSummary } from "./store.ts";
 

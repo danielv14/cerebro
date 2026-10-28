@@ -33,6 +33,7 @@ export const numeric = (opts: {
   integer?: boolean;
   min: number;
   minExclusive?: boolean;
+  max?: number;
   label: string;
 }): OptionSpec<number | undefined> => ({
   kind: "string",
@@ -40,7 +41,8 @@ export const numeric = (opts: {
     const value = Number(raw);
     const wellFormed = opts.integer ? Number.isInteger(value) : Number.isFinite(value);
     const aboveMin = opts.minExclusive ? value > opts.min : value >= opts.min;
-    if (!wellFormed || !aboveMin) {
+    const belowMax = opts.max === undefined || value <= opts.max;
+    if (!wellFormed || !aboveMin || !belowMax) {
       throw new CliError(`--${name} must be ${opts.label} (got "${raw}")`);
     }
     return value;

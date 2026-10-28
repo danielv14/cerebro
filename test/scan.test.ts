@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DIGEST_PROMPT_SIGNATURE } from "../src/digest/signature.ts";
+import { DIGEST_PROMPT_SIGNATURE, wrapTranscript } from "../src/digest/signature.ts";
 import { fileVerdict, planFileRead, type ScannedFile, splitBuffer } from "../src/scan.ts";
 import type { SessionFile } from "../src/sources/adapter.ts";
 import { classifyLines } from "../src/sources/claude-code-jsonl.ts";
@@ -153,6 +153,13 @@ describe("fileVerdict", () => {
   test("a transcript opening with the digest prompt is a digest", () => {
     const digest = [userMsg("S", "u1", `${DIGEST_PROMPT_SIGNATURE} ...`)];
     expect(fileVerdict(scanned(digest), classifyLines)).toBe("digest");
+  });
+
+  test("a transcript opening with the wrapped digest input is a digest", () => {
+    const wrapped = wrapTranscript("──── user · 2026-01-01 ────\nhi\n");
+    for (const text of [wrapped, wrapped.trimEnd()]) {
+      expect(fileVerdict(scanned([userMsg("S", "u1", text)]), classifyLines)).toBe("digest");
+    }
   });
 
   test("the digest check only fires on a top-level read from byte 0", () => {
