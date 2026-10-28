@@ -208,8 +208,9 @@ one working table grows forever. A pruned file that reappears is re-read from
 byte 0 and UUID dedup makes that a no-op.
 
 The `digest` verdict keeps cerebro's own headless `claude -p` summarization runs
-out of the archive: such a transcript opens with the digest prompt as a user
-message, and indexing it would feed prompt boilerplate back into search. New
+out of the archive: such a transcript opens with the wrapped transcript
+(`wrapTranscript`), or in older runs the digest prompt, as its first user message,
+and indexing it would feed prompt boilerplate back into search. New
 digest runs pass `--no-session-persistence` and write no transcript at all; the
 guard covers transcripts already on disk. Detection only runs on reads starting at
 byte 0, and a detected file is flagged `is_digest` so it is never read again. A
@@ -497,8 +498,9 @@ never summarizes on its own initiative; the hooks decide when.
   summarized: the prompt would answer with the no-content form and storing it
   would permanently mark the thread fresh.
 
-`signature.ts` holds the prompt's opening sentence in a leaf module (no imports)
-so the indexer can recognize cerebro's own summarization transcripts without
+`signature.ts` holds the prompt's opening sentence and the transcript wrapper in
+a leaf module (no imports), so the indexer's `isDigestInput` recognizes cerebro's
+own summarization transcripts from the same strings the digest sends, without
 pulling in the digest layer. The directory has no barrel: every consumer imports
 the module it uses, and the one re-export file that existed was the only reason
 the signature had to sit outside the directory it belongs to.

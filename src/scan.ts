@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { count } from "./db.ts";
-import { DIGEST_PROMPT_SIGNATURE } from "./digest/signature.ts";
+import { isDigestInput } from "./digest/signature.ts";
 import { parseLine, type SessionFile, type SourceAdapter } from "./sources/adapter.ts";
 
 // Bytes, not characters: the per-file cursor is a byte offset, and 0x0A never
@@ -124,7 +124,7 @@ export const fileVerdict = (
   if (file.kind === "session" && plan.start === 0) {
     for (const classified of classify(lines)) {
       if (classified.kind !== "message") continue;
-      if (classified.role === "user" && classified.text.startsWith(DIGEST_PROMPT_SIGNATURE)) {
+      if (classified.role === "user" && isDigestInput(classified.text)) {
         return "digest";
       }
       break;
