@@ -113,24 +113,15 @@ export const relevantThreads = (
   const rankOf = (hit: RankedHit): number =>
     decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope));
 
-  try {
-    const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
-    choose(
-      summaryHits.sort((a, b) => rankOf(a) - rankOf(b)),
-      true,
-    );
-  } catch {
-    // A malformed MATCH falls through to the raw tier.
-  }
+  const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
+  choose(
+    summaryHits.sort((a, b) => rankOf(a) - rankOf(b)),
+    true,
+  );
 
   if (chosen.size < limit) {
-    const fetchWindow = (windowSize: number): RankedMessageHit[] => {
-      try {
-        return rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 10 });
-      } catch {
-        return [];
-      }
-    };
+    const fetchWindow = (windowSize: number): RankedMessageHit[] =>
+      rankedMessageHits(db, match, { limit: windowSize, snippetTokens: 10 });
 
     // Deduped on this tier's own rank (not bm25) so the kept hit is the one the
     // decay and boost actually rank on; target the full limit because these

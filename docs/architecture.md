@@ -358,8 +358,13 @@ bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
 - `rankedMessageHits` attaches the thread rollup via LEFT JOIN (root-preferring
   `last_ts`/repo, so a resume with a NULL git_root still ranks with the thread's
   repo), plus the matched message's own git branch, which `search` shows instead
-  of the thread's. It throws on a malformed MATCH so each caller keeps its own
-  fallback.
+  of the thread's.
+- The module owns the FTS error contract. `withSanitizedFallback` catches only
+  FTS5's parse errors and retries once with every token quoted; any other error
+  (a missing or corrupt index, `SQLITE_BUSY`) propagates, so a broken archive
+  fails the command instead of reading as "no results". `relevant` and `digest
+  search` need no fallback at all: `toMatchQuery` quotes every token, so their
+  MATCH is always valid syntax.
 - `rankedMessageHitsPerThread` is `search`'s best hit per thread in one ranking
   query: a `MATERIALIZED` CTE computes `bm25()` per match (it cannot be called
   inside a window function), `ROW_NUMBER() OVER (PARTITION BY root ...)` keeps the
@@ -368,12 +373,11 @@ bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
   with a 4x larger window whenever one long thread owned the top matches.
 ## Search (`src/search.ts`)
 
-`search` owns the command's policy (the sanitized retry, the result shape) and
-no SQL at all: it names `HitFilters` and the FTS module builds the query.
+`search` owns the command's result shape and no SQL at all: it names `HitFilters` and the FTS module builds the query.
 
 User queries pass to MATCH verbatim so power users can use FTS5 operators; on a
-syntax error the query is retried once as a sanitized phrase query of the bare
-tokens. Results are deduplicated to the best hit per thread by default; `--all`
+syntax error the query is retried once through `withSanitizedFallback`, every
+token quoted. Results are deduplicated to the best hit per thread by default; `--all`
 disables that.
 
 Filter semantics worth knowing:

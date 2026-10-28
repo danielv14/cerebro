@@ -15,6 +15,25 @@ export const toMatchQuery = (text: string): string | null => {
   return unique.map(quoteFtsToken).join(" OR ");
 };
 
+// The errors FTS5 raises while parsing a MATCH string. "no such column" is also
+// what a schema mismatch raises; that one fails again on the retry and propagates.
+const FTS_SYNTAX_ERROR =
+  /^(fts5: syntax error|no such column|unterminated string|unknown special query)/;
+
+const isFtsSyntaxError = (error: unknown): boolean =>
+  error instanceof Error && FTS_SYNTAX_ERROR.test(error.message);
+
+export const withSanitizedFallback = <T>(query: string, run: (match: string) => T[]): T[] => {
+  try {
+    return run(query);
+  } catch (error) {
+    if (!isFtsSyntaxError(error)) throw error;
+    const sanitized = query.split(/\s+/).filter(Boolean).map(quoteFtsToken).join(" ");
+    if (!sanitized) return [];
+    return run(sanitized);
+  }
+};
+
 export interface RankedHit {
   // The thread, never the row the hit came from.
   id: string;
@@ -78,7 +97,6 @@ const messageHitColumns = `
     bm25(messages_fts) AS score,
     t.last_ts, t.git_root, t.project_path`;
 
-// Throws on a malformed MATCH so each caller keeps its own fallback.
 export const rankedMessageHits = (
   db: Database,
   match: string,
@@ -99,7 +117,6 @@ export const rankedMessageHits = (
 
 // bm25() cannot be called inside a window function, so the CTE materializes it
 // first. Snippets are computed for the kept rows only, in a second query.
-// Throws on a malformed MATCH, like rankedMessageHits.
 export const rankedMessageHitsPerThread = (
   db: Database,
   match: string,

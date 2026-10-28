@@ -443,6 +443,37 @@ describe("runCli", () => {
     }
   });
 
+  test("a broken FTS index fails every reader instead of reading as no results (#248)", () => {
+    for (const [table, args] of [
+      ["messages_fts", ["search", "zzyzx"]],
+      ["messages_fts", ["relevant", "zzyzx"]],
+      ["summaries_fts", ["relevant", "zzyzx"]],
+      ["summaries_fts", ["digest", "search", "zzyzx"]],
+    ] as const) {
+      const cap = makeIO();
+      cli([...args], cap.io, () => {
+        const db = memDb();
+        db.run(`DROP TABLE ${table}`);
+        return db;
+      });
+      expect(`${args.join(" ")}: ${cap.errs.join("\n")}`).toContain(`no such table: ${table}`);
+      expect(cap.logs).toEqual([]);
+      expect(cap.exitCode).toBe(1);
+    }
+  });
+
+  test("search falls back to the sanitized phrase on malformed FTS syntax (#248)", () => {
+    writeSession(env.projects, "-repo", "SESS", [
+      userMsg("SESS", "u1", "a limiter question", { timestamp: ts(0) }),
+    ]);
+    for (const query of ['limiter"', "limiter(", "limiter.question"]) {
+      const cap = makeIO();
+      cli(["search", query, "--json"], cap.io, seeded());
+      expect(JSON.parse(cap.logs.join("\n"))[0].session_id).toBe("SESS");
+      expect(cap.exitCode).toBe(0);
+    }
+  });
+
   test("the human empty state is printed instead, once, when JSON is not asked for", () => {
     const cap = makeIO();
     cli(["sessions"], cap.io, () => memDb());

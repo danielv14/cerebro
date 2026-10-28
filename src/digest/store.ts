@@ -161,13 +161,7 @@ export const searchSummaries = (db: Database, query: string, limit = 10): Summar
   const match = toMatchQuery(query);
   if (!match) return [];
 
-  let rows: RankedHit[];
-  try {
-    rows = searchSummaryRoots(db, match, limit, 12);
-  } catch {
-    return [];
-  }
-
+  const rows = searchSummaryRoots(db, match, limit, 12);
   return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
     ...identity,
     snippet: hit.snippet,
