@@ -50,6 +50,7 @@ export interface RankedHit {
   score: number;
   last_ts: string | null;
   git_root: string | null;
+  git_remote: string | null;
   project_path: string | null;
 }
 
@@ -103,7 +104,7 @@ const messageHitColumns = `
     s.git_branch AS session_git_branch,
     snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
     bm25(messages_fts) AS score,
-    t.last_ts, t.git_root, t.project_path`;
+    t.last_ts, t.git_root, t.git_remote, t.project_path`;
 
 export const rankedMessageHits = (
   db: Database,

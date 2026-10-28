@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
 import { type RankedHit, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
+import type { GitInfo } from "./git.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
 const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
@@ -67,14 +68,18 @@ export const decayedRank = (
 };
 
 export interface RepoScope {
-  repoRoot?: string | null;
+  repo?: GitInfo;
   cwd?: string | null;
 }
 
 // A boost, never a filter: a much stronger cross-repo match stays reachable.
 const SAME_REPO_BOOST = 1.5;
 const repoBoost = (hit: RankedHit, scope: RepoScope): number => {
-  if (scope.repoRoot) return hit.git_root === scope.repoRoot ? SAME_REPO_BOOST : 1;
+  const repo = scope.repo;
+  if (repo?.root) {
+    const sameRepo = hit.git_root === repo.root || (repo.remote && hit.git_remote === repo.remote);
+    return sameRepo ? SAME_REPO_BOOST : 1;
+  }
   if (scope.cwd) return hit.project_path === scope.cwd ? SAME_REPO_BOOST : 1;
   return 1;
 };
