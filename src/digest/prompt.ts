@@ -84,10 +84,9 @@ const sliceToBytes = (text: string, maxBytes: number): string => {
   return text.slice(0, end);
 };
 
-export const buildDigestInput = (
-  messages: RenderableMessage[],
-  maxBytes = DIGEST_INPUT_MAX_BYTES,
-): string => {
+const droppedNote = (count: number): string => `[${count} older message(s) dropped for digest]\n\n`;
+
+const fitToBudget = (messages: RenderableMessage[], maxBytes: number): string => {
   const headers = messages.map(renderHeader);
   const bodies = messages.map((message) => message.text);
   const bodyBytes = bodies.map((body) => Buffer.byteLength(body));
@@ -102,7 +101,9 @@ export const buildDigestInput = (
         // The note is charged to the cap so the block stays within it. Reserving
         // against the whole body is safe, since the dropped count can never have
         // more digits than the body's own byte length.
-        const kept = sliceToBytes(body, cap - truncationNote(bodyBytes[i]!).length);
+        const note = truncationNote(bodyBytes[i]!);
+        if (note.length > cap) return `${headers[i]}${sliceToBytes(body, cap)}\n`;
+        const kept = sliceToBytes(body, cap - note.length);
         return `${headers[i]}${kept}${truncationNote(bodyBytes[i]! - Buffer.byteLength(kept))}\n`;
       })
       .join("\n");
@@ -120,4 +121,25 @@ export const buildDigestInput = (
     else hi = mid - 1;
   }
   return render(lo);
+};
+
+// Headers are never trimmed, so past half the budget the oldest messages go
+// whole: the tail is what a summary of a long session most needs.
+export const buildDigestInput = (
+  messages: RenderableMessage[],
+  maxBytes = DIGEST_INPUT_MAX_BYTES,
+): string => {
+  let headerBytes = messages.reduce(
+    (sum, message) => sum + Buffer.byteLength(renderHeader(message)) + 2,
+    0,
+  );
+  const bodyBytes = messages.reduce((sum, message) => sum + Buffer.byteLength(message.text), 0);
+  let dropped = 0;
+  while (headerBytes + bodyBytes > maxBytes && headerBytes > maxBytes / 2) {
+    headerBytes -= Buffer.byteLength(renderHeader(messages[dropped]!)) + 2;
+    dropped++;
+  }
+  if (dropped === 0) return fitToBudget(messages, maxBytes);
+  const note = droppedNote(dropped);
+  return note + fitToBudget(messages.slice(dropped), maxBytes - Buffer.byteLength(note));
 };
