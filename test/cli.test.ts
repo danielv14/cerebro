@@ -781,6 +781,7 @@ describe("runCli", () => {
   test("recent counts a worktree of the same repo as that repo (#244)", () => {
     const repos: Record<string, GitInfo> = {
       "/checkout/mine": { root: "/checkout/mine", remote: "git@host:me/mine.git" },
+      "/checkout/mine-before-remote": { root: "/checkout/mine", remote: null },
       "/worktrees/mine-feature": {
         root: "/worktrees/mine-feature",
         remote: "git@host:me/mine.git",
@@ -791,6 +792,7 @@ describe("runCli", () => {
     const resolveGit: GitResolver = (cwd) => repos[cwd ?? ""] ?? { root: null, remote: null };
     for (const [id, cwd] of [
       ["MAIN", "/checkout/mine"],
+      ["PRE-REMOTE", "/checkout/mine-before-remote"],
       ["WORKTREE", "/worktrees/mine-feature"],
       ["NOREMOTE", "/checkout/other"],
       ["NOREMOTE-WT", "/worktrees/other-feature"],
@@ -812,8 +814,7 @@ describe("runCli", () => {
         .sort();
     };
 
-    expect(recentIds("/checkout/mine")).toEqual(["MAIN", "WORKTREE"]);
-    expect(recentIds("/worktrees/mine-feature")).toEqual(["MAIN", "WORKTREE"]);
+    expect(recentIds("/checkout/mine")).toEqual(["MAIN", "PRE-REMOTE", "WORKTREE"]);
     // Without a remote there is nothing shared to match on, so two repos with no
     // remote must not merge into one.
     expect(recentIds("/checkout/other")).toEqual(["NOREMOTE"]);

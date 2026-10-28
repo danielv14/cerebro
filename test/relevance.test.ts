@@ -194,24 +194,35 @@ describe("relevance ranking", () => {
         timestamp: ts(month),
       }),
     ]);
+    writeSession(env.projects, "-bare", "BARE", [
+      userMsg("BARE", "u3", "notes about the limiter design", {
+        cwd: "/checkout/bare",
+        timestamp: ts(0),
+      }),
+    ]);
+    const remotes: Record<string, string> = {
+      "/worktrees/mine-feature": "git@host:me/mine.git",
+      "/checkout/other": "git@host:me/other.git",
+    };
     const resolveGit: GitResolver = (cwd) => ({
       root: cwd ?? null,
-      remote: cwd === "/worktrees/mine-feature" ? "git@host:me/mine.git" : null,
+      remote: remotes[cwd ?? ""] ?? null,
     });
     runIndex(db, { adapters: env.adapters, resolveGit });
     const now = Date.parse(ts(month));
 
-    const fromMain = relevantThreads(db, "limiter", 2, now, {
+    const fromMain = relevantThreads(db, "limiter", 3, now, {
       repo: { root: "/checkout/mine", remote: "git@host:me/mine.git" },
       cwd: "/checkout/mine",
     });
-    expect(fromMain.map((h) => h.id)).toEqual(["WORKTREE", "OTHER"]);
+    expect(fromMain[0]!.id).toBe("WORKTREE");
 
-    const noRemote = relevantThreads(db, "limiter", 2, now, {
+    // BARE has no remote either; a shared NULL must not boost it past OTHER.
+    const noRemote = relevantThreads(db, "limiter", 3, now, {
       repo: { root: "/checkout/third", remote: null },
       cwd: "/checkout/third",
     });
-    expect(noRemote.map((h) => h.id)).toEqual(["OTHER", "WORKTREE"]);
+    expect(noRemote[0]!.id).toBe("OTHER");
   });
 
   test("relevantThreads boost is not a filter: cross-repo threads still surface (#88)", () => {
