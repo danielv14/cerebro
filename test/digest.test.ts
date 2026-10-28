@@ -206,6 +206,15 @@ describe("buildDigestInput (size-bounded transcript)", () => {
     expect(out).toContain("turn 44999 ");
   });
 
+  test("stays within budget when the dropped-messages line is what tips it over", () => {
+    const messages = Array.from({ length: 40_000 }, () => msg("user", ""));
+    for (let budget = 1_479_970; budget < 1_480_000; budget++) {
+      expect(Buffer.byteLength(buildDigestInput(messages, budget), "utf8")).toBeLessThanOrEqual(
+        budget,
+      );
+    }
+  });
+
   test("stays within budget when the fair share is smaller than the truncation note", () => {
     const messages = Array.from({ length: 10 }, () => ({
       ...msg("user", "z".repeat(100_000)),

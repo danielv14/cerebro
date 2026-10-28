@@ -129,14 +129,19 @@ export const buildDigestInput = (
   messages: RenderableMessage[],
   maxBytes = DIGEST_INPUT_MAX_BYTES,
 ): string => {
-  let headerBytes = messages.reduce(
-    (sum, message) => sum + Buffer.byteLength(renderHeader(message)) + 2,
-    0,
-  );
-  const bodyBytes = messages.reduce((sum, message) => sum + Buffer.byteLength(message.text), 0);
+  const headerSizes = messages.map((message) => Buffer.byteLength(renderHeader(message)) + 2);
+  const bodySizes = messages.map((message) => Buffer.byteLength(message.text));
+  let headerBytes = headerSizes.reduce((sum, bytes) => sum + bytes, 0);
+  let bodyBytes = bodySizes.reduce((sum, bytes) => sum + bytes, 0);
   let dropped = 0;
-  while (headerBytes + bodyBytes > maxBytes && headerBytes > maxBytes / 2) {
-    headerBytes -= Buffer.byteLength(renderHeader(messages[dropped]!)) + 2;
+  const noteBytes = () => (dropped === 0 ? 0 : Buffer.byteLength(droppedNote(dropped)));
+  while (
+    dropped < messages.length &&
+    headerBytes + bodyBytes + noteBytes() > maxBytes &&
+    headerBytes + noteBytes() > maxBytes / 2
+  ) {
+    headerBytes -= headerSizes[dropped]!;
+    bodyBytes -= bodySizes[dropped]!;
     dropped++;
   }
   if (dropped === 0) return fitToBudget(messages, maxBytes);
