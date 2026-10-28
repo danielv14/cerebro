@@ -799,6 +799,15 @@ describe("runCli", () => {
     expect(cap.exitCode).toBe(1);
   });
 
+  test("--days past the date range fails as a CliError, not Invalid Date", () => {
+    const cap = makeIO();
+    cli(["recent", "--days", "1e9"], cap.io, () => memDb());
+    expect(cap.errs.join("\n")).toContain(
+      '--days must be a positive number up to 99999 (got "1e9")',
+    );
+    expect(cap.exitCode).toBe(1);
+  });
+
   test("relevant --cwd boosts threads from that repo (#88)", () => {
     writeSession(env.projects, "-repo-mine", "MINE", [
       userMsg("MINE", "u1", "notes about the limiter design", {
