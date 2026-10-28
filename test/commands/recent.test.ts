@@ -28,7 +28,7 @@ describe("recentBlock", () => {
           opening: "do the thing",
         },
       ],
-      { repoPath: "/Users/foo/cerebro", days: 14 },
+      { repoName: "cerebro", days: 14 },
     );
     expect(lines).toEqual([
       "Recent sessions in cerebro (last 14 days):",
@@ -40,7 +40,7 @@ describe("recentBlock", () => {
 
   test("omits the opened line when the thread has no opening prompt", () => {
     const lines = recentBlock([{ thread: makeThread(), opening: null }], {
-      repoPath: "/repo",
+      repoName: "repo",
       days: 14,
     });
     expect(lines).toEqual([
@@ -53,7 +53,7 @@ describe("recentBlock", () => {
   test("truncates the title at 90 columns", () => {
     const lines = recentBlock(
       [{ thread: makeThread({ msgs: 1, title: "x".repeat(100) }), opening: null }],
-      { repoPath: "/repo", days: 14 },
+      { repoName: "repo", days: 14 },
     );
     expect(lines[1]).toBe(`  01234567  2026-01-15     1 msgs  ${"x".repeat(89)}…`);
   });

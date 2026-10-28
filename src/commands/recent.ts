@@ -1,3 +1,4 @@
+import type { GitInfo } from "../git.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts";
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
@@ -5,11 +6,9 @@ import { defineCommand } from "./command.ts";
 
 export const recentBlock = (
   rows: { thread: ThreadRow; opening: string | null }[],
-  opts: { repoPath: string; days: number },
+  opts: { repoName: string; days: number },
 ): string[] => {
-  const lines: string[] = [
-    `Recent sessions in ${projectName(opts.repoPath)} (last ${opts.days} days):`,
-  ];
+  const lines: string[] = [`Recent sessions in ${opts.repoName} (last ${opts.days} days):`];
   for (const { thread, opening } of rows) {
     lines.push(
       `  ${shortId(thread.id)}  ${shortDate(thread.last_ts)}  ${String(thread.msgs).padStart(4)} msgs  ${oneLine(thread.title ?? "(untitled)", 90)}`,
@@ -19,6 +18,16 @@ export const recentBlock = (
   lines.push('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
   return lines;
 };
+
+// With a remote the listing spans every worktree, so the name comes from the remote
+// rather than from whichever worktree recent ran in.
+const repoName = (repo: GitInfo, cwd: string): string =>
+  repo.remote
+    ? (repo.remote
+        .replace(/(\.git)?\/*$/, "")
+        .split(/[/:]/)
+        .pop() ?? repo.remote)
+    : projectName(repo.root ?? cwd);
 
 const options = {
   cwd: text(),
@@ -48,7 +57,7 @@ export const recentCommand = defineCommand({
 
     return {
       json: rows.map(({ thread, opening }) => ({ ...thread, opening })),
-      lines: rows.length > 0 ? recentBlock(rows, { repoPath: repo.root ?? cwd, days }) : [],
+      lines: rows.length > 0 ? recentBlock(rows, { repoName: repoName(repo, cwd), days }) : [],
       empty: "No recent sessions for this repo.",
     };
   },
