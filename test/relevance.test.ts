@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
-import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import { decayedRank, dedupedHitWindow, relevantThreads } from "../src/relevance.ts";
 import {
@@ -144,85 +143,14 @@ describe("relevance ranking", () => {
     const now = Date.parse(ts(month));
 
     expect(relevantThreads(db, "limiter", 2, now).map((h) => h.id)).toEqual(["OTHER", "MINE"]);
-    expect(relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" }).map((h) => h.id)).toEqual([
+    expect(relevantThreads(db, "limiter", 2, now, "/repo-mine").map((h) => h.id)).toEqual([
       "MINE",
       "OTHER",
     ]);
-    expect(
-      relevantThreads(db, "limiter", 2, now, { cwd: "/repo-elsewhere" }).map((h) => h.id),
-    ).toEqual(["OTHER", "MINE"]);
-  });
-
-  test("relevantThreads boosts on git_root when the cwd is inside a repo (#88)", () => {
-    writeSession(env.projects, "-repo-mine", "MINE", [
-      userMsg("MINE", "u1", "notes about the limiter design", {
-        cwd: "/checkout/mine",
-        timestamp: ts(0),
-      }),
+    expect(relevantThreads(db, "limiter", 2, now, "/repo-elsewhere").map((h) => h.id)).toEqual([
+      "OTHER",
+      "MINE",
     ]);
-    const month = 30 * 86_400;
-    writeSession(env.projects, "-repo-other", "OTHER", [
-      userMsg("OTHER", "u2", "notes about the limiter design", {
-        cwd: "/checkout/other",
-        timestamp: ts(month),
-      }),
-    ]);
-    // The fixture cwds are not real directories, so a fake resolver stands in for an index run
-    // inside a real repo.
-    const resolveGit: GitResolver = (cwd) => ({ root: cwd ?? null, remote: null });
-    runIndex(db, { adapters: env.adapters, resolveGit });
-    const now = Date.parse(ts(month));
-
-    const hits = relevantThreads(db, "limiter", 2, now, {
-      repo: { root: "/checkout/mine", remote: null },
-      cwd: "/checkout/mine/packages/api",
-    });
-    expect(hits.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
-  });
-
-  test("relevantThreads boosts a worktree of the same repo (#244)", () => {
-    const month = 30 * 86_400;
-    writeSession(env.projects, "-worktree", "WORKTREE", [
-      userMsg("WORKTREE", "u1", "notes about the limiter design", {
-        cwd: "/worktrees/mine-feature",
-        timestamp: ts(0),
-      }),
-    ]);
-    writeSession(env.projects, "-other", "OTHER", [
-      userMsg("OTHER", "u2", "notes about the limiter design", {
-        cwd: "/checkout/other",
-        timestamp: ts(month),
-      }),
-    ]);
-    writeSession(env.projects, "-bare", "BARE", [
-      userMsg("BARE", "u3", "notes about the limiter design", {
-        cwd: "/checkout/bare",
-        timestamp: ts(0),
-      }),
-    ]);
-    const remotes: Record<string, string> = {
-      "/worktrees/mine-feature": "git@host:me/mine.git",
-      "/checkout/other": "git@host:me/other.git",
-    };
-    const resolveGit: GitResolver = (cwd) => ({
-      root: cwd ?? null,
-      remote: remotes[cwd ?? ""] ?? null,
-    });
-    runIndex(db, { adapters: env.adapters, resolveGit });
-    const now = Date.parse(ts(month));
-
-    const fromMain = relevantThreads(db, "limiter", 3, now, {
-      repo: { root: "/checkout/mine", remote: "git@host:me/mine.git" },
-      cwd: "/checkout/mine",
-    });
-    expect(fromMain[0]!.id).toBe("WORKTREE");
-
-    // BARE has no remote either; a shared NULL must not boost it past OTHER.
-    const noRemote = relevantThreads(db, "limiter", 3, now, {
-      repo: { root: "/checkout/third", remote: null },
-      cwd: "/checkout/third",
-    });
-    expect(noRemote[0]!.id).toBe("OTHER");
   });
 
   test("relevantThreads boost is not a filter: cross-repo threads still surface (#88)", () => {
@@ -236,7 +164,7 @@ describe("relevance ranking", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), { cwd: "/repo-mine" });
+    const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), "/repo-mine");
     expect(hits.map((h) => h.id)).toEqual(["STRONG", "WEAK"]);
   });
 
@@ -256,7 +184,7 @@ describe("relevance ranking", () => {
     const global = relevantThreads(db, "limiter", 2, now);
     expect(global.map((h) => h.id)).toEqual(["OTHER", "MINE"]);
     expect(global.every((h) => h.fromSummary)).toBe(true);
-    const scoped = relevantThreads(db, "limiter", 2, now, { cwd: "/repo-mine" });
+    const scoped = relevantThreads(db, "limiter", 2, now, "/repo-mine");
     expect(scoped.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
     expect(scoped.every((h) => h.fromSummary)).toBe(true);
   });

@@ -1,6 +1,7 @@
 export interface GitInfo {
   root: string | null;
   remote: string | null;
+  mainRoot: string | null;
 }
 
 export type GitResolver = (cwd: string | null | undefined) => GitInfo;
@@ -22,14 +23,23 @@ const runGit = (cwd: string, args: string[]): string | null => {
 export const createGitResolver = (): GitResolver => {
   const cache = new Map<string, GitInfo>();
   return (cwd) => {
-    if (!cwd) return { root: null, remote: null };
+    if (!cwd) return { root: null, remote: null, mainRoot: null };
 
     const cached = cache.get(cwd);
     if (cached) return cached;
 
-    const root = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+    const [root = null, commonDir = null] =
+      runGit(cwd, [
+        "rev-parse",
+        "--show-toplevel",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ])?.split("\n") ?? [];
     const remote = root ? runGit(cwd, ["remote", "get-url", "origin"]) : null;
-    const info: GitInfo = { root, remote };
+    // Every worktree shares the main checkout's .git, so its parent is the repo's
+    // one root; a bare repo's common dir is the repo itself.
+    const mainRoot = commonDir?.replace(/\/\.git$/, "") ?? root;
+    const info: GitInfo = { root, remote, mainRoot };
     cache.set(cwd, info);
     return info;
   };

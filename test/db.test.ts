@@ -84,6 +84,32 @@ describe("openDb schema versioning", () => {
     reopened.close();
   });
 
+  test("migration gives pre-repo_key rows a key without losing any", () => {
+    const db = openDb(path);
+    db.run(
+      `INSERT INTO sessions (session_id, cwd, git_root, git_remote, last_ts, msg_count) VALUES
+         ('REMOTE', '/mine', '/mine', 'git@host:me/mine.git', '2026-02-01', 1),
+         ('BEFORE', '/mine', '/mine', NULL, '2026-01-01', 1),
+         ('LONER', '/loner', '/loner', NULL, '2026-01-01', 1),
+         ('NOGIT', '/plain', NULL, NULL, '2026-01-01', 1)`,
+    );
+    db.run("DROP VIEW threads");
+    db.run("ALTER TABLE sessions DROP COLUMN repo_key");
+    db.run("PRAGMA user_version = 8");
+    db.close();
+
+    const reopened = openDb(path);
+    expect(
+      reopened.query("SELECT session_id, repo_key FROM sessions ORDER BY session_id").all(),
+    ).toEqual([
+      { session_id: "BEFORE", repo_key: "git@host:me/mine.git" },
+      { session_id: "LONER", repo_key: "/loner" },
+      { session_id: "NOGIT", repo_key: "/plain" },
+      { session_id: "REMOTE", repo_key: "git@host:me/mine.git" },
+    ]);
+    reopened.close();
+  });
+
   test("an old-version database gets the current threads view definition (#83)", () => {
     const db = openDb(path);
     db.run("DROP VIEW threads");

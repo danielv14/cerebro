@@ -1,5 +1,5 @@
-import type { GitInfo } from "../git.ts";
-import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
+import { oneLine, openedLine, shortDate, shortId } from "../render.ts";
+import { repoKey, repoName } from "../repo.ts";
 import { recentThreads, type ThreadRow, threadOpeningPrompt } from "../thread.ts";
 import { flag, numeric, type OptionTable, positiveInt, text } from "./args.ts";
 import { defineCommand } from "./command.ts";
@@ -18,16 +18,6 @@ export const recentBlock = (
   lines.push('\nPull prior context: cerebro show <id>  |  cerebro search "<terms>"');
   return lines;
 };
-
-// With a remote the listing spans every worktree, so the name comes from the remote
-// rather than from whichever worktree recent ran in.
-const repoName = (repo: GitInfo, cwd: string): string =>
-  repo.remote
-    ? (repo.remote
-        .replace(/\/*(\.git)?\/*$/, "")
-        .split(/[/:]/)
-        .pop() ?? repo.remote)
-    : projectName(repo.root ?? cwd);
 
 const options = {
   cwd: text(),
@@ -48,8 +38,8 @@ export const recentCommand = defineCommand({
     const cwd = args.cwd || invokedIn;
     const days = args.days ?? 14;
     const since = new Date(now - days * 86_400_000).toISOString();
-    const repo = resolveGit(cwd);
-    const threads = recentThreads(db, { repo, cwd, since, limit: args.limit ?? 5 });
+    const key = repoKey(resolveGit(cwd), cwd) ?? cwd;
+    const threads = recentThreads(db, { repoKey: key, since, limit: args.limit ?? 5 });
     const rows = threads.map((thread) => ({
       thread,
       opening: threadOpeningPrompt(db, thread.id),
@@ -57,7 +47,7 @@ export const recentCommand = defineCommand({
 
     return {
       json: rows.map(({ thread, opening }) => ({ ...thread, opening })),
-      lines: rows.length > 0 ? recentBlock(rows, { repoName: repoName(repo, cwd), days }) : [],
+      lines: rows.length > 0 ? recentBlock(rows, { repoName: repoName(key), days }) : [],
       empty: "No recent sessions for this repo.",
     };
   },

@@ -553,7 +553,7 @@ describe("query (populated archive)", () => {
       [ts(1), ts(1)],
     );
 
-    const recent = recentThreads(db, { cwd: "/repo-x", since: ts(-100000), limit: 5 });
+    const recent = recentThreads(db, { repoKey: "/repo-x", since: ts(-100000), limit: 5 });
     expect(recent.map((t) => t.id)).toEqual(["REAL"]);
     expect(stats(db).topProjects).toEqual([{ project_path: "/repo-x", threads: 1 }]);
   });
@@ -564,13 +564,13 @@ describe("query (populated archive)", () => {
     ]);
     runIndex(db, { adapters: env.adapters });
 
-    const hit = recentThreads(db, { cwd: "/repo-x", since: ts(-100000), limit: 5 });
+    const hit = recentThreads(db, { repoKey: "/repo-x", since: ts(-100000), limit: 5 });
     expect(hit.map((t) => t.id)).toEqual(["X"]);
 
-    const otherRepo = recentThreads(db, { cwd: "/repo-y", since: ts(-100000), limit: 5 });
+    const otherRepo = recentThreads(db, { repoKey: "/repo-y", since: ts(-100000), limit: 5 });
     expect(otherRepo.length).toBe(0);
 
-    const tooOld = recentThreads(db, { cwd: "/repo-x", since: ts(100000), limit: 5 });
+    const tooOld = recentThreads(db, { repoKey: "/repo-x", since: ts(100000), limit: 5 });
     expect(tooOld.length).toBe(0);
   });
 
@@ -593,7 +593,7 @@ describe("query (populated archive)", () => {
 
     const surfaces = {
       sessions: listThreads(db)[0]!,
-      recent: recentThreads(db, { cwd: "/repo", since: ts(-1), limit: 5 })[0]!,
+      recent: recentThreads(db, { repoKey: "/repo", since: ts(-1), limit: 5 })[0]!,
       relevant: relevantThreads(db, "limiter", 3, now)[0]!,
       digestSearch: searchSummaries(db, "limiter")[0]!,
     };

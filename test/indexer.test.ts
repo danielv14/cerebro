@@ -38,8 +38,8 @@ describe("runIndex", () => {
   test("git resolution comes from the injected resolver, per session cwd", () => {
     const resolveGit: GitResolver = (cwd) =>
       cwd === "/checkout/mine"
-        ? { root: "/checkout/mine", remote: "git@example.com:mine.git" }
-        : { root: null, remote: null };
+        ? { root: "/checkout/mine", remote: "git@example.com:mine.git", mainRoot: "/checkout/mine" }
+        : { root: null, remote: null, mainRoot: null };
 
     writeSession(env.projects, "-repo", "INREPO", [
       userMsg("INREPO", "u1", "work", { cwd: "/checkout/mine" }),
@@ -60,7 +60,10 @@ describe("runIndex", () => {
 
   test("a resolver that reports nothing leaves the git columns null (invariant #9)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { cwd: "/gone" })]);
-    runIndex(db, { adapters: env.adapters, resolveGit: () => ({ root: null, remote: null }) });
+    runIndex(db, {
+      adapters: env.adapters,
+      resolveGit: () => ({ root: null, remote: null, mainRoot: null }),
+    });
 
     const row = db.query("SELECT git_root, git_remote, cwd FROM sessions").get() as {
       git_root: string | null;
