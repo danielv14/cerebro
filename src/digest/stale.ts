@@ -5,7 +5,7 @@ import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // "no-coverage" is a summary reattachSummaries moved onto a new root: it never saw
 // the session that took over, so it has no coverage point to compare. A thread
-// without any timestamp has none either, and is covered once summarized.
+// without any timestamp gives nothing to compare it to, so any summary covers it.
 export type StaleReason = "never" | "old-prompt" | "no-coverage" | "new-activity";
 
 export type DrainHold = "backing-off" | "settling";
