@@ -352,6 +352,26 @@ describe("digest (summaries layer)", () => {
     expect(stale[0]!.summary_version).toBe(DIGEST_PROMPT_VERSION - 1);
   });
 
+  test("a thread with no timestamps is not stale once summarized", () => {
+    writeSession(env.projects, "-repo", "S", [
+      userMsg("S", "u1", "work", { timestamp: undefined }),
+      assistantMsg("S", "a1", "done", { parentUuid: "u1", timestamp: undefined }),
+    ]);
+    runIndex(db, { adapters: env.adapters });
+    expect(staleThreads(db).map((t) => t.id)).toEqual(["S"]);
+
+    writeSummary(db, "S", "Summary. Keywords: work");
+    expect(staleThreads(db).length).toBe(0);
+  });
+
+  test("a summary without a coverage point on a timestamped thread is stale as no-coverage", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
+    runIndex(db, { adapters: env.adapters });
+    writeSummary(db, "S", "Summary. Keywords: work", null, null);
+
+    expect(staleThreads(db).map((t) => t.reason)).toEqual(["no-coverage"]);
+  });
+
   test("writeSummary upserts: re-summarizing replaces the row and the FTS text", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });

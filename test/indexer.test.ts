@@ -58,6 +58,97 @@ describe("runIndex", () => {
     ]);
   });
 
+  const repoA = { root: "/a", remote: "git@example.com:a.git", mainRoot: "/a" };
+  const repoB = { root: "/b", remote: "git@example.com:b.git", mainRoot: "/b" };
+  const resolveAB: GitResolver = (cwd) =>
+    cwd === "/a" ? repoA : cwd === "/b" ? repoB : { root: null, remote: null, mainRoot: null };
+  const LOCATION_COLUMNS =
+    "SELECT project_path, cwd, git_root, git_remote, git_branch FROM sessions WHERE session_id = 'S'";
+  const atRepoA = {
+    project_path: "/a",
+    cwd: "/a",
+    git_root: "/a",
+    git_remote: repoA.remote,
+    git_branch: "main",
+  };
+
+  test("a later chunk in another cwd and branch does not move the session (#261)", () => {
+    const path = writeSession(env.projects, "-a", "S", [
+      userMsg("S", "u1", "start", { cwd: "/a", gitBranch: "main" }),
+    ]);
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+    appendRaw(
+      path,
+      `${JSON.stringify(
+        assistantMsg("S", "a1", "moved", { parentUuid: "u1", cwd: "/b", gitBranch: "feature" }),
+      )}\n`,
+    );
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+
+    expect(db.query(LOCATION_COLUMNS).get()).toEqual(atRepoA);
+  });
+
+  test("a later chunk does not give a branch to a session that started outside a repo", () => {
+    const path = writeSession(env.projects, "-home", "S", [
+      userMsg("S", "u1", "start", { cwd: "/home", gitBranch: undefined }),
+    ]);
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+    appendRaw(
+      path,
+      `${JSON.stringify(
+        assistantMsg("S", "a1", "moved", { parentUuid: "u1", cwd: "/b", gitBranch: "feature" }),
+      )}\n`,
+    );
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+
+    expect(db.query(LOCATION_COLUMNS).get()).toEqual({
+      project_path: "/home",
+      cwd: "/home",
+      git_root: null,
+      git_remote: null,
+      git_branch: null,
+    });
+  });
+
+  test("--rebuild sets the location from the first message, repairing a moved row (#261)", () => {
+    writeSession(env.projects, "-a", "S", [
+      userMsg("S", "u1", "start", { cwd: "/a", gitBranch: "main" }),
+      assistantMsg("S", "a1", "moved", { parentUuid: "u1", cwd: "/b", gitBranch: "feature" }),
+    ]);
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+    db.run(
+      `UPDATE sessions SET project_path = '/b', cwd = '/b', git_root = '/b',
+         git_remote = ?, git_branch = 'feature' WHERE session_id = 'S'`,
+      [repoB.remote],
+    );
+
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB, rebuild: true });
+    expect(db.query(LOCATION_COLUMNS).get()).toEqual(atRepoA);
+  });
+
+  test("--rebuild does not keep the moved row's repo when the first cwd no longer resolves", () => {
+    writeSession(env.projects, "-a", "S", [
+      userMsg("S", "u1", "start", { cwd: "/a", gitBranch: "main" }),
+    ]);
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+    db.run(
+      `UPDATE sessions SET project_path = '/b', cwd = '/b', git_root = '/b',
+         git_remote = ? WHERE session_id = 'S'`,
+      [repoB.remote],
+    );
+
+    runIndex(db, {
+      adapters: env.adapters,
+      resolveGit: () => ({ root: null, remote: null, mainRoot: null }),
+      rebuild: true,
+    });
+    expect(db.query(LOCATION_COLUMNS).get()).toEqual({
+      ...atRepoA,
+      git_root: null,
+      git_remote: null,
+    });
+  });
+
   test("a resolver that reports nothing leaves the git columns null (invariant #9)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { cwd: "/gone" })]);
     runIndex(db, {

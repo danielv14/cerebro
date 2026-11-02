@@ -160,7 +160,8 @@ These are load-bearing. Violating one silently corrupts the archive.
    (`COALESCE(excluded.x, sessions.x)`), while a subagent file must never clobber
    the parent (`COALESCE(sessions.x, excluded.x)`, with the fields it cannot know
    passed NULL). On top of that only `upsertSession` carries the title-priority
-   `CASE` (a later `summary` must not overwrite a `custom-title`), while
+   `CASE` (a later `summary` must not overwrite a `custom-title`) and the
+   first-message location rule (`docs/architecture.md`), while
    `touchParentSession` freezes `title_priority`. Merging them behind a
    `prefer: "incoming" | "existing"` flag is a decided non-goal: it hides the one
    thing that differs, and a wrong merge silently mis-attributes sessions
