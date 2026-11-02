@@ -107,12 +107,22 @@ const sessionAggregate = (db: Database, sessionId: string): SessionAggregate =>
 
 // The stored title_priority decides the title, with >= so a renewed same-priority
 // title still replaces the old.
-const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): void => {
+// A session's location is its first message's: only a read from byte 0 sees that
+// message, so a later chunk only fills a location that is still missing.
+const upsertSession = (
+  db: Database,
+  meta: FileMeta,
+  resolveGit: GitResolver,
+  readFromStart: boolean,
+): void => {
   const existing = db
-    .query(`SELECT cwd FROM sessions WHERE session_id = ?`)
-    .get(meta.sessionId) as { cwd: string | null } | null;
+    .query(`SELECT cwd, git_branch FROM sessions WHERE session_id = ?`)
+    .get(meta.sessionId) as { cwd: string | null; git_branch: string | null } | null;
 
-  const cwd = meta.cwd ?? existing?.cwd ?? null;
+  const cwd = readFromStart ? (meta.cwd ?? existing?.cwd ?? null) : (existing?.cwd ?? meta.cwd);
+  const gitBranch = readFromStart
+    ? (meta.gitBranch ?? existing?.git_branch ?? null)
+    : (existing?.git_branch ?? meta.gitBranch);
   const git = resolveGit(cwd);
   const agg = sessionAggregate(db, meta.sessionId);
 
@@ -126,8 +136,12 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = COALESCE(excluded.project_path, sessions.project_path),
        cwd            = COALESCE(excluded.cwd, sessions.cwd),
-       git_root       = COALESCE(excluded.git_root, sessions.git_root),
-       git_remote     = COALESCE(excluded.git_remote, sessions.git_remote),
+       git_root       = CASE WHEN excluded.cwd IS sessions.cwd
+                          THEN COALESCE(excluded.git_root, sessions.git_root)
+                          ELSE excluded.git_root END,
+       git_remote     = CASE WHEN excluded.cwd IS sessions.cwd
+                          THEN COALESCE(excluded.git_remote, sessions.git_remote)
+                          ELSE excluded.git_remote END,
        git_branch     = COALESCE(excluded.git_branch, sessions.git_branch),
        source_file    = COALESCE(excluded.source_file, sessions.source_file),
        provider       = COALESCE(excluded.provider, sessions.provider),
@@ -151,7 +165,7 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
     cwd,
     git.root,
     git.remote,
-    meta.gitBranch,
+    gitBranch,
     meta.sourceFile,
     meta.provider,
     meta.model,
@@ -264,7 +278,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
     files,
     readAll,
     (scanned) => {
-      const { file, lines, cursor } = scanned;
+      const { file, lines, cursor, plan } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
       const verdict = fileVerdict(scanned, classify);
       // A mid-write file still gets its cursor saved (the dry run only counts it):
@@ -275,7 +289,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
         if (verdict !== "ingest") return false;
         const meta = ingestLines(db, file, lines, classify, rebuild);
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
-        else upsertSession(db, meta, resolveGit);
+        else upsertSession(db, meta, resolveGit, plan.start === 0);
         return true;
       });
       if (tx()) filesIndexed++;
