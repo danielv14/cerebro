@@ -422,14 +422,20 @@ The remote outranks the path because it is what survives: most worktrees are
 deleted soon after their sessions, and a deleted worktree's main root can never
 be resolved again, while its remote is already stored on the row.
 
+A session whose directory is gone at index time gets no key from git, so a
+re-index or `--rebuild` keeps the key it already has instead of falling back to
+the cwd.
+
 `settleRepoKeys` runs after every index run that read a file and on migration.
-It gives every row the newest remote recorded at its `git_root`, so a thread
-recorded before the remote was added (or before it was renamed) keeps matching
-its repo, and it fills rows that have no key from their stored columns: a
-pre-v9 archive, or rows an older hook binary wrote. That fill cannot recover the
-main root, so a pre-v9 row from a worktree of a remote-less repo keys on the
-worktree's own path; `index --rebuild` re-resolves the ones whose directory
-still exists.
+First it fills rows that have no key from their stored columns: a pre-v9
+archive, rows an older hook binary wrote, a session indexed after its directory
+was deleted. Then the newest remote recorded at a `git_root` claims every row at
+that root and every row keyed on it. So a thread recorded before the remote was
+added (in a worktree too) keeps matching its repo, and so does a session from a
+deleted worktree whose siblings recorded the remote. The fill cannot recover the
+main root, so a pre-v9 row from a worktree of a repo without a remote keys on
+the worktree's own path until `index --rebuild` re-resolves it, as long as the
+worktree still exists.
 
 `git_root` and `git_remote` stay on `sessions` and in the threads view: the
 settle step reads `git_root`, and older builds still read both against a newer
