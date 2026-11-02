@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { type RankedHit, toMatchQuery } from "../fts.ts";
-import { attachThreadIdentity, type ThreadIdentity, threadLastTs } from "../thread.ts";
+import { attachThreadIdentity, type ThreadIdentity } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Anchored at the start of the text, where CLI/API failures announce themselves;
@@ -32,11 +32,9 @@ export const writeSummary = (
   db: Database,
   root: string,
   summary: string,
-  model: string | null = null,
-  coversLastTs?: string | null,
+  model: string | null,
+  coversLastTs: string | null,
 ): void => {
-  const sourceLastTs = coversLastTs === undefined ? threadLastTs(db, root) : coversLastTs;
-
   db.query(
     `INSERT INTO summaries (root_session_id, summary, prompt_version, model, summarized_at, source_last_ts)
      VALUES (?, ?, ?, ?, ?, ?)
@@ -46,7 +44,7 @@ export const writeSummary = (
        model          = excluded.model,
        summarized_at  = excluded.summarized_at,
        source_last_ts = excluded.source_last_ts`,
-  ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), sourceLastTs);
+  ).run(root, summary, DIGEST_PROMPT_VERSION, model, new Date().toISOString(), coversLastTs);
   db.query("DELETE FROM digest_failures WHERE root_session_id = ?").run(root);
 };
 

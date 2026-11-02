@@ -8,7 +8,7 @@ import { openDb, SCHEMA_VERSION } from "../../src/db.ts";
 import { recordDigestFailure, writeSummary } from "../../src/digest/store.ts";
 import { type Check, type DoctorReport, runDoctor } from "../../src/doctor.ts";
 import { runIndex } from "../../src/indexer.ts";
-import { rootOf } from "../../src/thread.ts";
+import { rootOf, threadLastTs } from "../../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -205,7 +205,13 @@ describe("runDoctor", () => {
       userMsg("RESUME", "u2", "carry on", { parentUuid: "a1", timestamp: ts(2) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "RESUME", "Summary written before the original showed up.");
+    writeSummary(
+      db,
+      "RESUME",
+      "Summary written before the original showed up.",
+      null,
+      threadLastTs(db, "RESUME"),
+    );
 
     writeSession(env.projects, "-repo", "ORIG", [
       userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
