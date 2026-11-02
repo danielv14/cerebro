@@ -4,7 +4,8 @@ import { countThreads } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // "no-coverage" is a summary reattachSummaries moved onto a new root: it never saw
-// the session that took over, so it has no coverage point to compare.
+// the session that took over, so it has no coverage point to compare. A thread
+// without any timestamp has none either, and is covered once summarized.
 export type StaleReason = "never" | "old-prompt" | "no-coverage" | "new-activity";
 
 export type DrainHold = "backing-off" | "settling";
@@ -28,7 +29,7 @@ export interface StaleThread {
 const STALE_REASON = `CASE
          WHEN su.root_session_id IS NULL THEN 'never'
          WHEN su.prompt_version < $version THEN 'old-prompt'
-         WHEN su.source_last_ts IS NULL THEN 'no-coverage'
+         WHEN su.source_last_ts IS NULL AND t.last_ts IS NOT NULL THEN 'no-coverage'
          WHEN su.source_last_ts < t.last_ts THEN 'new-activity'
          END`;
 
