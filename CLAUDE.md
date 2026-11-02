@@ -160,12 +160,9 @@ These are load-bearing. Violating one silently corrupts the archive.
    (`COALESCE(excluded.x, sessions.x)`), while a subagent file must never clobber
    the parent (`COALESCE(sessions.x, excluded.x)`, with the fields it cannot know
    passed NULL). On top of that only `upsertSession` carries the title-priority
-   `CASE` (a later `summary` must not overwrite a `custom-title`) and the location
-   rule: `cwd`/`project_path` and `git_branch` come from the session's first
-   message, so the incoming value wins only on a read from byte 0 and a later
-   chunk only fills a NULL; `git_root`/`git_remote` follow that cwd and keep the
-   stored value only while the cwd is unchanged. `touchParentSession` freezes
-   `title_priority`. Merging them behind a
+   `CASE` (a later `summary` must not overwrite a `custom-title`) and the
+   first-message location rule (`docs/architecture.md`), while
+   `touchParentSession` freezes `title_priority`. Merging them behind a
    `prefer: "incoming" | "existing"` flag is a decided non-goal: it hides the one
    thing that differs, and a wrong merge silently mis-attributes sessions
    (invariant #6).

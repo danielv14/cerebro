@@ -88,6 +88,28 @@ describe("runIndex", () => {
     expect(db.query(LOCATION_COLUMNS).get()).toEqual(atRepoA);
   });
 
+  test("a later chunk does not give a branch to a session that started outside a repo", () => {
+    const path = writeSession(env.projects, "-home", "S", [
+      userMsg("S", "u1", "start", { cwd: "/home", gitBranch: undefined }),
+    ]);
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+    appendRaw(
+      path,
+      `${JSON.stringify(
+        assistantMsg("S", "a1", "moved", { parentUuid: "u1", cwd: "/b", gitBranch: "feature" }),
+      )}\n`,
+    );
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB });
+
+    expect(db.query(LOCATION_COLUMNS).get()).toEqual({
+      project_path: "/home",
+      cwd: "/home",
+      git_root: null,
+      git_remote: null,
+      git_branch: null,
+    });
+  });
+
   test("--rebuild sets the location from the first message, repairing a moved row (#261)", () => {
     writeSession(env.projects, "-a", "S", [
       userMsg("S", "u1", "start", { cwd: "/a", gitBranch: "main" }),

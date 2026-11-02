@@ -189,12 +189,12 @@ Two session-row writers exist on purpose (invariant #7):
   stored `title_priority` so an incremental run that only sees a later,
   lower-priority title event (e.g. a `summary`) can never clobber a
   `custom-title` indexed earlier. The location is the exception: path, repo and
-  branch come from the session's first message, matching `project_dir`. Only a
-  read from byte 0 (first index, `--full`, `--rebuild`) sees that message, so only
-  it overwrites them; a later chunk that starts after a `cd` or a move into
-  another checkout fills a missing value and never moves the session. The git
-  columns follow the chosen cwd, so a rebuild that moves a row back does not keep
-  the other repo's git info.
+  branch come from the session's first message, matching
+  `project_dir`. Only a read from byte 0 (first index, `--full`, `--rebuild`) sees
+  that message, so only it overwrites them; a later chunk that starts after a `cd`
+  or a move into another checkout places only a session with no location yet. The
+  git columns follow the chosen cwd, so a rebuild that moves a row back does not
+  keep the other repo's git info.
 - `touchParentSession` is for subagent files: the existing row wins each
   `COALESCE` so a subagent never clobbers the parent's identity fields, the
   fields a subagent cannot know are passed NULL, and `title_priority` is frozen.
