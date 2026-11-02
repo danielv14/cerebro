@@ -65,20 +65,20 @@ describe("createGitResolver", () => {
 
   test("a non-repo directory resolves to nulls", () => {
     const dir = tempDir();
-    expect(createGitResolver()(dir)).toEqual({ root: null, remote: null });
+    expect(createGitResolver()(dir)).toEqual({ root: null, remote: null, mainRoot: null });
   });
 
   test("a missing directory resolves to nulls without throwing (invariant #9)", () => {
     const missing = join(tmpdir(), "cerebro-git-does-not-exist-zzz");
     const resolveGit = createGitResolver();
     expect(() => resolveGit(missing)).not.toThrow();
-    expect(resolveGit(missing)).toEqual({ root: null, remote: null });
+    expect(resolveGit(missing)).toEqual({ root: null, remote: null, mainRoot: null });
   });
 
   test("a falsy cwd resolves to nulls without spawning git", () => {
     const resolveGit = createGitResolver();
-    expect(resolveGit(null)).toEqual({ root: null, remote: null });
-    expect(resolveGit(undefined)).toEqual({ root: null, remote: null });
-    expect(resolveGit("")).toEqual({ root: null, remote: null });
+    expect(resolveGit(null)).toEqual({ root: null, remote: null, mainRoot: null });
+    expect(resolveGit(undefined)).toEqual({ root: null, remote: null, mainRoot: null });
+    expect(resolveGit("")).toEqual({ root: null, remote: null, mainRoot: null });
   });
 });

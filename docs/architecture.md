@@ -343,7 +343,7 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 
 `RankedHit` is the one declared shape both relevance tiers rank against: thread
 id, snippet, bm25 score, and the rollup columns the ranking reads
-(`last_ts`, `git_root`, `git_remote`, `project_path`). `rankedMessageHits` here
+(`last_ts`, `repo_key`). `rankedMessageHits` here
 produces the message-FTS one and `searchSummaryRoots` in `src/digest/store.ts`
 the summary-FTS one. They stay two queries because the two FTS tables and their snippets differ,
 and the summary one lives under `digest/` because that table and its index are
@@ -368,8 +368,8 @@ bm25 inside SQL, `relevant` on its decayed rank in `dedupedHitWindow`.
   and Swedish/English stopwords are dropped via the `stopword` package so filler
   words do not match unrelated threads.
 - `rankedMessageHits` attaches the thread rollup via LEFT JOIN (root-preferring
-  `last_ts`/repo, so a resume with a NULL git_root still ranks with the thread's
-  repo), plus the matched message's own git branch, which `search` shows instead
+  `last_ts`/`repo_key`, so a resume with no key of its own still ranks with the
+  thread's repo), plus the matched message's own git branch, which `search` shows instead
   of the thread's.
 - The module owns the FTS error contract. `withSanitizedFallback` catches only
   FTS5's parse errors and retries once with every token quoted; any other error
@@ -413,6 +413,40 @@ the matched message's own. The ordinal is computed once per kept hit rather than
 in the hit query, where it would run a thread-wide COUNT for every matched row the
 sorter sees.
 
+## Repo identity (`src/repo.ts`)
+
+"Which repo is this thread in" has one owner. `repoKey` derives a session's key
+at index time from its git info: the origin remote, else the main worktree root
+(the parent of `git rev-parse --git-common-dir`, which every worktree shares),
+else the cwd. `recent` filters the threads view on `repo_key = ?` and the
+`relevant` boost compares the same column in both tiers, each with the key of
+its own cwd from the same function. The `recent` header names the repo from the
+key (`repoName`), so a listing that spans worktrees is named after the repo
+rather than the worktree it was run in.
+
+The remote outranks the path because it is what survives: most worktrees are
+deleted soon after their sessions, and a deleted worktree's main root can never
+be resolved again, while its remote is already stored on the row.
+
+A session whose directory is gone at index time gets no key from git, so a
+re-index or `--rebuild` keeps the key it already has, like the rest of its stored
+git info, instead of falling back to the cwd.
+
+`settleRepoKeys` runs after every index run that read a file and on migration.
+First it fills rows that have no key from their stored columns: a pre-v9
+archive, rows an older hook binary wrote, a session indexed after its directory
+was deleted. Then the newest remote recorded at a `git_root` claims every row at
+that root and every row keyed on it. So a thread recorded before the remote was
+added (in a worktree too) keeps matching its repo, and so does a session from a
+deleted worktree whose siblings recorded the remote. The fill cannot recover the
+main root, so a pre-v9 row from a worktree of a repo without a remote keys on
+the worktree's own path until `index --rebuild` re-resolves it, as long as the
+worktree still exists.
+
+`git_root` and `git_remote` stay on `sessions` and in the threads view: the
+settle step reads `git_root`, and older builds still read both against a newer
+archive.
+
 ## Relevance (`src/relevance.ts`)
 
 `relevant` answers "what past work relates to this prompt", which is a ranking
@@ -431,11 +465,9 @@ multiplying by a decay factor in (0,1] shrinks an old hit's magnitude toward 0.
 deterministic text relevance, while the recall surface should favor fresh work.
 
 The same-repo boost (`repoBoost`, 1.5x) prefers threads in the repo the prompt
-was typed in. When the cwd is in a repo, a thread matches on the same git remote
-or the same git_root, else on exact project_path (the same rule `recent` scopes
-by). The remote is what makes a worktree count as its repo: git_root is each
-worktree's own path. A repo without a remote matches on git_root alone, so its
-worktrees stay separate; two remote-less repos must not merge on a shared NULL.
+was typed in: a hit whose `repo_key` equals the key of `--cwd` (see Repo
+identity). A NULL key never matches, so threads with no key do not boost each
+other.
 1.5x is worth roughly two months of recency at the 90-day half-life. It is a boost, never a filter, so
 a much stronger cross-repo match stays reachable. The boost needs an explicit
 `--cwd`: `relevant` does not adopt the invoking directory, so a manual call ranks
@@ -608,8 +640,8 @@ are the two builders, and `test/cli.test.ts` pins the per-command option tables.
   readable.
 - The ambient values a command reads (`now`, `cwd`, `resolveGit`) come from the
   dispatcher, one per run, and are injectable. `resolveGit` is the `GitResolver`
-  seam: `index` hands it to `runIndex`, `recent` and `relevant` scope by the root
-  it returns, and a test drives the whole command with a known repo state instead
+  seam: `index` hands it to `runIndex`, `recent` and `relevant` derive their repo
+  key from what it returns, and a test drives the whole command with a known repo state instead
   of depending on which directories on the machine happen to be git repos.
 
 Renderers live with their commands; `render.ts` keeps only the shared vocabulary

@@ -222,7 +222,7 @@ describe("runDoctor", () => {
         dbPath: ":memory:",
         now: Date.parse(ts(0)),
         cwd: "/repo",
-        resolveGit: () => ({ root: null, remote: null }),
+        resolveGit: () => ({ root: null, remote: null, mainRoot: null }),
         adapters: env.adapters,
         progress: () => {},
         warn: () => {},

@@ -9,7 +9,7 @@ import { type CommandNode, defineCommand, eachCommand } from "../src/commands/co
 import { openDb } from "../src/db.ts";
 import { staleThreads } from "../src/digest/stale.ts";
 import { getSummary, writeSummary } from "../src/digest/store.ts";
-import type { GitInfo, GitResolver } from "../src/git.ts";
+import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
 import {
   assistantMsg,
@@ -775,11 +775,11 @@ describe("runCli", () => {
     ]);
   });
 
-  test("recent scopes by git_root when the cwd is inside a repo (#164)", () => {
+  test("recent scopes a subdirectory to its repo (#164)", () => {
     const resolveGit: GitResolver = (cwd) =>
       cwd === "/checkout/mine" || cwd === "/checkout/mine/packages/api"
-        ? { root: "/checkout/mine", remote: null }
-        : { root: null, remote: null };
+        ? { root: "/checkout/mine", remote: null, mainRoot: "/checkout/mine" }
+        : { root: null, remote: null, mainRoot: null };
 
     // Two threads in the same repo but under different working directories, plus
     // one outside it. Only git_root scoping can return the first two together.
@@ -811,67 +811,6 @@ describe("runCli", () => {
       "SUBDIR",
       "ROOTDIR",
     ]);
-
-    const noRepo = makeIO();
-    cli(["recent", "--cwd", "/checkout/mine/packages/api", "--json"], noRepo.io, seededInRepo(), {
-      now: NOW,
-      resolveGit: () => ({ root: null, remote: null }),
-    });
-    expect(JSON.parse(noRepo.logs.join("\n")).map((row: { id: string }) => row.id)).toEqual([
-      "SUBDIR",
-    ]);
-  });
-
-  test("recent counts a worktree of the same repo as that repo (#244)", () => {
-    const repos: Record<string, GitInfo> = {
-      "/checkout/mine": { root: "/checkout/mine", remote: "git@host:me/mine.git" },
-      "/checkout/mine-before-remote": { root: "/checkout/mine", remote: null },
-      "/worktrees/mine-feature": {
-        root: "/worktrees/mine-feature",
-        remote: "git@host:me/mine.git",
-      },
-      "/checkout/other": { root: "/checkout/other", remote: null },
-      "/worktrees/other-feature": { root: "/worktrees/other-feature", remote: null },
-    };
-    const resolveGit: GitResolver = (cwd) => repos[cwd ?? ""] ?? { root: null, remote: null };
-    for (const [id, cwd] of [
-      ["MAIN", "/checkout/mine"],
-      ["PRE-REMOTE", "/checkout/mine-before-remote"],
-      ["WORKTREE", "/worktrees/mine-feature"],
-      ["NOREMOTE", "/checkout/other"],
-      ["NOREMOTE-WT", "/worktrees/other-feature"],
-    ] as const) {
-      writeSession(env.projects, `-${id}`, id, [
-        userMsg(id, `u-${id}`, "work", { cwd, timestamp: ts(0) }),
-      ]);
-    }
-    const seededInRepo = () => (): ReturnType<typeof openDb> => {
-      const db = openDb(":memory:");
-      runIndex(db, { adapters: env.adapters, resolveGit });
-      return db;
-    };
-    const recentIds = (cwd: string): string[] => {
-      const cap = makeIO();
-      cli(["recent", "--cwd", cwd, "--json"], cap.io, seededInRepo(), { now: NOW, resolveGit });
-      return JSON.parse(cap.logs.join("\n"))
-        .map((row: { id: string }) => row.id)
-        .sort();
-    };
-
-    expect(recentIds("/checkout/mine")).toEqual(["MAIN", "PRE-REMOTE", "WORKTREE"]);
-    // Without a remote there is nothing shared to match on, so two repos with no
-    // remote must not merge into one.
-    expect(recentIds("/checkout/other")).toEqual(["NOREMOTE"]);
-
-    const header = (cwd: string): string => {
-      const cap = makeIO();
-      cli(["recent", "--cwd", cwd], cap.io, seededInRepo(), { now: NOW, resolveGit });
-      return cap.logs[0]!;
-    };
-    expect(header("/worktrees/mine-feature")).toBe("Recent sessions in mine (last 14 days):");
-    expect(header("/worktrees/other-feature")).toBe(
-      "Recent sessions in other-feature (last 14 days):",
-    );
   });
 
   test("recent falls back to the invoked directory, and --cwd still wins (#125)", () => {

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { count } from "./db.ts";
 import { reattachSummaries } from "./digest/store.ts";
 import { createGitResolver, type GitResolver } from "./git.ts";
+import { repoKey, settleRepoKeys } from "./repo.ts";
 import {
   cursorWriter,
   eachIndexableFile,
@@ -114,12 +115,15 @@ const upsertSession = (
   readFromStart: boolean,
 ): void => {
   const existing = db
-    .query(`SELECT cwd, git_branch, git_root, git_remote FROM sessions WHERE session_id = ?`)
+    .query(
+      `SELECT cwd, git_branch, git_root, git_remote, repo_key FROM sessions WHERE session_id = ?`,
+    )
     .get(meta.sessionId) as {
     cwd: string | null;
     git_branch: string | null;
     git_root: string | null;
     git_remote: string | null;
+    repo_key: string | null;
   } | null;
 
   // A session's location is its first message's: only a read from byte 0 sees that
@@ -136,15 +140,16 @@ const upsertSession = (
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, provider, model, title, title_priority,
+       git_remote, repo_key, git_branch, source_file, provider, model, title, title_priority,
        first_ts, last_ts, msg_count
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(excluded.project_dir, sessions.project_dir),
        project_path   = excluded.project_path,
        cwd            = excluded.cwd,
        git_root       = excluded.git_root,
        git_remote     = excluded.git_remote,
+       repo_key       = excluded.repo_key,
        git_branch     = excluded.git_branch,
        source_file    = COALESCE(excluded.source_file, sessions.source_file),
        provider       = COALESCE(excluded.provider, sessions.provider),
@@ -168,6 +173,7 @@ const upsertSession = (
     cwd,
     git.root ?? storedGit?.git_root ?? null,
     git.remote ?? storedGit?.git_remote ?? null,
+    git.root ? repoKey(git, cwd) : (storedGit?.repo_key ?? null),
     gitBranch,
     meta.sourceFile,
     meta.provider,
@@ -186,15 +192,16 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
   db.query(
     `INSERT INTO sessions (
        session_id, root_session_id, project_dir, project_path, cwd, git_root,
-       git_remote, git_branch, source_file, provider, model, title, title_priority,
+       git_remote, repo_key, git_branch, source_file, provider, model, title, title_priority,
        first_ts, last_ts, msg_count
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(session_id) DO UPDATE SET
        project_dir    = COALESCE(sessions.project_dir, excluded.project_dir),
        project_path   = COALESCE(sessions.project_path, excluded.project_path),
        cwd            = COALESCE(sessions.cwd, excluded.cwd),
        git_root       = COALESCE(sessions.git_root, excluded.git_root),
        git_remote     = COALESCE(sessions.git_remote, excluded.git_remote),
+       repo_key       = COALESCE(sessions.repo_key, excluded.repo_key),
        git_branch     = COALESCE(sessions.git_branch, excluded.git_branch),
        source_file    = COALESCE(sessions.source_file, excluded.source_file),
        provider       = COALESCE(sessions.provider, excluded.provider),
@@ -210,6 +217,7 @@ const touchParentSession = (db: Database, parentId: string, meta: FileMeta): voi
     meta.projectDir,
     meta.cwd,
     meta.cwd,
+    null,
     null,
     null,
     meta.gitBranch,
@@ -311,6 +319,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
     db.transaction(() => {
       relinkThreads(db);
       reattachSummaries(db);
+      settleRepoKeys(db);
     })();
   }
 

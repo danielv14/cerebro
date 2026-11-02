@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { dirname } from "node:path";
+import { settleRepoKeys } from "./repo.ts";
 import { THREADS_VIEW_DDL, threadsViewIsCurrent } from "./thread.ts";
 
 // Bump whenever SCHEMA or migrate() changes, the threads view DDL included.
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 // Per-connection, outside the version gate: busy_timeout/foreign_keys do not
 // persist, and journal_mode cannot be changed inside a transaction.
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd               TEXT,
   git_root          TEXT,
   git_remote        TEXT,
+  repo_key          TEXT,
   git_branch        TEXT,
   source_file       TEXT,
   provider          TEXT,
@@ -130,6 +132,7 @@ const migrate = (db: Database): void => {
   addColumnIfMissing(db, "index_state", "is_digest", "is_digest INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "sessions", "provider", "provider TEXT");
   addColumnIfMissing(db, "sessions", "model", "model TEXT");
+  addColumnIfMissing(db, "sessions", "repo_key", "repo_key TEXT");
   // Here rather than in SCHEMA: it names is_sidechain, which a pre-sidechain
   // archive only has after the ALTER above. idx_messages_session is redundant next
   // to it but stays: a pre-v7 hook binary re-runs its SCHEMA on this archive, and
@@ -141,6 +144,7 @@ const migrate = (db: Database): void => {
   // Safe: everything indexed before the adapter seam came from Claude Code, and
   // new-code rows always carry their adapter's id.
   db.run(`UPDATE sessions SET provider = 'claude-code' WHERE provider IS NULL`);
+  settleRepoKeys(db);
 };
 
 export const count = (db: Database, sql: string, params: Record<string, string | number> = {}) =>

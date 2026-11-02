@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { searchSummaryRoots } from "./digest/store.ts";
 import { type RankedHit, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
-import type { GitInfo } from "./git.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
 const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
@@ -67,22 +66,10 @@ export const decayedRank = (
   return bm25 * 2 ** (-ageDays / RELEVANCE_HALF_LIFE_DAYS) * boost;
 };
 
-export interface RepoScope {
-  repo?: GitInfo;
-  cwd?: string | null;
-}
-
 // A boost, never a filter: a much stronger cross-repo match stays reachable.
 const SAME_REPO_BOOST = 1.5;
-const repoBoost = (hit: RankedHit, scope: RepoScope): number => {
-  const repo = scope.repo;
-  if (repo?.root) {
-    const sameRepo = hit.git_root === repo.root || (repo.remote && hit.git_remote === repo.remote);
-    return sameRepo ? SAME_REPO_BOOST : 1;
-  }
-  if (scope.cwd) return hit.project_path === scope.cwd ? SAME_REPO_BOOST : 1;
-  return 1;
-};
+const repoBoost = (hit: RankedHit, repoKey: string | null): number =>
+  repoKey && hit.repo_key === repoKey ? SAME_REPO_BOOST : 1;
 
 export const DEFAULT_RELEVANT_LIMIT = 3;
 
@@ -101,7 +88,7 @@ export const relevantThreads = (
   prompt: string,
   limit = DEFAULT_RELEVANT_LIMIT,
   now = Date.now(),
-  scope: RepoScope = {},
+  scope: { repoKey?: string | null } = {},
 ): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
@@ -116,7 +103,7 @@ export const relevantThreads = (
     }
   };
   const rankOf = (hit: RankedHit): number =>
-    decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope));
+    decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope.repoKey ?? null));
 
   const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
   choose(
