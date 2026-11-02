@@ -267,6 +267,19 @@ describe("createClaudeSummarizer", () => {
     expect(result.fatal).toBeUndefined();
   });
 
+  test("a call that ignores SIGTERM is still killed at the timeout", () => {
+    fakeClaude("trap '' TERM; sleep 30");
+    const started = Date.now();
+    const result = createClaudeSummarizer(config({ timeoutMs: 500 }))({
+      input: "T",
+      model: "m",
+      prompt: "P",
+    });
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.detail).toContain("timed out after 500ms");
+  }, 40_000);
+
   test("a binary that cannot be run at all is fatal", () => {
     const summarize = createClaudeSummarizer(config({ claudeBin: join(dir, "does-not-exist") }));
     const result = summarize({ input: "T", model: "m", prompt: "P" });

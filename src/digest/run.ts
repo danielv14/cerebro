@@ -43,6 +43,9 @@ export const createClaudeSummarizer =
           stdout: "pipe",
           stderr: "pipe",
           timeout: timeoutMs,
+          // Bun sends the signal once and then waits, so SIGTERM would let a child
+          // that ignores it block the drain past the timeout.
+          killSignal: "SIGKILL",
         },
       );
       const text = proc.stdout.toString().trim();
