@@ -10,7 +10,14 @@ import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
 import { type SearchHit, search } from "../src/search.ts";
 import { stats } from "../src/stats.ts";
-import { countThreads, listThreads, recentThreads, rootMessages, rootOf } from "../src/thread.ts";
+import {
+  countThreads,
+  listThreads,
+  recentThreads,
+  rootMessages,
+  rootOf,
+  threadLastTs,
+} from "../src/thread.ts";
 import {
   assistantMsg,
   countQueriesMatching,
@@ -588,7 +595,13 @@ describe("query (populated archive)", () => {
       { type: "custom-title", customTitle: "Fixing the search ranking", sessionId: "RESUME" },
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "ROOT", "Worked on the limiter. Keywords: limiter");
+    writeSummary(
+      db,
+      "ROOT",
+      "Worked on the limiter. Keywords: limiter",
+      null,
+      threadLastTs(db, "ROOT"),
+    );
     const now = Date.parse(ts(month));
 
     const surfaces = {

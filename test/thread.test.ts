@@ -130,9 +130,22 @@ describe("thread (identity + membership)", () => {
         }),
       ]);
       runIndex(db, { adapters: env.adapters });
-      writeSummary(db, "RESUME", "Resume summary about the limiter. Keywords: limiter");
+      writeSummary(
+        db,
+        "RESUME",
+        "Resume summary about the limiter. Keywords: limiter",
+        null,
+        threadLastTs(db, "RESUME"),
+      );
       // An id with no sessions row is its own root, so this keys the summary on ORIG.
-      if (summarizeOriginalFirst) writeSummary(db, "ORIG", "Original summary. Keywords: original");
+      if (summarizeOriginalFirst)
+        writeSummary(
+          db,
+          "ORIG",
+          "Original summary. Keywords: original",
+          null,
+          threadLastTs(db, "ORIG"),
+        );
       writeSession(env.projects, "-repo", "ORIG", [
         userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
         assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
@@ -159,7 +172,13 @@ describe("thread (identity + membership)", () => {
     });
 
     test("an orphan newer than the root's own summary replaces it", () => {
-      writeSummary(db, "ORIG", "Older original summary. Keywords: original");
+      writeSummary(
+        db,
+        "ORIG",
+        "Older original summary. Keywords: original",
+        null,
+        threadLastTs(db, "ORIG"),
+      );
       db.run("UPDATE summaries SET summarized_at = '2026-01-01T00:00:00.000Z'");
       writeSession(env.projects, "-repo", "RESUME", [
         userMsg("RESUME", "u2", "carry on with the limiter", {
@@ -168,7 +187,13 @@ describe("thread (identity + membership)", () => {
         }),
       ]);
       runIndex(db, { adapters: env.adapters });
-      writeSummary(db, "RESUME", "Newer resume summary about the limiter. Keywords: limiter");
+      writeSummary(
+        db,
+        "RESUME",
+        "Newer resume summary about the limiter. Keywords: limiter",
+        null,
+        threadLastTs(db, "RESUME"),
+      );
       writeSession(env.projects, "-repo", "ORIG", [
         userMsg("ORIG", "u1", "start", { timestamp: ts(0) }),
         assistantMsg("ORIG", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
@@ -181,7 +206,13 @@ describe("thread (identity + membership)", () => {
     });
 
     test("a summary whose sessions rows are gone is left alone", () => {
-      writeSummary(db, "GONE", "Summary of a thread whose sessions were never indexed.");
+      writeSummary(
+        db,
+        "GONE",
+        "Summary of a thread whose sessions were never indexed.",
+        null,
+        threadLastTs(db, "GONE"),
+      );
       seedThread();
       expect(summaryKeys()).toEqual(["GONE"]);
     });
@@ -299,7 +330,13 @@ describe("thread (identity + membership)", () => {
 
     test("a summary's coverage point is the threads view's last_ts (#214)", () => {
       seedThread();
-      writeSummary(db, "ORIG", "Summary of the whole thread. Keywords: start");
+      writeSummary(
+        db,
+        "ORIG",
+        "Summary of the whole thread. Keywords: start",
+        null,
+        threadLastTs(db, "ORIG"),
+      );
       const view = db.query("SELECT last_ts FROM threads WHERE id = 'ORIG'").get() as {
         last_ts: string;
       };
@@ -427,7 +464,13 @@ describe("thread (identity + membership)", () => {
     // the contract, not an accident of how the row is built.
     test("the display fields land in one order across every listing", () => {
       seedTwo();
-      writeSummary(db, "A", "Alpha work on the limiter. Keywords: alpha, limiter");
+      writeSummary(
+        db,
+        "A",
+        "Alpha work on the limiter. Keywords: alpha, limiter",
+        null,
+        threadLastTs(db, "A"),
+      );
 
       expect(Object.keys(threadIdentity("A"))).toEqual([
         "id",

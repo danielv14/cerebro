@@ -11,6 +11,7 @@ import { staleThreads } from "../src/digest/stale.ts";
 import { getSummary, writeSummary } from "../src/digest/store.ts";
 import type { GitResolver } from "../src/git.ts";
 import { runIndex } from "../src/indexer.ts";
+import { threadLastTs } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -689,7 +690,13 @@ describe("runCli", () => {
     test("digest show finds the root's summary, in text and JSON", () => {
       const withSummary = () => () => {
         const db = seeded()();
-        writeSummary(db, "ROOT", "A stored summary. Keywords: work");
+        writeSummary(
+          db,
+          "ROOT",
+          "A stored summary. Keywords: work",
+          null,
+          threadLastTs(db, "ROOT"),
+        );
         return db;
       };
       const text = makeIO();
@@ -716,7 +723,7 @@ describe("runCli", () => {
     cli(["digest", "show", "SESS"], cap.io, () => {
       const db = openDb(":memory:");
       runIndex(db, { adapters: env.adapters });
-      writeSummary(db, "SESS", "A stored summary. Keywords: work");
+      writeSummary(db, "SESS", "A stored summary. Keywords: work", null, threadLastTs(db, "SESS"));
       return db;
     });
     expect(cap.logs.join("\n")).toContain("A stored summary");
@@ -743,7 +750,7 @@ describe("runCli", () => {
     cli(["digest", "stale", "--ids"], cap.io, () => {
       const db = openDb(":memory:");
       runIndex(db, { adapters: env.adapters });
-      writeSummary(db, "SESS", "A stored summary. Keywords: work");
+      writeSummary(db, "SESS", "A stored summary. Keywords: work", null, threadLastTs(db, "SESS"));
       return db;
     });
     // No "All threads are summarized" line in machine mode, so the hook's
@@ -1012,7 +1019,13 @@ describe("runCli", () => {
       cli(["digest", "drain"], cap.io, () => {
         const db = openDb(":memory:");
         runIndex(db, { adapters: env.adapters });
-        writeSummary(db, "SESS", "A stored summary. Keywords: work");
+        writeSummary(
+          db,
+          "SESS",
+          "A stored summary. Keywords: work",
+          null,
+          threadLastTs(db, "SESS"),
+        );
         return db;
       });
 

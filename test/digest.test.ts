@@ -19,6 +19,7 @@ import {
 } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
+import { threadLastTs } from "../src/thread.ts";
 import {
   appendRaw,
   assistantMsg,
@@ -297,7 +298,7 @@ describe("digest (summaries layer)", () => {
     expect(before.map((t) => t.id)).toEqual(["S"]);
     expect(before[0]!.summary_version).toBeNull();
 
-    writeSummary(db, "S", "Summary of S. Keywords: thing");
+    writeSummary(db, "S", "Summary of S. Keywords: thing", null, threadLastTs(db, "S"));
     expect(staleThreads(db).length).toBe(0);
   });
 
@@ -323,7 +324,7 @@ describe("digest (summaries layer)", () => {
       assistantMsg("S", "a1", "ok", { parentUuid: "u1", timestamp: ts(1) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "S", "First summary. Keywords: start");
+    writeSummary(db, "S", "First summary. Keywords: start", null, threadLastTs(db, "S"));
     expect(staleThreads(db).length).toBe(0);
 
     appendRaw(
@@ -341,7 +342,7 @@ describe("digest (summaries layer)", () => {
   test("a thread becomes stale when its summary was written by an older prompt version", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "S", "Summary. Keywords: work");
+    writeSummary(db, "S", "Summary. Keywords: work", null, threadLastTs(db, "S"));
     expect(staleThreads(db).length).toBe(0);
 
     db.run("UPDATE summaries SET prompt_version = ? WHERE root_session_id = 'S'", [
@@ -360,7 +361,7 @@ describe("digest (summaries layer)", () => {
     runIndex(db, { adapters: env.adapters });
     expect(staleThreads(db).map((t) => t.id)).toEqual(["S"]);
 
-    writeSummary(db, "S", "Summary. Keywords: work");
+    writeSummary(db, "S", "Summary. Keywords: work", null, threadLastTs(db, "S"));
     expect(staleThreads(db).length).toBe(0);
   });
 
@@ -376,10 +377,22 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
 
-    writeSummary(db, "S", "First version migrating to drizzle. Keywords: drizzle");
+    writeSummary(
+      db,
+      "S",
+      "First version migrating to drizzle. Keywords: drizzle",
+      null,
+      threadLastTs(db, "S"),
+    );
     expect(searchSummaries(db, "drizzle").map((h) => h.id)).toEqual(["S"]);
 
-    writeSummary(db, "S", "Second version migrating to knex. Keywords: knex");
+    writeSummary(
+      db,
+      "S",
+      "Second version migrating to knex. Keywords: knex",
+      null,
+      threadLastTs(db, "S"),
+    );
     expect(getSummary(db, "S")!.summary).toContain("knex");
     expect((db.query("SELECT COUNT(*) AS c FROM summaries").get() as { c: number }).c).toBe(1);
     expect(searchSummaries(db, "drizzle").length).toBe(0);
@@ -390,8 +403,20 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo-a", "A", [userMsg("A", "ua", "a", { timestamp: ts(0) })]);
     writeSession(env.projects, "-repo-b", "B", [userMsg("B", "ub", "b", { timestamp: ts(10) })]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "A", "Set up the rate limiter middleware. Keywords: rate-limiter");
-    writeSummary(db, "B", "Refactor the checkout flow. Keywords: checkout");
+    writeSummary(
+      db,
+      "A",
+      "Set up the rate limiter middleware. Keywords: rate-limiter",
+      null,
+      threadLastTs(db, "A"),
+    );
+    writeSummary(
+      db,
+      "B",
+      "Refactor the checkout flow. Keywords: checkout",
+      null,
+      threadLastTs(db, "B"),
+    );
 
     const hits = searchSummaries(db, "how did the rate limiter work");
     expect(hits.map((h) => h.id)).toEqual(["A"]);
@@ -408,8 +433,20 @@ describe("digest (summaries layer)", () => {
       userMsg("BURIED", "ub", "b", { timestamp: ts(10) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "DENSE", "limiter limiter limiter. Keywords: limiter");
-    writeSummary(db, "BURIED", `limiter ${"filler ".repeat(200)} Keywords: filler`);
+    writeSummary(
+      db,
+      "DENSE",
+      "limiter limiter limiter. Keywords: limiter",
+      null,
+      threadLastTs(db, "DENSE"),
+    );
+    writeSummary(
+      db,
+      "BURIED",
+      `limiter ${"filler ".repeat(200)} Keywords: filler`,
+      null,
+      threadLastTs(db, "BURIED"),
+    );
 
     expect(searchSummaries(db, "limiter").map((h) => h.id)).toEqual(["DENSE", "BURIED"]);
   });
@@ -417,7 +454,13 @@ describe("digest (summaries layer)", () => {
   test("searchSummaries still renders a hit whose sessions rows are gone (#118)", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "S", "Set up the rate limiter middleware. Keywords: limiter");
+    writeSummary(
+      db,
+      "S",
+      "Set up the rate limiter middleware. Keywords: limiter",
+      null,
+      threadLastTs(db, "S"),
+    );
     db.run("DELETE FROM sessions WHERE root_session_id = 'S'");
 
     const hits = searchSummaries(db, "limiter");
@@ -439,7 +482,13 @@ describe("digest (summaries layer)", () => {
     writeSession(env.projects, "-repo", "B", [userMsg("B", "ub", "two", { timestamp: ts(1) })]);
     runIndex(db, { adapters: env.adapters });
     expect(countStaleThreads(db)).toBe(staleThreads(db, { limit: 1000 }).length);
-    writeSummary(db, "A", "Summary of A with enough length. Keywords: a");
+    writeSummary(
+      db,
+      "A",
+      "Summary of A with enough length. Keywords: a",
+      null,
+      threadLastTs(db, "A"),
+    );
     expect(countStaleThreads(db)).toBe(1);
     expect(countStaleThreads(db)).toBe(staleThreads(db, { limit: 1000 }).length);
   });
@@ -447,7 +496,13 @@ describe("digest (summaries layer)", () => {
   test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "S", "Built the rate limiter middleware. Keywords: rate-limiter");
+    writeSummary(
+      db,
+      "S",
+      "Built the rate limiter middleware. Keywords: rate-limiter",
+      null,
+      threadLastTs(db, "S"),
+    );
 
     const roots = searchSummaryRoots(db, '"limiter"', 5, 12);
     expect(roots.map((r) => r.id)).toEqual(["S"]);

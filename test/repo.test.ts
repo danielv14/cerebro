@@ -5,6 +5,7 @@ import { runCli } from "../src/cli.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
+import { threadLastTs } from "../src/thread.ts";
 import { makeClaudeDir, type TempClaude, ts, userMsg, writeSession } from "./fixtures.ts";
 
 const git = (cwd: string, args: string[]): void => {
@@ -92,7 +93,8 @@ describe("thread repo identity", () => {
     dbPath = join(env.claudeRoot, "archive.sqlite");
     const db = openDb(dbPath);
     runIndex(db, { adapters: env.adapters });
-    for (const id of order) writeSummary(db, id, "Built the throttle. Keywords: throttle");
+    for (const id of order)
+      writeSummary(db, id, "Built the throttle. Keywords: throttle", null, threadLastTs(db, id));
     db.close();
   });
   afterEach(() => env.cleanup());

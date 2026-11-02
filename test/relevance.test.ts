@@ -4,6 +4,7 @@ import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { decayedRank, dedupedHitWindow, relevantThreads } from "../src/relevance.ts";
+import { threadLastTs } from "../src/thread.ts";
 import {
   assistantMsg,
   makeClaudeDir,
@@ -62,7 +63,7 @@ describe("relevance ranking", () => {
     ]);
     runIndex(db, { adapters: env.adapters });
     // "Refactored" appears only in the summary, never in the raw transcript.
-    writeSummary(db, "S", "Refactored to knex");
+    writeSummary(db, "S", "Refactored to knex", null, threadLastTs(db, "S"));
 
     const hits = relevantThreads(db, "knex", 3);
     expect(hits.length).toBe(1);
@@ -80,7 +81,13 @@ describe("relevance ranking", () => {
       userMsg("RAW", "u2", "another knex migration in the web service", { timestamp: ts(10) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "SUMM", "Did a knex migration. Keywords: knex");
+    writeSummary(
+      db,
+      "SUMM",
+      "Did a knex migration. Keywords: knex",
+      null,
+      threadLastTs(db, "SUMM"),
+    );
 
     const hits = relevantThreads(db, "knex migration", 3);
     const byId = new Map(hits.map((h) => [h.id, h]));
@@ -175,8 +182,20 @@ describe("relevance ranking", () => {
       userMsg("OTHER", "u2", "some work", { cwd: "/repo-other", timestamp: ts(month) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    writeSummary(db, "MINE", "Built the limiter middleware. Keywords: limiter");
-    writeSummary(db, "OTHER", "Built the limiter middleware. Keywords: limiter");
+    writeSummary(
+      db,
+      "MINE",
+      "Built the limiter middleware. Keywords: limiter",
+      null,
+      threadLastTs(db, "MINE"),
+    );
+    writeSummary(
+      db,
+      "OTHER",
+      "Built the limiter middleware. Keywords: limiter",
+      null,
+      threadLastTs(db, "OTHER"),
+    );
     const now = Date.parse(ts(month));
 
     const global = relevantThreads(db, "limiter", 2, now);
