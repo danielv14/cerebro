@@ -143,14 +143,12 @@ describe("relevance ranking", () => {
     const now = Date.parse(ts(month));
 
     expect(relevantThreads(db, "limiter", 2, now).map((h) => h.id)).toEqual(["OTHER", "MINE"]);
-    expect(relevantThreads(db, "limiter", 2, now, "/repo-mine").map((h) => h.id)).toEqual([
-      "MINE",
-      "OTHER",
-    ]);
-    expect(relevantThreads(db, "limiter", 2, now, "/repo-elsewhere").map((h) => h.id)).toEqual([
-      "OTHER",
-      "MINE",
-    ]);
+    expect(
+      relevantThreads(db, "limiter", 2, now, { repoKey: "/repo-mine" }).map((h) => h.id),
+    ).toEqual(["MINE", "OTHER"]);
+    expect(
+      relevantThreads(db, "limiter", 2, now, { repoKey: "/repo-elsewhere" }).map((h) => h.id),
+    ).toEqual(["OTHER", "MINE"]);
   });
 
   test("relevantThreads boost is not a filter: cross-repo threads still surface (#88)", () => {
@@ -164,7 +162,7 @@ describe("relevance ranking", () => {
       }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), "/repo-mine");
+    const hits = relevantThreads(db, "limiter", 3, Date.parse(ts(0)), { repoKey: "/repo-mine" });
     expect(hits.map((h) => h.id)).toEqual(["STRONG", "WEAK"]);
   });
 
@@ -184,7 +182,7 @@ describe("relevance ranking", () => {
     const global = relevantThreads(db, "limiter", 2, now);
     expect(global.map((h) => h.id)).toEqual(["OTHER", "MINE"]);
     expect(global.every((h) => h.fromSummary)).toBe(true);
-    const scoped = relevantThreads(db, "limiter", 2, now, "/repo-mine");
+    const scoped = relevantThreads(db, "limiter", 2, now, { repoKey: "/repo-mine" });
     expect(scoped.map((h) => h.id)).toEqual(["MINE", "OTHER"]);
     expect(scoped.every((h) => h.fromSummary)).toBe(true);
   });

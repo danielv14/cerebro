@@ -153,7 +153,8 @@ const upsertSession = (db: Database, meta: FileMeta, resolveGit: GitResolver): v
     cwd,
     git.root,
     git.remote,
-    repoKey(git, cwd),
+    // NULL when git did not resolve, so a deleted worktree keeps its stored key.
+    git.root ? repoKey(git, cwd) : null,
     meta.gitBranch,
     meta.sourceFile,
     meta.provider,

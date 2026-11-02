@@ -88,7 +88,7 @@ export const relevantThreads = (
   prompt: string,
   limit = DEFAULT_RELEVANT_LIMIT,
   now = Date.now(),
-  repoKey: string | null = null,
+  scope: { repoKey?: string | null } = {},
 ): RelevantThread[] => {
   const match = toMatchQuery(prompt);
   if (!match) return [];
@@ -103,7 +103,7 @@ export const relevantThreads = (
     }
   };
   const rankOf = (hit: RankedHit): number =>
-    decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, repoKey));
+    decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope.repoKey ?? null));
 
   const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
   choose(

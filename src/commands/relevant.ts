@@ -38,13 +38,9 @@ export const relevantCommand = defineCommand({
     // Deliberately NOT defaulted to the invoking directory the way `recent` is:
     // a manual `relevant "..."` must rank globally.
     const cwd = args.cwd || null;
-    const threads = relevantThreads(
-      db,
-      prompt,
-      args.limit ?? DEFAULT_RELEVANT_LIMIT,
-      now,
-      repoKey(resolveGit(cwd), cwd),
-    );
+    const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
+      repoKey: repoKey(resolveGit(cwd), cwd),
+    });
     return {
       json: threads,
       lines: threads.length > 0 ? relevantBlock(threads) : [],

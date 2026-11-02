@@ -128,16 +128,9 @@ export const listThreads = (
 
 export const recentThreads = (
   db: Database,
-  opts: { repoKey: string | null; since: string; limit?: number },
-): ThreadRow[] => {
-  if (!opts.repoKey) return [];
-  return latestThreads(
-    db,
-    ["last_ts >= ?", "repo_key = ?"],
-    [opts.since, opts.repoKey],
-    opts.limit ?? 5,
-  );
-};
+  opts: { repoKey: string; since: string; limit?: number },
+): ThreadRow[] =>
+  latestThreads(db, ["last_ts >= ?", "repo_key = ?"], [opts.since, opts.repoKey], opts.limit ?? 5);
 
 export interface ThreadIdentity {
   id: string;

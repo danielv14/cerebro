@@ -37,7 +37,7 @@ describe("thread repo identity", () => {
   let places: Record<string, string>;
   let dbPath: string;
 
-  const cliJson = (args: string[]): { id: string; fromSummary?: boolean }[] => {
+  const cliLines = (args: string[]): string[] => {
     const logs: string[] = [];
     runCli(
       args,
@@ -45,7 +45,21 @@ describe("thread repo identity", () => {
       () => openDb(dbPath),
       { adapters: env.adapters, now: Date.parse(ts(0)) },
     );
-    return JSON.parse(logs.join("\n"));
+    return logs;
+  };
+  const cliJson = (args: string[]): { id: string; fromSummary?: boolean }[] =>
+    JSON.parse(cliLines(args).join("\n"));
+  const recentIds = (cwd: string): string[] =>
+    cliJson(["recent", "--cwd", cwd, "--days", "30", "--json"])
+      .map((row) => row.id)
+      .sort();
+  const indexMore = (session: string, cwd: string, opts: { rebuild?: boolean } = {}): void => {
+    writeSession(env.projects, `-${session}`, session, [
+      userMsg(session, `u-${session}`, "more work", { cwd, timestamp: ts(0) }),
+    ]);
+    const db = openDb(dbPath);
+    runIndex(db, { adapters: env.adapters, ...opts });
+    db.close();
   };
 
   beforeEach(() => {
@@ -94,8 +108,7 @@ describe("thread repo identity", () => {
   for (const { from, repo, name } of cases) {
     test(`from ${from}: recent and both boost tiers see the same repo`, () => {
       const cwd = places[from]!;
-      const recent = cliJson(["recent", "--cwd", cwd, "--days", "30", "--json"]);
-      expect(recent.map((row) => row.id).sort()).toEqual(repo);
+      expect(recentIds(cwd)).toEqual(repo);
 
       for (const [term, fromSummary] of [
         ["limiter", false],
@@ -111,34 +124,30 @@ describe("thread repo identity", () => {
         ).toEqual(repo);
       }
 
-      const logs: string[] = [];
-      runCli(
-        ["recent", "--cwd", cwd, "--days", "30"],
-        { log: (line) => logs.push(line), error: () => {}, setExitCode: () => {} },
-        () => openDb(dbPath),
-        { adapters: env.adapters, now: Date.parse(ts(0)) },
+      expect(cliLines(["recent", "--cwd", cwd, "--days", "30"])[0]).toBe(
+        `Recent sessions in ${name} (last 30 days):`,
       );
-      expect(logs[0]).toBe(`Recent sessions in ${name} (last 30 days):`);
     });
   }
 
-  test("a thread recorded before the remote was added still counts as the repo", () => {
-    const repo = places.NOREMOTE!;
-    fs.rmSync(dbPath);
-    fs.rmSync(env.projects, { recursive: true });
-    writeSession(env.projects, "-before", "BEFORE", [
-      userMsg("BEFORE", "u1", "work", { cwd: repo, timestamp: ts(-DAY) }),
-    ]);
-    const db = openDb(dbPath);
-    runIndex(db, { adapters: env.adapters });
-    git(repo, ["remote", "add", "origin", "git@host:me/loner.git"]);
-    writeSession(env.projects, "-after", "AFTER", [
-      userMsg("AFTER", "u2", "work", { cwd: repo, timestamp: ts(0) }),
-    ]);
-    runIndex(db, { adapters: env.adapters });
-    db.close();
+  test("threads recorded before the remote was added, worktrees too, still count as the repo", () => {
+    git(places.NOREMOTE!, ["remote", "add", "origin", "git@host:me/loner.git"]);
+    indexMore("AFTER", places.NOREMOTE!);
+    expect(recentIds(places.NOREMOTE!)).toEqual(["AFTER", "NOREMOTE", "NOREMOTE_WT"]);
+  });
 
-    const recent = cliJson(["recent", "--cwd", repo, "--json"]);
-    expect(recent.map((row) => row.id)).toEqual(["AFTER", "BEFORE"]);
+  test("a rebuild after the worktree is deleted keeps its threads in the repo", () => {
+    git(places.NOREMOTE!, ["worktree", "remove", "--force", places.NOREMOTE_WT!]);
+    indexMore("LATER", places.NOREMOTE!, { rebuild: true });
+    expect(recentIds(places.NOREMOTE!)).toEqual(["LATER", "NOREMOTE", "NOREMOTE_WT"]);
+  });
+
+  test("a rebuild moves a row keyed on its worktree's own path to the repo", () => {
+    const db = openDb(dbPath);
+    db.run("UPDATE sessions SET repo_key = git_root WHERE session_id = 'NOREMOTE_WT'");
+    db.close();
+    expect(recentIds(places.NOREMOTE!)).toEqual(["NOREMOTE"]);
+    indexMore("LATER", places.NOREMOTE!, { rebuild: true });
+    expect(recentIds(places.NOREMOTE!)).toEqual(["LATER", "NOREMOTE", "NOREMOTE_WT"]);
   });
 });

@@ -775,7 +775,7 @@ describe("runCli", () => {
     ]);
   });
 
-  test("recent scopes by git_root when the cwd is inside a repo (#164)", () => {
+  test("recent scopes a subdirectory to its repo (#164)", () => {
     const resolveGit: GitResolver = (cwd) =>
       cwd === "/checkout/mine" || cwd === "/checkout/mine/packages/api"
         ? { root: "/checkout/mine", remote: null, mainRoot: "/checkout/mine" }
