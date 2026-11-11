@@ -135,8 +135,9 @@ until an `index --full` re-harvests it for files still on disk.
   regardless of sources.
 - The digest prompt's opening sentence names Claude Code, and neutralizing it is
   not free: that sentence is also the marker `fileVerdict` matches on,
-  so rewording it hides existing digest transcripts from a `--full` re-read
-  unless the check keeps recognizing the old wording too. Adding a second adapter
+  so rewording it hides digest transcripts on disk from an archive that has not
+  flagged them yet (a fresh index) unless the check keeps recognizing the old
+  wording too. Adding a second adapter
   is what makes the wording wrong, so do it then.
 - `threadOpeningPrompt` ranks user turns by Claude Code transcript markers: a
   slash-command turn (`<command-name>` / `<command-args>`) ranks below plain
@@ -148,8 +149,8 @@ until an `index --full` re-harvests it for files still on disk.
 ## Scan layer (`src/scan.ts`)
 
 Bytes, cursors, mtimes and `index_state`; nothing about sessions. Every read and
-write of the cursor table lives here (load, `cursorWriter`, `resetCursors`,
-`pruneCursors`, `countCursors`), and the `Cursor` row shape is declared once.
+write of the cursor table lives here (load, `cursorWriter`, `pruneCursors`,
+`countCursors`), and the `Cursor` row shape is declared once.
 `runIndex` and `dryRunIndex` both consume this module, which is what makes
 invariant #2 structural: there is one splitter (`splitBuffer`), one read plan
 (`planFileRead`), one discover-state-plan-read-split walk
@@ -160,9 +161,9 @@ a final unterminated line that parses as JSON; an unparseable tail is a mid-writ
 line left for the next run.
 
 `planFileRead` decides skip/read/truncate per file. A file flagged `is_digest`
-(cerebro's own summarization transcript, see the indexer) is permanently excluded even
-when it grows: the content guard only inspects reads starting at byte 0, so
-without the flag a digest transcript still being written when first detected would
+(cerebro's own summarization transcript, see the indexer) stays excluded even
+when it grows, `--full` included: the content guard only inspects reads starting
+at byte 0, so without the flag a digest transcript still being written when first detected would
 leak its later lines into the archive on the next incremental run.
 
 `orphanedCursorPaths` is the one owner of the orphan predicate: the indexer's
@@ -176,9 +177,12 @@ must stay distinguishable from "no orphans".
 
 `runIndex` walks the scan layer's output inside a per-file transaction: classify
 the new lines, insert messages deduped on UUID (invariant #4), then write the
-session row. `--full` clears cursors and re-reads everything (dedup makes it
-idempotent); `--rebuild` additionally refreshes the payload of already-indexed
-messages in place, the only way a `flattenContent` change reaches old rows, while
+session row. `--full` reads every file from byte 0 regardless of its cursor (dedup
+makes it idempotent) and leaves `index_state` in place, so a digest flag holds and
+the dry run plans the same reads as the real run. `--rebuild` also re-reads
+digest-flagged files and runs the guard on them again, so a narrowed guard (#251
+changed it once) can clear a wrong flag; it additionally refreshes the payload of
+already-indexed messages in place, the only way a `flattenContent` change reaches old rows, while
 never touching `session_id` or deleting anything, so messages whose source file is
 gone keep their only copy.
 

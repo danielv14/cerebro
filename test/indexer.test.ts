@@ -122,7 +122,7 @@ describe("runIndex", () => {
       [repoB.remote],
     );
 
-    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB, rebuild: true });
+    runIndex(db, { adapters: env.adapters, resolveGit: resolveAB, mode: "rebuild" });
     expect(db.query(LOCATION_COLUMNS).get()).toEqual(atRepoA);
   });
 
@@ -140,7 +140,7 @@ describe("runIndex", () => {
     runIndex(db, {
       adapters: env.adapters,
       resolveGit: () => ({ root: null, remote: null, mainRoot: null }),
-      rebuild: true,
+      mode: "rebuild",
     });
     expect(db.query(LOCATION_COLUMNS).get()).toEqual({
       ...atRepoA,
@@ -254,7 +254,7 @@ describe("runIndex", () => {
     runIndex(db, { adapters: env.adapters });
     appendRaw(path, `${JSON.stringify({ type: "ai-title", aiTitle: "AI v2", sessionId: "S" })}\n`);
     runIndex(db, { adapters: env.adapters });
-    runIndex(db, { adapters: env.adapters, full: true });
+    runIndex(db, { adapters: env.adapters, mode: "full" });
     const row = db.query("SELECT title FROM sessions WHERE session_id='S'").get() as {
       title: string;
     };
@@ -467,7 +467,7 @@ describe("runIndex", () => {
     );
     runIndex(db, { adapters: env.adapters });
     expect(model()).toBe("claude-opus-4-6");
-    runIndex(db, { adapters: env.adapters, full: true });
+    runIndex(db, { adapters: env.adapters, mode: "full" });
     expect(model()).toBe("claude-opus-4-6");
   });
 
@@ -512,7 +512,7 @@ describe("runIndex", () => {
     ]);
     runIndex(db, { adapters: env.adapters });
     const before = countMessages(db);
-    const result = runIndex(db, { adapters: env.adapters, full: true });
+    const result = runIndex(db, { adapters: env.adapters, mode: "full" });
     expect(result.newMessages).toBe(0);
     expect(countMessages(db)).toBe(before);
   });
@@ -522,7 +522,7 @@ describe("runIndex", () => {
     runIndex(db, { adapters: env.adapters });
     db.run("UPDATE messages SET text = 'stale flattening' WHERE uuid = 'u1'");
     db.run("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
-    runIndex(db, { adapters: env.adapters, rebuild: true });
+    runIndex(db, { adapters: env.adapters, mode: "rebuild" });
     const row = db.query("SELECT text FROM messages WHERE uuid='u1'").get() as { text: string };
     expect(row.text).toBe("the real searchable text");
     const hit = db
@@ -536,7 +536,7 @@ describe("runIndex", () => {
     writeSession(env.projects, "-repo", "KEPT", [userMsg("KEPT", "uk", "still here")]);
     runIndex(db, { adapters: env.adapters });
     require("node:fs").rmSync(path);
-    const result = runIndex(db, { adapters: env.adapters, rebuild: true });
+    const result = runIndex(db, { adapters: env.adapters, mode: "rebuild" });
     expect(result.newMessages).toBe(0);
     const row = db.query("SELECT text FROM messages WHERE uuid='ug'").get() as { text: string };
     expect(row.text).toBe("precious");
@@ -555,7 +555,7 @@ describe("runIndex", () => {
       userMsg("RESUME", "u2", "continue", { parentUuid: "u1", timestamp: ts(2) }),
     ]);
     runIndex(db, { adapters: env.adapters });
-    runIndex(db, { adapters: env.adapters, rebuild: true });
+    runIndex(db, { adapters: env.adapters, mode: "rebuild" });
     const row = db.query("SELECT session_id FROM messages WHERE uuid='u1'").get() as {
       session_id: string;
     };
@@ -777,9 +777,31 @@ describe("dryRunIndex", () => {
   test("--full dry run counts the whole archive as candidates", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db, { adapters: env.adapters });
-    const plan = dryRunIndex(db, env.adapters, true);
+    const plan = dryRunIndex(db, env.adapters, "full");
     expect(plan.full).toBe(true);
     expect(plan.candidateMessages).toBe(1);
+  });
+
+  test("a digest flag holds through --full, in the real run and the dry run alike", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db, { adapters: env.adapters });
+    db.run("UPDATE index_state SET is_digest = 1");
+    db.run("DELETE FROM messages");
+
+    expect(dryRunIndex(db, env.adapters, "full").skippedFiles).toBe(1);
+    runIndex(db, { adapters: env.adapters, mode: "full" });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 0 });
+  });
+
+  test("--rebuild clears a digest flag the guard no longer agrees with", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db, { adapters: env.adapters });
+    db.run("UPDATE index_state SET is_digest = 1");
+    db.run("DELETE FROM messages");
+
+    expect(dryRunIndex(db, env.adapters, "rebuild").candidateMessages).toBe(1);
+    runIndex(db, { adapters: env.adapters, mode: "rebuild" });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 1 });
   });
 
   test("a digest summarization run is not counted (parity with runIndex skip)", () => {

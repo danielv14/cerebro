@@ -60,18 +60,22 @@ describe("planFileRead", () => {
     const grown = planFileRead(
       { bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 },
       file(100),
-      false,
+      "incremental",
     );
     expect(grown).toEqual({ start: 40, status: "skipped", shouldRead: false });
-    // Still skipped under --full, so a --full dry run matches the real run, which
-    // has cleared its cursors and re-detects the transcript from byte 0.
     expect(
-      planFileRead({ bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 }, file(100), true),
+      planFileRead({ bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 }, file(100), "full"),
     ).toEqual({ start: 40, status: "skipped", shouldRead: false });
   });
 
+  test("rebuild re-reads a digest-flagged file from 0, so the guard can clear a wrong flag", () => {
+    expect(
+      planFileRead({ bytes_indexed: 40, mtime_ms: 1000, is_digest: 1 }, file(100), "rebuild"),
+    ).toEqual({ start: 0, status: "grown", shouldRead: true });
+  });
+
   test("new file (no state) reads from 0", () => {
-    expect(planFileRead(null, file(100), false)).toEqual({
+    expect(planFileRead(null, file(100), "incremental")).toEqual({
       start: 0,
       status: "new",
       shouldRead: true,
@@ -82,7 +86,7 @@ describe("planFileRead", () => {
     const plan = planFileRead(
       { bytes_indexed: 40, mtime_ms: 1000, is_digest: 0 },
       file(100),
-      false,
+      "incremental",
     );
     expect(plan).toEqual({ start: 40, status: "grown", shouldRead: true });
   });
@@ -91,7 +95,7 @@ describe("planFileRead", () => {
     const plan = planFileRead(
       { bytes_indexed: 200, mtime_ms: 1000, is_digest: 0 },
       file(100),
-      false,
+      "incremental",
     );
     expect(plan).toEqual({ start: 0, status: "truncated", shouldRead: true });
   });
@@ -100,7 +104,7 @@ describe("planFileRead", () => {
     const plan = planFileRead(
       { bytes_indexed: 100, mtime_ms: 1000, is_digest: 0 },
       file(100, 1000),
-      false,
+      "incremental",
     );
     expect(plan).toEqual({ start: 100, status: "unchanged", shouldRead: false });
   });
@@ -109,7 +113,7 @@ describe("planFileRead", () => {
     const plan = planFileRead(
       { bytes_indexed: 100, mtime_ms: 999, is_digest: 0 },
       file(100, 1000),
-      false,
+      "incremental",
     );
     expect(plan).toEqual({ start: 100, status: "grown", shouldRead: true });
   });
@@ -118,10 +122,10 @@ describe("planFileRead", () => {
     const plan = planFileRead(
       { bytes_indexed: 100, mtime_ms: 1000, is_digest: 0 },
       file(100, 1000),
-      true,
+      "full",
     );
     expect(plan).toEqual({ start: 0, status: "grown", shouldRead: true });
-    expect(planFileRead(null, file(100), true)).toEqual({
+    expect(planFileRead(null, file(100), "full")).toEqual({
       start: 0,
       status: "new",
       shouldRead: true,

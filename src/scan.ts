@@ -64,20 +64,22 @@ export interface Cursor {
   is_digest: number;
 }
 
+// "rebuild" also re-runs the digest guard on flagged files: the one way to clear a
+// flag the guard no longer agrees with.
+export type IndexMode = "incremental" | "full" | "rebuild";
+
 export const planFileRead = (
   state: Cursor | null,
   file: SessionFile,
-  full: boolean,
+  mode: IndexMode,
 ): FileReadPlan => {
-  // A digest-flagged file is permanently excluded even when it grows: the content
-  // guard only inspects reads that start at byte 0. Checked before `full` on
-  // purpose: a real --full run has cleared index_state, so this branch only
-  // affects a --full DRY run, which must report the file as skipped to match.
-  if (state?.is_digest) {
+  // A digest-flagged file stays excluded even when it grows: the content guard only
+  // inspects reads that start at byte 0.
+  if (state?.is_digest && mode !== "rebuild") {
     return { start: state.bytes_indexed, status: "skipped", shouldRead: false };
   }
 
-  if (full) {
+  if (mode !== "incremental") {
     return { start: 0, status: state ? "grown" : "new", shouldRead: true };
   }
 
@@ -148,10 +150,6 @@ export const cursorWriter = (db: Database) => {
   };
 };
 
-export const resetCursors = (db: Database): void => {
-  db.run("DELETE FROM index_state");
-};
-
 export const countCursors = (db: Database): number =>
   count(db, "SELECT COUNT(*) AS c FROM index_state");
 
@@ -167,7 +165,7 @@ export const pruneCursors = (db: Database, paths: string[]): void => {
 export const eachIndexableFile = (
   db: Database,
   files: SessionFile[],
-  full: boolean,
+  mode: IndexMode,
   handle: (scanned: ScannedFile) => void,
   opts: {
     onUnread?: (plan: FileReadPlan) => void;
@@ -181,7 +179,7 @@ export const eachIndexableFile = (
   for (const file of files) {
     const state = getState.get(file.path) as Cursor | null;
 
-    const plan = planFileRead(state, file, full);
+    const plan = planFileRead(state, file, mode);
     if (!plan.shouldRead) {
       opts.onUnread?.(plan);
       continue;

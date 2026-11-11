@@ -5,6 +5,7 @@ import { runCli } from "../src/cli.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
+import type { IndexMode } from "../src/scan.ts";
 import { threadLastTs } from "../src/thread.ts";
 import { makeClaudeDir, type TempClaude, ts, userMsg, writeSession } from "./fixtures.ts";
 
@@ -54,7 +55,7 @@ describe("thread repo identity", () => {
     cliJson(["recent", "--cwd", cwd, "--days", "30", "--json"])
       .map((row) => row.id)
       .sort();
-  const indexMore = (session: string, cwd: string, opts: { rebuild?: boolean } = {}): void => {
+  const indexMore = (session: string, cwd: string, opts: { mode?: IndexMode } = {}): void => {
     writeSession(env.projects, `-${session}`, session, [
       userMsg(session, `u-${session}`, "more work", { cwd, timestamp: ts(0) }),
     ]);
@@ -140,7 +141,7 @@ describe("thread repo identity", () => {
 
   test("a rebuild after the worktree is deleted keeps its threads in the repo", () => {
     git(places.NOREMOTE!, ["worktree", "remove", "--force", places.NOREMOTE_WT!]);
-    indexMore("LATER", places.NOREMOTE!, { rebuild: true });
+    indexMore("LATER", places.NOREMOTE!, { mode: "rebuild" });
     expect(recentIds(places.NOREMOTE!)).toEqual(["LATER", "NOREMOTE", "NOREMOTE_WT"]);
   });
 
@@ -149,7 +150,7 @@ describe("thread repo identity", () => {
     db.run("UPDATE sessions SET repo_key = git_root WHERE session_id = 'NOREMOTE_WT'");
     db.close();
     expect(recentIds(places.NOREMOTE!)).toEqual(["NOREMOTE"]);
-    indexMore("LATER", places.NOREMOTE!, { rebuild: true });
+    indexMore("LATER", places.NOREMOTE!, { mode: "rebuild" });
     expect(recentIds(places.NOREMOTE!)).toEqual(["LATER", "NOREMOTE", "NOREMOTE_WT"]);
   });
 });
