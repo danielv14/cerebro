@@ -333,7 +333,7 @@ const countMessages = (lines: string[], classify: SourceAdapter["classifyLines"]
 };
 
 export interface DryRunResult {
-  full: boolean;
+  mode: IndexMode;
   filesScanned: number;
   filesToRead: number;
   newFiles: number;
@@ -353,10 +353,9 @@ export const dryRunIndex = (
   mode: IndexMode = "incremental",
 ): DryRunResult => {
   const files = discoverAllSessionFiles(adapters);
-  const full = mode !== "incremental";
 
   const result: DryRunResult = {
-    full,
+    mode,
     filesScanned: files.length,
     filesToRead: 0,
     newFiles: 0,
@@ -380,7 +379,7 @@ export const dryRunIndex = (
         return;
       }
 
-      if (!full) {
+      if (mode === "incremental") {
         if (plan.status === "new") result.newFiles++;
         else if (plan.status === "truncated") result.truncatedFiles++;
         else result.grownFiles++;

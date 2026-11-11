@@ -16,8 +16,9 @@ export const rebuildResult = (result: IndexResult): string[] => [
 
 export const dryRunReport = (plan: DryRunResult): string[] => {
   const lines: string[] = [];
-  if (plan.full) {
-    lines.push(`Dry run (--full): would re-read all ${plan.filesToRead} file(s).`);
+  const modeFlag = plan.mode === "incremental" ? "" : ` --${plan.mode}`;
+  if (plan.mode !== "incremental") {
+    lines.push(`Dry run (--${plan.mode}): would re-read all ${plan.filesToRead} file(s).`);
     lines.push(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
     lines.push(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
     lines.push("  On an up-to-date archive dedup collapses this to ~0 net-new messages.");
@@ -36,7 +37,7 @@ export const dryRunReport = (plan: DryRunResult): string[] => {
         `${plan.skippedFiles} not indexable`,
     );
   }
-  lines.push("\nNothing written. Run `cerebro index` to apply.");
+  lines.push(`\nNothing written. Run \`cerebro index${modeFlag}\` to apply.`);
   return lines;
 };
 

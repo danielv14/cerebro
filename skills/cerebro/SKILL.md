@@ -74,6 +74,8 @@ Dry run (--full): would re-read all 210 file(s).
   Candidate messages: 24817 (before UUID dedup)
   Bytes to read:      96.4 MB
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
+
+Nothing written. Run `cerebro index --full` to apply.
 ```
 
 ### `cerebro search <query> [--limit N] [--project P] [--branch B] [--since D] [--role R] [--prose] [--all]`

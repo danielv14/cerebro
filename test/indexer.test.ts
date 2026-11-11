@@ -778,7 +778,7 @@ describe("dryRunIndex", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
     runIndex(db, { adapters: env.adapters });
     const plan = dryRunIndex(db, env.adapters, "full");
-    expect(plan.full).toBe(true);
+    expect(plan.mode).toBe("full");
     expect(plan.candidateMessages).toBe(1);
   });
 

@@ -13,7 +13,7 @@ describe("dryRunReport", () => {
   test("normal incremental plan", () => {
     expect(
       dryRunReport({
-        full: false,
+        mode: "incremental",
         filesScanned: 5,
         filesToRead: 2,
         newFiles: 1,
@@ -36,7 +36,7 @@ describe("dryRunReport", () => {
   test("nothing to index", () => {
     expect(
       dryRunReport({
-        full: false,
+        mode: "incremental",
         filesScanned: 5,
         filesToRead: 0,
         newFiles: 0,
@@ -56,7 +56,7 @@ describe("dryRunReport", () => {
   test("--full re-read", () => {
     expect(
       dryRunReport({
-        full: true,
+        mode: "full",
         filesScanned: 5,
         filesToRead: 5,
         newFiles: 0,
@@ -72,14 +72,37 @@ describe("dryRunReport", () => {
       "  Candidate messages: 100 (before UUID dedup)",
       "  Bytes to read:      1.0 MB",
       "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
-      "\nNothing written. Run `cerebro index` to apply.",
+      "\nNothing written. Run `cerebro index --full` to apply.",
+    ]);
+  });
+
+  test("--rebuild labels itself as --rebuild", () => {
+    expect(
+      dryRunReport({
+        mode: "rebuild",
+        filesScanned: 5,
+        filesToRead: 5,
+        newFiles: 0,
+        grownFiles: 0,
+        truncatedFiles: 0,
+        unchangedFiles: 0,
+        skippedFiles: 0,
+        newBytes: 1024 * 1024,
+        candidateMessages: 100,
+      }),
+    ).toEqual([
+      "Dry run (--rebuild): would re-read all 5 file(s).",
+      "  Candidate messages: 100 (before UUID dedup)",
+      "  Bytes to read:      1.0 MB",
+      "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
+      "\nNothing written. Run `cerebro index --rebuild` to apply.",
     ]);
   });
 
   test("names the files that were read but had nothing to index", () => {
     expect(
       dryRunReport({
-        full: false,
+        mode: "incremental",
         filesScanned: 4,
         filesToRead: 0,
         newFiles: 0,
