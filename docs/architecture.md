@@ -346,8 +346,7 @@ id, snippet, bm25 score, and the rollup columns the ranking reads
 (`last_ts`, `repo_key`). `rankedMessageHits` produces the message-FTS one and
 `rankedSummaryHits` the summary-FTS one, both here, and both take those columns
 from `rankedHitColumns`. They stay two queries because the two FTS tables differ,
-but the hit shape is declared once: adding `repo_key` once meant changing a
-query under `digest/` and one here in step.
+but the hit shape is declared once.
 
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per

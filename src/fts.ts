@@ -96,9 +96,10 @@ const messageHitJoins = `
     JOIN sessions s ON s.session_id = m.session_id
     LEFT JOIN threads t ON t.id = s.root_session_id`;
 
-// Every RankedHit column; `t` is the threads rollup, and the snippet length binds first.
-const rankedHitColumns = (table: string, root: string): string =>
-  `${root} AS id,
+// Every RankedHit column. Callers alias the table holding root_session_id `s` and the
+// threads rollup `t`, and bind the snippet length first.
+const rankedHitColumns = (table: string): string =>
+  `s.root_session_id AS id,
     snippet(${table}, 0, '[', ']', ' … ', ?) AS snippet,
     bm25(${table}) AS score,
     t.last_ts, t.repo_key`;
@@ -106,7 +107,7 @@ const rankedHitColumns = (table: string, root: string): string =>
 const messageHitColumns = `
     m.id AS message_id, m.session_id, m.ts, m.role,
     s.git_branch AS session_git_branch,
-    ${rankedHitColumns("messages_fts", "s.root_session_id")}`;
+    ${rankedHitColumns("messages_fts")}`;
 
 export const rankedMessageHits = (
   db: Database,
@@ -179,7 +180,7 @@ export const rankedSummaryHits = (
 ): RankedHit[] =>
   db
     .query(
-      `SELECT ${rankedHitColumns("summaries_fts", "s.root_session_id")}
+      `SELECT ${rankedHitColumns("summaries_fts")}
        FROM summaries_fts
        JOIN summaries s ON s.rowid = summaries_fts.rowid
        LEFT JOIN threads t ON t.id = s.root_session_id
