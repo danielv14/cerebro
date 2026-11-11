@@ -96,13 +96,17 @@ const messageHitJoins = `
     JOIN sessions s ON s.session_id = m.session_id
     LEFT JOIN threads t ON t.id = s.root_session_id`;
 
+// Every RankedHit column; `t` is the threads rollup, and the snippet length binds first.
+const rankedHitColumns = (table: string, root: string): string =>
+  `${root} AS id,
+    snippet(${table}, 0, '[', ']', ' … ', ?) AS snippet,
+    bm25(${table}) AS score,
+    t.last_ts, t.repo_key`;
+
 const messageHitColumns = `
     m.id AS message_id, m.session_id, m.ts, m.role,
-    s.root_session_id AS id,
     s.git_branch AS session_git_branch,
-    snippet(messages_fts, 0, '[', ']', ' … ', ?) AS snippet,
-    bm25(messages_fts) AS score,
-    t.last_ts, t.repo_key`;
+    ${rankedHitColumns("messages_fts", "s.root_session_id")}`;
 
 export const rankedMessageHits = (
   db: Database,
@@ -165,3 +169,22 @@ export const rankedMessageHitsPerThread = (
   // longer matches.
   return ids.flatMap((id) => byId.get(id) ?? []);
 };
+
+// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet.
+export const rankedSummaryHits = (
+  db: Database,
+  match: string,
+  limit: number,
+  snippetTokens: number,
+): RankedHit[] =>
+  db
+    .query(
+      `SELECT ${rankedHitColumns("summaries_fts", "s.root_session_id")}
+       FROM summaries_fts
+       JOIN summaries s ON s.rowid = summaries_fts.rowid
+       LEFT JOIN threads t ON t.id = s.root_session_id
+       WHERE summaries_fts MATCH ?
+       ORDER BY bm25(summaries_fts)
+       LIMIT ?`,
+    )
+    .all(snippetTokens, match, limit) as RankedHit[];

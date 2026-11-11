@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { searchSummaryRoots } from "./digest/store.ts";
-import { type RankedHit, type RankedMessageHit, rankedMessageHits, toMatchQuery } from "./fts.ts";
+import {
+  type RankedHit,
+  type RankedMessageHit,
+  rankedMessageHits,
+  rankedSummaryHits,
+  toMatchQuery,
+} from "./fts.ts";
 import { attachThreadIdentity, type ThreadIdentity, threadOpeningPrompt } from "./thread.ts";
 
 const bestHitPerThread = <T extends { id: string }>(hits: T[], rank: (hit: T) => number): T[] => {
@@ -105,7 +110,7 @@ export const relevantThreads = (
   const rankOf = (hit: RankedHit): number =>
     decayedRank(hit.score, hit.last_ts, now, repoBoost(hit, scope.repoKey ?? null));
 
-  const summaryHits = searchSummaryRoots(db, match, Math.max(limit * 4, 12), 10);
+  const summaryHits = rankedSummaryHits(db, match, Math.max(limit * 4, 12), 10);
   choose(
     summaryHits.sort((a, b) => rankOf(a) - rankOf(b)),
     true,

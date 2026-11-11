@@ -343,11 +343,11 @@ adding a rollup column is a one-file change here plus a `SCHEMA_VERSION` bump.
 
 `RankedHit` is the one declared shape both relevance tiers rank against: thread
 id, snippet, bm25 score, and the rollup columns the ranking reads
-(`last_ts`, `repo_key`). `rankedMessageHits` here
-produces the message-FTS one and `searchSummaryRoots` in `src/digest/store.ts`
-the summary-FTS one. They stay two queries because the two FTS tables and their snippets differ,
-and the summary one lives under `digest/` because that table and its index are
-that layer's to own.
+(`last_ts`, `repo_key`). `rankedMessageHits` produces the message-FTS one and
+`rankedSummaryHits` the summary-FTS one, both here, and both take those columns
+from `rankedHitColumns`. They stay two queries because the two FTS tables differ,
+but the hit shape is declared once: adding `repo_key` once meant changing a
+query under `digest/` and one here in step.
 
 `search` and `relevantThreads` used to carry their own copy of the
 FTS-join-sessions-join-rollup query and their own spelling of "best hit per
@@ -515,7 +515,7 @@ never summarizes on its own initiative; the hooks decide when.
   waits) or `backing-off` for one whose recent attempts failed. A drain takes only
   rows with no hold; `digest stale` lists them all with the hold marked, and
   `digest run` ignores both.
-- **`store.ts`** owns storage and the summary FTS search. `rejectSummaryReason`
+- **`store.ts`** owns summary storage. `rejectSummaryReason`
   is the storage guard: a past incident stored a "Prompt is too long" error as a
   summary through a pipeline that skipped the exit-code gate, so the storage
   contract itself refuses error-shaped or fragment-length text. `writeSummary`
@@ -523,8 +523,9 @@ never summarizes on its own initiative; the hooks decide when.
   returned: a call takes minutes, and messages indexed in between must stay stale
   rather than be marked covered by a summary that never saw them. Reading it after
   the transcript would reopen the same gap for an index commit between the reads.
-  `searchSummaryRoots` owns the summaries_fts query shape, shared by `relevant`'s
-  summary tier and `digest search`. `digest_failures` records a thread's failed
+  The summaries_fts query is `rankedSummaryHits` in the FTS layer, shared by
+  `relevant`'s summary tier and `digest search` (`searchSummaries` in
+  `src/search.ts`). `digest_failures` records a thread's failed
   attempts: a deterministic failure (a rejected output, an overflow) used to be
   retried by every drain, costing tokens and a slot each time. The wait starts at
   the reconciler's 6-hour cadence and doubles per attempt up to a week; a stored

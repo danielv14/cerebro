@@ -4,11 +4,11 @@ import fs from "node:fs";
 import { resolveSession } from "../src/commands/helpers.ts";
 import { sessionsListing } from "../src/commands/sessions.ts";
 import { openDb } from "../src/db.ts";
-import { searchSummaries, writeSummary } from "../src/digest/store.ts";
+import { writeSummary } from "../src/digest/store.ts";
 import { toMatchQuery } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
-import { type SearchHit, search } from "../src/search.ts";
+import { type SearchHit, search, searchSummaries } from "../src/search.ts";
 import { stats } from "../src/stats.ts";
 import {
   countThreads,

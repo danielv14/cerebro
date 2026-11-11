@@ -1,6 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { type RankedHit, toMatchQuery } from "../fts.ts";
-import { attachThreadIdentity, type ThreadIdentity } from "../thread.ts";
 import { DIGEST_PROMPT_VERSION } from "./prompt.ts";
 
 // Anchored at the start of the text, where CLI/API failures announce themselves;
@@ -125,40 +123,3 @@ export interface StoredSummary {
 
 export const getSummary = (db: Database, root: string): StoredSummary | null =>
   db.query("SELECT * FROM summaries WHERE root_session_id = ?").get(root) as StoredSummary | null;
-
-// LEFT JOIN so a summary whose sessions rows are gone still returns its snippet.
-export const searchSummaryRoots = (
-  db: Database,
-  match: string,
-  limit: number,
-  snippetTokens: number,
-): RankedHit[] =>
-  db
-    .query(
-      `SELECT s.root_session_id AS id,
-              snippet(summaries_fts, 0, '[', ']', ' … ', ?) AS snippet,
-              bm25(summaries_fts) AS score,
-              t.last_ts, t.repo_key
-       FROM summaries_fts
-       JOIN summaries s ON s.rowid = summaries_fts.rowid
-       LEFT JOIN threads t ON t.id = s.root_session_id
-       WHERE summaries_fts MATCH ?
-       ORDER BY bm25(summaries_fts)
-       LIMIT ?`,
-    )
-    .all(snippetTokens, match, limit) as RankedHit[];
-
-export interface SummaryHit extends ThreadIdentity {
-  snippet: string;
-}
-
-export const searchSummaries = (db: Database, query: string, limit = 10): SummaryHit[] => {
-  const match = toMatchQuery(query);
-  if (!match) return [];
-
-  const rows = searchSummaryRoots(db, match, limit, 12);
-  return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
-    ...identity,
-    snippet: hit.snippet,
-  }));
-};
