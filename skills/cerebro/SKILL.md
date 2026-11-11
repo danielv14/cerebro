@@ -45,7 +45,7 @@ never prose).
 ### `cerebro index [--full] [--rebuild] [--dry-run]`
 Indexes incrementally since the last run. Every file has a byte cursor: unchanged
 files are skipped entirely, files that grew are read only from the cursor onward. So
-you do **not** need `--full` day to day, just `cerebro index`. `--full` resets the
+you do **not** need `--full` day to day, just `cerebro index`. `--full` ignores the
 cursors and re-reads everything (safe thanks to dedup on message UUID, but slower and
 net 0 new on an up-to-date archive; stored text is never touched). `--rebuild` does
 what `--full` does but additionally rewrites the stored text of every message whose
@@ -467,7 +467,7 @@ stale.
   Re-running is cheap.
 - **Run `index` before searching fresh work.** The active session is written to disk
   continuously and is picked up on the next indexing run.
-- **`--full` is almost never needed.** It resets the cursors and re-reads everything from
+- **`--full` is almost never needed.** It ignores the cursors and re-reads everything from
   the start. Dedup on message UUID makes that harmless (net 0 new on an up-to-date
   archive), but it is slower. Use it only on a suspected-broken cursor state. After a
   change to how messages are flattened to text, `--rebuild` is the one you want: it also

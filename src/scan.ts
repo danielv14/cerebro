@@ -67,17 +67,15 @@ export interface Cursor {
 export const planFileRead = (
   state: Cursor | null,
   file: SessionFile,
-  full: boolean,
+  readAll: boolean,
 ): FileReadPlan => {
-  // A digest-flagged file is permanently excluded even when it grows: the content
-  // guard only inspects reads that start at byte 0. Checked before `full` on
-  // purpose: a real --full run has cleared index_state, so this branch only
-  // affects a --full DRY run, which must report the file as skipped to match.
+  // A digest-flagged file stays excluded in every mode, even when it grows: the
+  // content guard only inspects reads that start at byte 0.
   if (state?.is_digest) {
     return { start: state.bytes_indexed, status: "skipped", shouldRead: false };
   }
 
-  if (full) {
+  if (readAll) {
     return { start: 0, status: state ? "grown" : "new", shouldRead: true };
   }
 
@@ -148,10 +146,6 @@ export const cursorWriter = (db: Database) => {
   };
 };
 
-export const resetCursors = (db: Database): void => {
-  db.run("DELETE FROM index_state");
-};
-
 export const countCursors = (db: Database): number =>
   count(db, "SELECT COUNT(*) AS c FROM index_state");
 
@@ -167,7 +161,7 @@ export const pruneCursors = (db: Database, paths: string[]): void => {
 export const eachIndexableFile = (
   db: Database,
   files: SessionFile[],
-  full: boolean,
+  readAll: boolean,
   handle: (scanned: ScannedFile) => void,
   opts: {
     onUnread?: (plan: FileReadPlan) => void;
@@ -181,7 +175,7 @@ export const eachIndexableFile = (
   for (const file of files) {
     const state = getState.get(file.path) as Cursor | null;
 
-    const plan = planFileRead(state, file, full);
+    const plan = planFileRead(state, file, readAll);
     if (!plan.shouldRead) {
       opts.onUnread?.(plan);
       continue;

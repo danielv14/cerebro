@@ -9,7 +9,6 @@ import {
   fileVerdict,
   orphanedCursorPaths,
   pruneCursors,
-  resetCursors,
 } from "./scan.ts";
 import type { SessionFile, SourceAdapter } from "./sources/adapter.ts";
 import { adapterFor, discoverAllSessionFiles } from "./sources/registry.ts";
@@ -264,18 +263,20 @@ export interface IndexResult {
   relinked: boolean;
 }
 
+// "full" never touches stored text, since dedup skips known messages; only "rebuild" does.
+export type IndexMode = "incremental" | "full" | "rebuild";
+
+const readsAll = (mode: IndexMode): boolean => mode !== "incremental";
+
 export interface IndexOptions {
   adapters: SourceAdapter[];
-  full?: boolean;
-  rebuild?: boolean;
+  mode?: IndexMode;
   resolveGit?: GitResolver;
   onSkip?: (line: string) => void;
 }
 
 export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
-  const rebuild = opts.rebuild ?? false;
-  const readAll = (opts.full ?? false) || rebuild;
-  if (readAll) resetCursors(db);
+  const mode = opts.mode ?? "incremental";
 
   const before = count(db, "SELECT COUNT(*) AS c FROM messages");
   const adapters = opts.adapters;
@@ -287,7 +288,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   eachIndexableFile(
     db,
     files,
-    readAll,
+    readsAll(mode),
     (scanned) => {
       const { file, lines, cursor, plan } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
@@ -298,7 +299,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
       const tx = db.transaction((): boolean => {
         saveCursor(file, cursor, verdict === "digest");
         if (verdict !== "ingest") return false;
-        const meta = ingestLines(db, file, lines, classify, rebuild);
+        const meta = ingestLines(db, file, lines, classify, mode === "rebuild");
         if (file.kind === "subagent") touchParentSession(db, file.sessionId, meta);
         else upsertSession(db, meta, resolveGit, plan.start === 0);
         return true;
@@ -353,9 +354,10 @@ export interface DryRunResult {
 export const dryRunIndex = (
   db: Database,
   adapters: SourceAdapter[],
-  full = false,
+  mode: IndexMode = "incremental",
 ): DryRunResult => {
   const files = discoverAllSessionFiles(adapters);
+  const full = readsAll(mode);
 
   const result: DryRunResult = {
     full,
