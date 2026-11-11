@@ -9,13 +9,9 @@ import {
   runDrain,
 } from "../digest/run.ts";
 import { DRAIN_SETTLE_MS, type StaleThread, staleThreads } from "../digest/stale.ts";
-import {
-  getSummary,
-  type StoredSummary,
-  type SummaryHit,
-  searchSummaries,
-} from "../digest/store.ts";
+import { getSummary, type StoredSummary } from "../digest/store.ts";
 import { oneLine, projectName, shortId, shortTime } from "../render.ts";
+import { type SummaryHit, searchSummaries } from "../search.ts";
 import { CliError, flag, type OptionTable, positiveInt } from "./args.ts";
 import { type CommandGroup, defineCommand } from "./command.ts";
 import { readStdin, resolveThread } from "./helpers.ts";

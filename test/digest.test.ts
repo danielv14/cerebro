@@ -10,15 +10,11 @@ import {
 } from "../src/digest/prompt.ts";
 import { DIGEST_PROMPT_SIGNATURE } from "../src/digest/signature.ts";
 import { countStaleThreads, staleThreads } from "../src/digest/stale.ts";
-import {
-  getSummary,
-  rejectSummaryReason,
-  searchSummaries,
-  searchSummaryRoots,
-  writeSummary,
-} from "../src/digest/store.ts";
+import { getSummary, rejectSummaryReason, writeSummary } from "../src/digest/store.ts";
+import { rankedSummaryHits } from "../src/fts.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
+import { searchSummaries } from "../src/search.ts";
 import { threadLastTs } from "../src/thread.ts";
 import {
   appendRaw,
@@ -493,7 +489,7 @@ describe("digest (summaries layer)", () => {
     expect(countStaleThreads(db)).toBe(staleThreads(db, { limit: 1000 }).length);
   });
 
-  test("searchSummaryRoots is the shared seam behind both relevant and digest search", () => {
+  test("rankedSummaryHits is the shared seam behind both relevant and digest search", () => {
     writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "work", { timestamp: ts(0) })]);
     runIndex(db, { adapters: env.adapters });
     writeSummary(
@@ -504,7 +500,7 @@ describe("digest (summaries layer)", () => {
       threadLastTs(db, "S"),
     );
 
-    const roots = searchSummaryRoots(db, '"limiter"', 5, 12);
+    const roots = rankedSummaryHits(db, '"limiter"', 5, 12);
     expect(roots.map((r) => r.id)).toEqual(["S"]);
     expect(roots[0]!.snippet).toContain("[limiter]");
 

@@ -4,9 +4,11 @@ import {
   type RankedMessageHit,
   rankedMessageHits,
   rankedMessageHitsPerThread,
+  rankedSummaryHits,
+  toMatchQuery,
   withSanitizedFallback,
 } from "./fts.ts";
-import { attachThreadIdentity, messageOrdinal } from "./thread.ts";
+import { attachThreadIdentity, messageOrdinal, type ThreadIdentity } from "./thread.ts";
 
 export interface SearchHit {
   // The matched message's rowid, not a thread id; `show --range` uses `ordinal`.
@@ -62,5 +64,20 @@ export const search = (
     title: identity.title,
     snippet: hit.snippet,
     ordinal: messageOrdinal(db, hit.id, hit.message_id),
+  }));
+};
+
+export interface SummaryHit extends ThreadIdentity {
+  snippet: string;
+}
+
+export const searchSummaries = (db: Database, query: string, limit = 10): SummaryHit[] => {
+  const match = toMatchQuery(query);
+  if (!match) return [];
+
+  const rows = rankedSummaryHits(db, match, limit, 12);
+  return attachThreadIdentity(db, rows).map(({ hit, identity }) => ({
+    ...identity,
+    snippet: hit.snippet,
   }));
 };

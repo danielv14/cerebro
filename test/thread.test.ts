@@ -2,10 +2,10 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/db.ts";
 import { countStaleThreads } from "../src/digest/stale.ts";
-import { searchSummaries, writeSummary } from "../src/digest/store.ts";
+import { writeSummary } from "../src/digest/store.ts";
 import { runIndex } from "../src/indexer.ts";
 import { relevantThreads } from "../src/relevance.ts";
-import { search } from "../src/search.ts";
+import { search, searchSummaries } from "../src/search.ts";
 import {
   attachThreadIdentity,
   countThreads,
