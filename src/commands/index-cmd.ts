@@ -1,11 +1,6 @@
-import {
-  type DryRunResult,
-  dryRunIndex,
-  type IndexMode,
-  type IndexResult,
-  runIndex,
-} from "../indexer.ts";
+import { type DryRunResult, dryRunIndex, type IndexResult, runIndex } from "../indexer.ts";
 import { humanBytes } from "../render.ts";
+import type { IndexMode } from "../scan.ts";
 import { flag, type OptionTable } from "./args.ts";
 import { defineCommand } from "./command.ts";
 

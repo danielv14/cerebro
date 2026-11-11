@@ -161,9 +161,9 @@ a final unterminated line that parses as JSON; an unparseable tail is a mid-writ
 line left for the next run.
 
 `planFileRead` decides skip/read/truncate per file. A file flagged `is_digest`
-(cerebro's own summarization transcript, see the indexer) is permanently excluded,
-in every index mode and even when it grows: the content guard only inspects reads starting at byte 0, so
-without the flag a digest transcript still being written when first detected would
+(cerebro's own summarization transcript, see the indexer) stays excluded even
+when it grows, `--full` included: the content guard only inspects reads starting
+at byte 0, so without the flag a digest transcript still being written when first detected would
 leak its later lines into the archive on the next incremental run.
 
 `orphanedCursorPaths` is the one owner of the orphan predicate: the indexer's
@@ -179,8 +179,10 @@ must stay distinguishable from "no orphans".
 the new lines, insert messages deduped on UUID (invariant #4), then write the
 session row. `--full` reads every file from byte 0 regardless of its cursor (dedup
 makes it idempotent) and leaves `index_state` in place, so a digest flag holds and
-the dry run plans the same reads as the real run; `--rebuild` additionally refreshes the payload of already-indexed
-messages in place, the only way a `flattenContent` change reaches old rows, while
+the dry run plans the same reads as the real run. `--rebuild` also re-reads
+digest-flagged files and runs the guard on them again, so a narrowed guard (#251
+changed it once) can clear a wrong flag; it additionally refreshes the payload of
+already-indexed messages in place, the only way a `flattenContent` change reaches old rows, while
 never touching `session_id` or deleting anything, so messages whose source file is
 gone keep their only copy.
 

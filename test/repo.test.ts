@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { runCli } from "../src/cli.ts";
 import { openDb } from "../src/db.ts";
 import { writeSummary } from "../src/digest/store.ts";
-import { type IndexMode, runIndex } from "../src/indexer.ts";
+import { runIndex } from "../src/indexer.ts";
+import type { IndexMode } from "../src/scan.ts";
 import { threadLastTs } from "../src/thread.ts";
 import { makeClaudeDir, type TempClaude, ts, userMsg, writeSession } from "./fixtures.ts";
 

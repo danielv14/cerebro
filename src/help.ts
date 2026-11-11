@@ -47,13 +47,15 @@ Digest actions:
 
 Options:
   --db <path>     Database file (default: $CEREBRO_DB or ~/.claude/cerebro/archive.sqlite)
-  --full          index: ignore cursors and re-read everything (dedup skips known
-                  messages, so stored text is never touched); show: print full text;
+  --full          index: ignore cursors and re-read everything except cerebro's own
+                  digest transcripts (dedup skips known messages, so stored text
+                  is never touched); show: print full text;
                   doctor: the complete integrity_check instead of quick_check,
                   plus the line kinds the indexer skips
   --rebuild       index: like --full, but also re-flatten the stored text of every
                   message still on disk (needed after a flattening/parser change;
-                  messages whose source file is deleted are kept untouched)
+                  messages whose source file is deleted are kept untouched) and
+                  re-check which files are digest transcripts
   --dry-run       index: report what would be indexed, write nothing
   --limit <n>     Max rows to return (skills: no limit by default, so a rarely used
                   skill is never trimmed into looking unused)

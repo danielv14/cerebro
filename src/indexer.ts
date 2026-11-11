@@ -7,6 +7,7 @@ import {
   cursorWriter,
   eachIndexableFile,
   fileVerdict,
+  type IndexMode,
   orphanedCursorPaths,
   pruneCursors,
 } from "./scan.ts";
@@ -263,11 +264,6 @@ export interface IndexResult {
   relinked: boolean;
 }
 
-// "full" never touches stored text, since dedup skips known messages; only "rebuild" does.
-export type IndexMode = "incremental" | "full" | "rebuild";
-
-const readsAll = (mode: IndexMode): boolean => mode !== "incremental";
-
 export interface IndexOptions {
   adapters: SourceAdapter[];
   mode?: IndexMode;
@@ -288,7 +284,7 @@ export const runIndex = (db: Database, opts: IndexOptions): IndexResult => {
   eachIndexableFile(
     db,
     files,
-    readsAll(mode),
+    mode,
     (scanned) => {
       const { file, lines, cursor, plan } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
@@ -357,7 +353,7 @@ export const dryRunIndex = (
   mode: IndexMode = "incremental",
 ): DryRunResult => {
   const files = discoverAllSessionFiles(adapters);
-  const full = readsAll(mode);
+  const full = mode !== "incremental";
 
   const result: DryRunResult = {
     full,
@@ -375,7 +371,7 @@ export const dryRunIndex = (
   eachIndexableFile(
     db,
     files,
-    full,
+    mode,
     (scanned) => {
       const { file, plan, lines, cursor } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;

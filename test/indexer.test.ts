@@ -793,6 +793,17 @@ describe("dryRunIndex", () => {
     expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 0 });
   });
 
+  test("--rebuild clears a digest flag the guard no longer agrees with", () => {
+    writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db, { adapters: env.adapters });
+    db.run("UPDATE index_state SET is_digest = 1");
+    db.run("DELETE FROM messages");
+
+    expect(dryRunIndex(db, env.adapters, "rebuild").candidateMessages).toBe(1);
+    runIndex(db, { adapters: env.adapters, mode: "rebuild" });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 1 });
+  });
+
   test("a digest summarization run is not counted (parity with runIndex skip)", () => {
     writeSession(env.projects, "-repo", "DIG", [
       userMsg("DIG", "d1", DIGEST_PROMPT),
