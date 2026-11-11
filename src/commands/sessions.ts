@@ -35,7 +35,7 @@ export const sessionsCommand = defineCommand({
       project: args.project,
       branch: args.branch,
       since: args.since,
-      limit: args.limit ?? 30,
+      limit: args.limit,
     });
     return {
       json: threads,

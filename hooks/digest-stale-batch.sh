@@ -9,9 +9,8 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 CEREBRO="${CEREBRO_BIN:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cerebro/cerebro}"
 LOG_DIR="$(dirname "$CEREBRO")"
 LOG="$LOG_DIR/digest.log"
-CAP="${CEREBRO_DIGEST_BATCH_CAP:-8}"
 LOCK="$LOG_DIR/digest-stale.lock"
-# The default is far longer than any scheduled CAP run and shorter than the 6h
+# The default is far longer than any scheduled drain and shorter than the 6h
 # cadence, so a dead lock self-heals within a cycle.
 LOCK_STALE_MIN="${CEREBRO_DIGEST_LOCK_STALE_MIN:-180}"
 
@@ -51,7 +50,7 @@ trap '[ "$(cat "$LOCK/owner" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"' EXIT
 # Each line is stamped as it arrives, not just the first: drain streams a line per
 # thread as it completes, and a timestamp on every one is what makes a wedged
 # overnight run readable.
-"$CEREBRO" digest drain --limit "$CAP" 2>&1 |
+"$CEREBRO" digest drain ${CEREBRO_DIGEST_BATCH_CAP:+--limit "$CEREBRO_DIGEST_BATCH_CAP"} 2>&1 |
   while IFS= read -r line; do log "$line"; done
 
 "$CEREBRO" maintain 2>&1 | while IFS= read -r line; do log "$line"; done
