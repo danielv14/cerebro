@@ -39,7 +39,7 @@ export const recentCommand = defineCommand({
     const days = args.days ?? 14;
     const since = new Date(now - days * 86_400_000).toISOString();
     const key = repoKey(resolveGit(cwd), cwd)!;
-    const threads = recentThreads(db, { repoKey: key, since, limit: args.limit ?? 5 });
+    const threads = recentThreads(db, { repoKey: key, since, limit: args.limit });
     const rows = threads.map((thread) => ({
       thread,
       opening: threadOpeningPrompt(db, thread.id),

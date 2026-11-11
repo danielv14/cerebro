@@ -1,4 +1,4 @@
-import { DEFAULT_RELEVANT_LIMIT, type RelevantThread, relevantThreads } from "../relevance.ts";
+import { type RelevantThread, relevantThreads } from "../relevance.ts";
 import { oneLine, openedLine, projectName, shortDate, shortId } from "../render.ts";
 import { repoKey } from "../repo.ts";
 import { CliError, flag, type OptionTable, positiveInt, text } from "./args.ts";
@@ -38,7 +38,7 @@ export const relevantCommand = defineCommand({
     // Deliberately NOT defaulted to the invoking directory the way `recent` is:
     // a manual `relevant "..."` must rank globally.
     const cwd = args.cwd || null;
-    const threads = relevantThreads(db, prompt, args.limit ?? DEFAULT_RELEVANT_LIMIT, now, {
+    const threads = relevantThreads(db, prompt, args.limit, now, {
       repoKey: repoKey(resolveGit(cwd), cwd),
     });
     return {

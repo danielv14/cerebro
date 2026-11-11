@@ -140,7 +140,7 @@ const digestPipeline = (config: DigestConfig) => ({
   models: config.models,
 });
 
-export const DEFAULT_DRAIN_LIMIT = 8;
+const DEFAULT_DRAIN_LIMIT = 8;
 
 const limitOption = positiveInt();
 
@@ -153,7 +153,7 @@ export const digestCommand: CommandGroup = {
     stale: defineCommand({
       options: { limit: limitOption, ids: flag(), json: flag() } satisfies OptionTable,
       run: ({ db, args, now }) => {
-        const rows = staleThreads(db, { limit: args.limit ?? 50, now });
+        const rows = staleThreads(db, { limit: args.limit, now });
         return {
           json: rows,
           lines: args.ids ? staleIds(rows) : rows.length > 0 ? staleListing(rows) : [],
@@ -207,7 +207,7 @@ export const digestCommand: CommandGroup = {
       run: ({ db, args, rest }) => {
         const query = rest.join(" ");
         if (!query) throw new CliError("digest search: missing <query>");
-        const hits = searchSummaries(db, query, args.limit ?? 10);
+        const hits = searchSummaries(db, query, args.limit);
         return {
           json: hits,
           lines: hits.length > 0 ? summarySearchListing(hits) : [],

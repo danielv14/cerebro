@@ -76,7 +76,7 @@ const SAME_REPO_BOOST = 1.5;
 const repoBoost = (hit: RankedHit, repoKey: string | null): number =>
   repoKey && hit.repo_key === repoKey ? SAME_REPO_BOOST : 1;
 
-export const DEFAULT_RELEVANT_LIMIT = 3;
+const DEFAULT_RELEVANT_LIMIT = 3;
 
 // Sized per thread, not flat: one chatty thread otherwise owns the whole window.
 const RAW_WINDOW_MIN_ROWS = 80;

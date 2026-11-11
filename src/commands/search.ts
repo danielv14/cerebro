@@ -37,7 +37,7 @@ export const searchCommand = defineCommand({
   run: ({ db, args, rest }) => {
     const query = rest.join(" ");
     if (!query) throw new CliError("search: missing <query>");
-    const hits = search(db, query, args.limit ?? 20, {
+    const hits = search(db, query, args.limit, {
       project: args.project,
       branch: args.branch,
       since: args.since,

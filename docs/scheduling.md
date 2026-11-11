@@ -7,10 +7,11 @@ and [digest-model-tiering.md](digest-model-tiering.md) for the model each run pi
 The `/clear` hook only summarizes the one session you just cleared, so every session
 that ends another way (headless `claude -p`, abandoned, still open) never gets a summary
 on its own. `digest-stale-batch.sh` is the catch-up job that closes that gap: it indexes,
-then runs `cerebro digest drain --limit $CEREBRO_DIGEST_BATCH_CAP` (default 8), which
-summarizes that many stale threads newest first through the same pipeline and model
-choice the `/clear` hook uses. The script itself owns only the scheduling concerns: a
-`mkdir` lock so two runs never overlap, a pinned PATH for launchd, and the log. A thread
+then runs `cerebro digest drain`, with `--limit $CEREBRO_DIGEST_BATCH_CAP` when that is
+set (otherwise drain's own default). Drain summarizes that many stale threads newest
+first through the same pipeline and model choice the `/clear` hook uses. The script
+itself owns only the scheduling concerns: a `mkdir` lock so two runs never overlap, a
+pinned PATH for launchd, and the log. A thread
 that fails is retried after a backoff (see [digest.md](digest.md)) and never aborts the
 current run.
 
