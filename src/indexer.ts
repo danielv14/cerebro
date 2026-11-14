@@ -340,8 +340,7 @@ export interface DryRunResult {
   grownFiles: number;
   truncatedFiles: number;
   unchangedFiles: number;
-  // Read but not indexable: a digest transcript, or a mid-write file with no
-  // complete line yet.
+  pendingFiles: number;
   skippedFiles: number;
   newBytes: number;
   candidateMessages: number;
@@ -362,6 +361,7 @@ export const dryRunIndex = (
     grownFiles: 0,
     truncatedFiles: 0,
     unchangedFiles: 0,
+    pendingFiles: 0,
     skippedFiles: 0,
     newBytes: 0,
     candidateMessages: 0,
@@ -374,7 +374,12 @@ export const dryRunIndex = (
     (scanned) => {
       const { file, plan, lines, cursor } = scanned;
       const classify = adapterFor(file.provider, adapters).classifyLines;
-      if (fileVerdict(scanned, classify) !== "ingest") {
+      const verdict = fileVerdict(scanned, classify);
+      if (verdict === "nothing-new") {
+        result.pendingFiles++;
+        return;
+      }
+      if (verdict === "digest") {
         result.skippedFiles++;
         return;
       }

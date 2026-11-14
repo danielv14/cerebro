@@ -14,22 +14,30 @@ export const rebuildResult = (result: IndexResult): string[] => [
     `(${result.filesIndexed}/${result.filesScanned} files read; messages from deleted sources kept).`,
 ];
 
+const note = (files: number, label: string): string => (files > 0 ? `, ${files} ${label}` : "");
+
+const pendingNote = (plan: DryRunResult): string => note(plan.pendingFiles, "empty or mid-write");
+
+const leftOut = (plan: DryRunResult): string =>
+  note(plan.skippedFiles, "not indexable") + pendingNote(plan);
+
 export const dryRunReport = (plan: DryRunResult): string[] => {
+  if (plan.filesScanned === 0) return ["Dry run: no session files found. Nothing written."];
+
   const lines: string[] = [];
   const modeFlag = plan.mode === "incremental" ? "" : ` --${plan.mode}`;
   if (plan.mode !== "incremental") {
-    const reread =
-      plan.skippedFiles > 0
-        ? `${plan.filesToRead} of ${plan.filesScanned} file(s), ${plan.skippedFiles} not indexable`
-        : `all ${plan.filesToRead} file(s)`;
-    lines.push(`Dry run (--${plan.mode}): would re-read ${reread}.`);
+    const files =
+      plan.filesToRead === plan.filesScanned
+        ? `all ${plan.filesToRead} file(s)`
+        : `${plan.filesToRead} of ${plan.filesScanned} file(s)${leftOut(plan)}`;
+    lines.push(`Dry run (--${plan.mode}): would re-index ${files}.`);
     lines.push(`  Candidate messages: ${plan.candidateMessages} (before UUID dedup)`);
-    lines.push(`  Bytes to read:      ${humanBytes(plan.newBytes)}`);
+    lines.push(`  Bytes to index:     ${humanBytes(plan.newBytes)}`);
     lines.push("  On an up-to-date archive dedup collapses this to ~0 net-new messages.");
   } else if (plan.filesToRead === 0) {
-    const skipped = plan.skippedFiles > 0 ? `, ${plan.skippedFiles} not indexable` : "";
     lines.push(
-      `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged${skipped}.`,
+      `Dry run: nothing to index. ${plan.unchangedFiles}/${plan.filesScanned} files unchanged${leftOut(plan)}.`,
     );
   } else {
     lines.push("Dry run. Would index:");
@@ -38,7 +46,7 @@ export const dryRunReport = (plan: DryRunResult): string[] => {
     lines.push(
       `  Files:         ${plan.newFiles} new, ${plan.grownFiles} grown, ` +
         `${plan.truncatedFiles} truncated, ${plan.unchangedFiles} unchanged, ` +
-        `${plan.skippedFiles} not indexable`,
+        `${plan.skippedFiles} not indexable${pendingNote(plan)}`,
     );
   }
   lines.push(`\nNothing written. Run \`cerebro index${modeFlag}\` to apply.`);

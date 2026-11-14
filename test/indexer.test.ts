@@ -855,7 +855,10 @@ describe("dryRunIndex", () => {
         plan.grownFiles +
         plan.truncatedFiles +
         plan.unchangedFiles +
+        plan.pendingFiles +
         plan.skippedFiles,
     ).toBe(plan.filesScanned);
+    expect(plan.pendingFiles).toBe(1);
+    expect(plan.skippedFiles).toBe(1);
   });
 });
