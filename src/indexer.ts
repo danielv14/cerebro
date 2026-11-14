@@ -376,7 +376,9 @@ export const dryRunIndex = (
       const classify = adapterFor(file.provider, adapters).classifyLines;
       const verdict = fileVerdict(scanned, classify);
       if (verdict === "nothing-new") {
-        result.pendingFiles++;
+        const fullyIndexed = plan.start > 0 && plan.start === file.size;
+        if (fullyIndexed) result.unchangedFiles++;
+        else result.pendingFiles++;
         return;
       }
       if (verdict === "digest") {

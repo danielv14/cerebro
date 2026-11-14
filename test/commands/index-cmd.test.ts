@@ -121,7 +121,7 @@ describe("dryRunReport", () => {
     ).toBe("Dry run (--full): would re-index 3 of 5 file(s), 2 not indexable.");
   });
 
-  test("names the files that were read but had nothing to index", () => {
+  test("names not indexable files when nothing is left to index", () => {
     expect(
       dryRunReport({
         mode: "incremental",

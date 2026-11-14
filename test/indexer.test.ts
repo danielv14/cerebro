@@ -836,6 +836,17 @@ describe("dryRunIndex", () => {
     expect(second.skippedFiles + second.unchangedFiles).toBe(second.filesScanned);
   });
 
+  test("a touched but fully indexed file counts as unchanged, not as mid-write", () => {
+    const path = writeSession(env.projects, "-repo", "S", [userMsg("S", "u1", "hi")]);
+    runIndex(db, { adapters: env.adapters });
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(path, later, later);
+
+    const plan = dryRunIndex(db, env.adapters);
+    expect(plan.unchangedFiles).toBe(1);
+    expect(plan.pendingFiles).toBe(0);
+  });
+
   test("a tree with a skipped file reports the same file total as the real run", () => {
     writeSession(env.projects, "-repo", "DIG", [userMsg("DIG", "d1", DIGEST_PROMPT)]);
     writeSession(env.projects, "-repo", "REAL", [userMsg("REAL", "u1", "do a real thing")]);
