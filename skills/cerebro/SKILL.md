@@ -70,9 +70,9 @@ Nothing written. Run `cerebro index` to apply.
 
 ```
 $ cerebro index --full --dry-run
-Dry run (--full): would re-read all 210 file(s).
+Dry run (--full): would re-index all 210 file(s).
   Candidate messages: 24817 (before UUID dedup)
-  Bytes to read:      96.4 MB
+  Bytes to index:     96.4 MB
   On an up-to-date archive dedup collapses this to ~0 net-new messages.
 
 Nothing written. Run `cerebro index --full` to apply.

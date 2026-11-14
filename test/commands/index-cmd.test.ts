@@ -20,6 +20,7 @@ describe("dryRunReport", () => {
         grownFiles: 1,
         truncatedFiles: 0,
         unchangedFiles: 3,
+        pendingFiles: 0,
         skippedFiles: 0,
         newBytes: 2048,
         candidateMessages: 12,
@@ -43,6 +44,7 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 5,
+        pendingFiles: 0,
         skippedFiles: 0,
         newBytes: 0,
         candidateMessages: 0,
@@ -63,14 +65,15 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 0,
+        pendingFiles: 0,
         skippedFiles: 0,
         newBytes: 1024 * 1024,
         candidateMessages: 100,
       }),
     ).toEqual([
-      "Dry run (--full): would re-read all 5 file(s).",
+      "Dry run (--full): would re-index all 5 file(s).",
       "  Candidate messages: 100 (before UUID dedup)",
-      "  Bytes to read:      1.0 MB",
+      "  Bytes to index:     1.0 MB",
       "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
       "\nNothing written. Run `cerebro index --full` to apply.",
     ]);
@@ -86,14 +89,15 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 0,
+        pendingFiles: 0,
         skippedFiles: 0,
         newBytes: 1024 * 1024,
         candidateMessages: 100,
       }),
     ).toEqual([
-      "Dry run (--rebuild): would re-read all 5 file(s).",
+      "Dry run (--rebuild): would re-index all 5 file(s).",
       "  Candidate messages: 100 (before UUID dedup)",
-      "  Bytes to read:      1.0 MB",
+      "  Bytes to index:     1.0 MB",
       "  On an up-to-date archive dedup collapses this to ~0 net-new messages.",
       "\nNothing written. Run `cerebro index --rebuild` to apply.",
     ]);
@@ -109,14 +113,15 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 0,
+        pendingFiles: 0,
         skippedFiles: 2,
         newBytes: 1024 * 1024,
         candidateMessages: 100,
       })[0],
-    ).toBe("Dry run (--full): would re-read 3 of 5 file(s), 2 not indexable.");
+    ).toBe("Dry run (--full): would re-index 3 of 5 file(s), 2 not indexable.");
   });
 
-  test("names the files that were read but had nothing to index", () => {
+  test("names not indexable files when nothing is left to index", () => {
     expect(
       dryRunReport({
         mode: "incremental",
@@ -126,6 +131,7 @@ describe("dryRunReport", () => {
         grownFiles: 0,
         truncatedFiles: 0,
         unchangedFiles: 2,
+        pendingFiles: 0,
         skippedFiles: 2,
         newBytes: 0,
         candidateMessages: 0,
@@ -134,5 +140,65 @@ describe("dryRunReport", () => {
       "Dry run: nothing to index. 2/4 files unchanged, 2 not indexable.",
       "\nNothing written. Run `cerebro index` to apply.",
     ]);
+  });
+
+  test("--rebuild separates empty or mid-write files from not indexable ones", () => {
+    expect(
+      dryRunReport({
+        mode: "rebuild",
+        filesScanned: 6,
+        filesToRead: 3,
+        newFiles: 0,
+        grownFiles: 0,
+        truncatedFiles: 0,
+        unchangedFiles: 0,
+        pendingFiles: 1,
+        skippedFiles: 2,
+        newBytes: 0,
+        candidateMessages: 0,
+      })[0],
+    ).toBe(
+      "Dry run (--rebuild): would re-index 3 of 6 file(s), 2 not indexable, 1 empty or mid-write.",
+    );
+  });
+
+  test("an incremental plan names empty or mid-write files apart from not indexable ones", () => {
+    expect(
+      dryRunReport({
+        mode: "incremental",
+        filesScanned: 4,
+        filesToRead: 0,
+        newFiles: 0,
+        grownFiles: 0,
+        truncatedFiles: 0,
+        unchangedFiles: 2,
+        pendingFiles: 1,
+        skippedFiles: 1,
+        newBytes: 0,
+        candidateMessages: 0,
+      })[0],
+    ).toBe(
+      "Dry run: nothing to index. 2/4 files unchanged, 1 not indexable, 1 empty or mid-write.",
+    );
+  });
+
+  test("an empty scan is reported as no files found, in every mode", () => {
+    for (const mode of ["incremental", "full", "rebuild"] as const) {
+      expect(
+        dryRunReport({
+          mode,
+          filesScanned: 0,
+          filesToRead: 0,
+          newFiles: 0,
+          grownFiles: 0,
+          truncatedFiles: 0,
+          unchangedFiles: 0,
+          pendingFiles: 0,
+          skippedFiles: 0,
+          newBytes: 0,
+          candidateMessages: 0,
+        }),
+      ).toEqual(["Dry run: no session files found. Nothing written."]);
+    }
   });
 });
