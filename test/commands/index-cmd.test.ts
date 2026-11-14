@@ -99,6 +99,23 @@ describe("dryRunReport", () => {
     ]);
   });
 
+  test("--full does not claim all files when some are not indexable", () => {
+    expect(
+      dryRunReport({
+        mode: "full",
+        filesScanned: 5,
+        filesToRead: 3,
+        newFiles: 0,
+        grownFiles: 0,
+        truncatedFiles: 0,
+        unchangedFiles: 0,
+        skippedFiles: 2,
+        newBytes: 1024 * 1024,
+        candidateMessages: 100,
+      })[0],
+    ).toBe("Dry run (--full): would re-read 3 of 5 file(s), 2 not indexable.");
+  });
+
   test("names the files that were read but had nothing to index", () => {
     expect(
       dryRunReport({
